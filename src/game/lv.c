@@ -288,6 +288,11 @@ void lvReset(s32 stagenum)
 
 	g_Vars.restartlevel = false;
 	g_Vars.aibuddiesspawned = false;
+
+#ifndef PLATFORM_N64
+	g_JointScaleChr = NULL;
+#endif
+
 	g_Vars.totalkills = 0;
 	g_Vars.antiheadnum = -1;
 	g_Vars.antibodynum = -1;

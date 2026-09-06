@@ -1434,6 +1434,14 @@ void chrRemove(struct prop *prop, bool free)
 		chrClearReferences(prop - g_Vars.props);
 		projectilesUnrefOwner(prop);
 
+#ifndef PLATFORM_N64
+		// The proportion editor holds a raw chr pointer. Drop it here, next to
+		// the other reference cleanup, or a recycled slot inherits the override.
+		if (g_JointScaleChr == chr) {
+			g_JointScaleChr = NULL;
+		}
+#endif
+
 		if (g_Vars.normmplayerisrunning == false && g_MissionConfig.iscoop) {
 			s32 i;
 

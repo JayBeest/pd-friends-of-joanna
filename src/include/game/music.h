@@ -5,6 +5,7 @@
 #include "types.h"
 
 u16 musicGetVolume(void);
+u16 musicGetMenuVolume(void);
 void musicSetVolume(u16 volume);
 bool musicIsTrackState(s32 tracktype, s32 state);
 s32 musicGetTrackState(s32 tracktype);

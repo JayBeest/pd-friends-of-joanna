@@ -106,6 +106,15 @@ u16 musicGetVolume(void)
 #endif
 }
 
+/**
+ * fojo: the pause menu track plays under the game's music setting rather than
+ * at it. one place to change the fraction.
+ */
+u16 musicGetMenuVolume(void)
+{
+	return musicGetVolume() / MUSIC_MENU_VOLUME_DIVISOR;
+}
+
 void musicSetVolume(u16 volume)
 {
 	s32 i;
@@ -118,7 +127,14 @@ void musicSetVolume(u16 volume)
 
 	for (i = 0; i < ARRAYCOUNT(g_SeqChannels); i++) {
 		if (g_SeqChannels[i].tracktype != TRACKTYPE_NONE && g_SeqChannels[i].tracktype != TRACKTYPE_AMBIENT) {
-			seqSetVolume(&g_SeqInstances[i], volume);
+			// fojo: the menu track keeps its reduced level. the music slider
+			// lives inside the pause menu, so this path runs while the menu
+			// track is playing and would otherwise snap it to full.
+			if (g_SeqChannels[i].tracktype == TRACKTYPE_MENU) {
+				seqSetVolume(&g_SeqInstances[i], volume / MUSIC_MENU_VOLUME_DIVISOR);
+			} else {
+				seqSetVolume(&g_SeqInstances[i], volume);
+			}
 		}
 	}
 
@@ -390,7 +406,7 @@ void musicStartTrackAsMenu(s32 tracknum)
 		musicQueueFadeEvent(TRACKTYPE_PRIMARY, 0.5f, FADETYPE_PAUSE);
 		musicQueueFadeEvent(TRACKTYPE_NRG, 0.5f, FADETYPE_PAUSE);
 		musicQueueFadeEvent(TRACKTYPE_AMBIENT, 0.5f, FADETYPE_PAUSE);
-		musicQueueStartEvent(TRACKTYPE_MENU, tracknum, 0, musicGetVolume());
+		musicQueueStartEvent(TRACKTYPE_MENU, tracknum, 0, musicGetMenuVolume());
 	}
 
 	g_MenuTrack = tracknum;

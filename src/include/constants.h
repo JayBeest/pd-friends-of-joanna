@@ -4323,6 +4323,9 @@
 #define TRACKTYPE_MENU    3
 #define TRACKTYPE_DEATH   4
 #define TRACKTYPE_AMBIENT 5
+
+// fojo: the pause menu track plays at 1/N of the game's music volume
+#define MUSIC_MENU_VOLUME_DIVISOR 5
 #define TRACKTYPE_6       6
 
 #define TURNSTATE_TURNING  1 // chr is actively turning

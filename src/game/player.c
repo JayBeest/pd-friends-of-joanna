@@ -1476,6 +1476,45 @@ void playerChooseBodyAndHead(s32 *bodynum, s32 *headnum, s32 *arg2)
 }
 
 /**
+ * Apply an eye height to the current player, deriving the head height and the
+ * animated height from it.
+ *
+ * Split out of playerTickChrBody so the values can be re-applied without
+ * rebuilding the chr body -- the body row is only read once at spawn, so
+ * anything that changes a height after that has to come back through here.
+ *
+ * eyeheight is where the camera sits. headheight is the top of the head and is
+ * the collision top, so it carries the clamp that keeps a player from being
+ * taller than the levels were built for.
+ */
+void playerSetHeight(s32 eyeheight, s32 headnum)
+{
+	g_Vars.currentplayer->vv_eyeheight = eyeheight;
+
+#if VERSION >= VERSION_NTSC_1_0
+	if (g_Vars.antiplayernum >= 0
+			&& g_Vars.currentplayer == g_Vars.anti
+			&& g_Vars.currentplayer->vv_eyeheight > 159) {
+		g_Vars.currentplayer->vv_eyeheight = 159;
+	}
+#endif
+
+	g_Vars.currentplayer->vv_headheight = g_Vars.currentplayer->vv_eyeheight;
+
+	if (headnum >= 0) {
+		g_Vars.currentplayer->vv_headheight += (s32)g_HeadsAndBodies[headnum].height;
+	} else {
+		g_Vars.currentplayer->vv_headheight += 13;
+	}
+
+	if (g_Vars.currentplayer->vv_headheight > g_HeadsAndBodies[BODY_MRBLONDE].height + g_HeadsAndBodies[HEAD_MRBLONDE].height) {
+		g_Vars.currentplayer->vv_headheight = g_HeadsAndBodies[BODY_MRBLONDE].height + g_HeadsAndBodies[HEAD_MRBLONDE].height;
+	}
+
+	g_Vars.currentplayer->vv_height = g_Vars.currentplayer->vv_eyeheight;
+}
+
+/**
  * Ensure the chr's "chrbody" is set up, then tick it.
  *
  * The majority of this function is code that sets up the chrbody. The chrbody
@@ -1710,29 +1749,7 @@ void playerTickChrBody(void)
 		chr->race = bodyGetRace(chr->bodynum);
 		chr->radius = g_Vars.currentplayer->bond2.radius;
 
-		g_Vars.currentplayer->vv_eyeheight = (s32)g_HeadsAndBodies[bodynum].height;
-
-#if VERSION >= VERSION_NTSC_1_0
-		if (g_Vars.antiplayernum >= 0
-				&& g_Vars.currentplayer == g_Vars.anti
-				&& g_Vars.currentplayer->vv_eyeheight > 159) {
-			g_Vars.currentplayer->vv_eyeheight = 159;
-		}
-#endif
-
-		g_Vars.currentplayer->vv_headheight = g_Vars.currentplayer->vv_eyeheight;
-
-		if (headnum >= 0) {
-			g_Vars.currentplayer->vv_headheight += (s32)g_HeadsAndBodies[headnum].height;
-		} else {
-			g_Vars.currentplayer->vv_headheight += 13;
-		}
-
-		if (g_Vars.currentplayer->vv_headheight > g_HeadsAndBodies[BODY_MRBLONDE].height + g_HeadsAndBodies[HEAD_MRBLONDE].height) {
-			g_Vars.currentplayer->vv_headheight = g_HeadsAndBodies[BODY_MRBLONDE].height + g_HeadsAndBodies[HEAD_MRBLONDE].height;
-		}
-
-		g_Vars.currentplayer->vv_height = g_Vars.currentplayer->vv_eyeheight;
+		playerSetHeight((s32)g_HeadsAndBodies[bodynum].height, headnum);
 
 		if (weaponmodelnum >= 0) {
 			if (g_Vars.mplayerisrunning == false) {

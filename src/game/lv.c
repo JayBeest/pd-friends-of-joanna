@@ -1152,9 +1152,14 @@ Gfx *lvRender(Gfx *gdl)
 				player = g_Vars.currentplayer;
 				chr = player->prop->chr;
 
+				// fojo: vanilla also required !training, which hid the blur inside
+				// the three CI exercises. that is backwards -- chraction.c:4327
+				// refuses damage to the player at CITRAINING while training is
+				// false, so an exercise is the only place at the institute where
+				// you can be drugged at all, and it was the only place the effect
+				// was hidden. the institute is in scope, so show it there too.
 				if (chr->blurdrugamount > 0
-						&& !g_Vars.currentplayer->invincible
-						&& !g_Vars.currentplayer->training) {
+						&& !g_Vars.currentplayer->invincible) {
 					// fojo: the 100 is a constant slab -- vanilla switches it on the
 					// frame the counter leaves zero and drops all of it the frame the
 					// counter reaches zero, so 39% of the effect appears and vanishes

@@ -64,6 +64,11 @@ s16 *g_Chrnums;
 s16 *g_ChrIndexes;
 struct chrdata *g_CurModelChr;
 
+#ifndef PLATFORM_N64
+struct chrdata *g_JointScaleChr = NULL;
+f32 g_JointScaleOverride[MAX_JOINT_OVERRIDES][3];
+#endif
+
 struct var80062960 *var80062960 = NULL;
 s32 var80062964 = 0;
 f32 var80062968 = 0;
@@ -1707,6 +1712,28 @@ void chrHandleJointPositioned(s32 joint, Mtxf *mtx)
 				}
 			}
 		}
+
+#ifndef PLATFORM_N64
+		// Per-chr joint scale override from the proportion editor. Only the
+		// latched chr is affected; every other chr takes the vanilla path.
+		//
+		// Applied here, on the raw joint matrix, rather than in the rotation
+		// block below where the uniform scales land. A uniform scale commutes
+		// with the change of basis that block performs, so DK mode and the
+		// per-head scale are safe there; an anisotropic one does not, and has
+		// to be applied while the matrix still expresses the joint's own axes.
+		// It also means every joint is reachable, not just the four named ones.
+		if (g_JointScaleChr == g_CurModelChr && joint >= 0 && joint < MAX_JOINT_OVERRIDES) {
+			f32 *s3 = g_JointScaleOverride[joint];
+
+			// A zero axis is treated as unset rather than as a collapse, so an
+			// uninitialised table is inert. Same idiom as the per-head scale above.
+			if (s3[0] > 0.0f && s3[1] > 0.0f && s3[2] > 0.0f
+					&& (s3[0] != 1.0f || s3[1] != 1.0f || s3[2] != 1.0f)) {
+				mtxScale3(s3[0], s3[1], s3[2], mtx);
+			}
+		}
+#endif
 
 		if (joint == lshoulderjoint || joint == rshoulderjoint || joint == waistjoint || joint == neckjoint) {
 			xrot = 0.0f;

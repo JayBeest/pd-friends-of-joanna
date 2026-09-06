@@ -4,6 +4,21 @@
 #include "data.h"
 #include "types.h"
 
+#ifndef PLATFORM_N64
+/**
+ * Per-chr joint scale override, written by the proportion editor and read in
+ * chrHandleJointPositioned. g_JointScaleChr is the latched chr, or NULL when
+ * no override is active -- which is the shipping state, so the cost is one
+ * pointer compare per joint per frame.
+ *
+ * Sized for the largest skeleton the hook can be called for: g_SkelChr has 15
+ * joints, g_SkelSkedar has 36. Joints beyond the table are left alone.
+ */
+#define MAX_JOINT_OVERRIDES 40
+extern struct chrdata *g_JointScaleChr;
+extern f32 g_JointScaleOverride[MAX_JOINT_OVERRIDES][3];
+#endif
+
 bool isCurrentPlayerAlly();
 bool isChrPropAlly(struct prop *prop);
 bool isPlayerNumAlly(u32 playernum);

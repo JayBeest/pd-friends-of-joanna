@@ -101,3 +101,7 @@ extern s32 g_FojoHeadOptions[NUM_FOJO_HEADS];
 extern s32 g_FojoHeadCount;
 
 #endif
+
+extern struct menudialogdef g_TeamMissionPlayerProfilesHubMenu;
+extern struct menudialogdef g_TeamMissionPlayerProfilesHubPinnedMenu;
+struct menudialogdef *teamPlayerProfilesHubDialog(s32 playernum);

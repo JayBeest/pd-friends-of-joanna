@@ -3004,7 +3004,7 @@ bool filemgrConsiderPushingFileSelectDialog(void)
 	if (g_Menus[g_MpPlayerNum].openinhibit == 0) {
 		g_Menus[g_MpPlayerNum].playernum = 0;
 		menuPushRootDialog(&g_FilemgrFileSelectMenuDialog, MENUROOT_FILEMGR);
-		menuPushDialog(&g_TeamMissionPlayerProfilesHubMenu);
+		menuPushDialog(teamPlayerProfilesHubDialog(g_MpPlayerNum));
 
 #if PAL
 		if (g_Vars.language >= 6) {

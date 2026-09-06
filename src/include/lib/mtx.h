@@ -26,6 +26,7 @@ void mtx00015ea8(f32 arg0, Mtxf *mtx);
 void mtx00015edc(f32 mult, Mtxf *mtx);
 void mtx00015f04(f32 scale, Mtxf *arg1);
 void mtx00015f4c(f32 scale, Mtxf *arg1);
+void mtxScale3(f32 sx, f32 sy, f32 sz, Mtxf *mtx);
 void mtx00015f88(f32 arg0, Mtxf *arg1);
 u32 mtxGetObfuscatedRomBase(void);
 void mtxF2L(Mtxf *src, Mtxf *dst);

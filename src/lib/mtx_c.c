@@ -287,6 +287,31 @@ void mtx00015f4c(f32 mult, Mtxf *mtx)
 	mtx->m[2][2] *= mult;
 }
 
+/**
+ * Scale the matrix's basis anisotropically.
+ *
+ * mtx00015f04 and mtx00015f4c both scale all three basis vectors by the same
+ * factor, so a joint scaled with them gets larger in every direction at once.
+ * This scales each basis vector independently, which lets a joint be stretched
+ * along one axis without being inflated on the others.
+ *
+ * mtxScale3(s, s, s, mtx) is equivalent to mtx00015f4c(s, mtx).
+ */
+void mtxScale3(f32 sx, f32 sy, f32 sz, Mtxf *mtx)
+{
+	mtx->m[0][0] *= sx;
+	mtx->m[0][1] *= sx;
+	mtx->m[0][2] *= sx;
+
+	mtx->m[1][0] *= sy;
+	mtx->m[1][1] *= sy;
+	mtx->m[1][2] *= sy;
+
+	mtx->m[2][0] *= sz;
+	mtx->m[2][1] *= sz;
+	mtx->m[2][2] *= sz;
+}
+
 void mtx00015f88(f32 mult, Mtxf *mtx)
 {
 	mtx->m[0][0] *= mult;

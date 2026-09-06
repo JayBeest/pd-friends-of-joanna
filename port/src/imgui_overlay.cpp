@@ -15,7 +15,12 @@
 #undef false
 #include "ext_tex.h"
 #include "fs.h"
+#include "game/camera.h"
+#include "game/chr.h"
 #include "game/modeldef.h"
+#include "game/player.h"
+#include "game/prop.h"
+#include "lib/model.h"
 #include "imgui_overlay.h"
 #include "input.h"
 #include "mod.h"
@@ -39,6 +44,16 @@ static bool g_ImGuiOverlayShowMemory = false;
 static bool g_ImGuiOverlayShowProfiler = false;
 static bool g_ImGuiOverlayShowTextures = false;
 static bool g_ImGuiOverlayShowLookingAt = false;
+static bool g_ImGuiOverlayShowProportions = false;
+static struct chrdata *g_ImGuiPropChr = NULL;
+static bool g_ImGuiPropApply = true;
+static bool g_ImGuiPropMirror = true;
+static bool g_ImGuiPropDrawBox = true;
+static s32 g_ImGuiPropMarkJoint = -1;
+static f32 g_ImGuiPropHeight = 0.0f;
+static f32 g_ImGuiPropScale = 1.0f;
+static s32 g_ImGuiPropBaseHeight = 0;
+static f32 g_ImGuiPropBaseScale = 1.0f;
 static bool g_ImGuiOverlayShowActivePropsOnly = true;
 static bool g_ImGuiOverlayExpandLatch = false;
 static bool g_ImGuiOverlayExpandValue = false;
@@ -157,7 +172,8 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Textures=%d", &value) == 1) { g_ImGuiOverlayShowTextures = value != 0; return; }
 	if (sscanf(line, "Memory=%d", &value) == 1) { g_ImGuiOverlayShowMemory = value != 0; return; }
 	if (sscanf(line, "Profiler=%d", &value) == 1) { g_ImGuiOverlayShowProfiler = value != 0; return; }
-	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; }
+	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; return; }
+	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; }
 }
 
 static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *handler, ImGuiTextBuffer *buffer)
@@ -170,7 +186,8 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Textures=%d\n", g_ImGuiOverlayShowTextures);
 	buffer->appendf("Memory=%d\n", g_ImGuiOverlayShowMemory);
 	buffer->appendf("Profiler=%d\n", g_ImGuiOverlayShowProfiler);
-	buffer->appendf("LookingAt=%d\n\n", g_ImGuiOverlayShowLookingAt);
+	buffer->appendf("LookingAt=%d\n", g_ImGuiOverlayShowLookingAt);
+	buffer->appendf("Proportions=%d\n\n", g_ImGuiOverlayShowProportions);
 }
 
 static u32 imguiOverlayGetWindowState(void)
@@ -182,7 +199,8 @@ static u32 imguiOverlayGetWindowState(void)
 		| (g_ImGuiOverlayShowTextures ? 1u << 4 : 0)
 		| (g_ImGuiOverlayShowMemory ? 1u << 5 : 0)
 		| (g_ImGuiOverlayShowProfiler ? 1u << 6 : 0)
-		| (g_ImGuiOverlayShowLookingAt ? 1u << 7 : 0);
+		| (g_ImGuiOverlayShowLookingAt ? 1u << 7 : 0)
+		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0);
 }
 
 static void imguiOverlaySaveWindowState(void)
@@ -2779,6 +2797,354 @@ static void imguiOverlaySetVisible(bool visible)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Proportions panel
+//
+// Latch onto a spawned chr and mutate her height, model scale and joint scales
+// live. Everything here writes per-chr overrides rather than the shared
+// g_HeadsAndBodies row, because bodies are shared -- writing the row while
+// latched onto a guard would resize every guard wearing it.
+//
+// The three knobs have three different latencies. Joint scales are read every
+// frame in chrHandleJointPositioned, so they are live for free. Model scale is
+// a one-line setter on the live model. Height was copied into vv_eyeheight when
+// the chr body was built, so it has to be re-applied through playerSetHeight,
+// and only means anything when the latched chr is the player -- AI use a flat
+// chr->height and never consult the body row.
+// ---------------------------------------------------------------------------
+
+static void imguiPropRelease(void)
+{
+	g_ImGuiPropChr = NULL;
+	g_JointScaleChr = NULL;
+}
+
+static bool imguiPropChrIsPlayer(struct chrdata *chr)
+{
+	return chr && g_Vars.currentplayer
+		&& g_Vars.currentplayer->prop
+		&& g_Vars.currentplayer->prop->chr == chr;
+}
+
+static s32 imguiPropCountSharingBody(s32 bodynum)
+{
+	s32 n = 0;
+
+	if (!g_ChrSlots) {
+		return 0;
+	}
+
+	for (s32 i = 0; i < g_NumChrSlots; i++) {
+		if (g_ChrSlots[i].chrnum >= 0 && g_ChrSlots[i].bodynum == bodynum) {
+			n++;
+		}
+	}
+
+	return n;
+}
+
+static s32 imguiPropJointCount(struct chrdata *chr)
+{
+	if (!chr || !chr->model || !chr->model->definition || !chr->model->definition->skel) {
+		return 0;
+	}
+
+	s32 n = (s32)chr->model->definition->skel->numthings;
+
+	return n > MAX_JOINT_OVERRIDES ? MAX_JOINT_OVERRIDES : n;
+}
+
+static s32 imguiPropJointMirror(struct chrdata *chr, s32 joint)
+{
+	if (!chr || !chr->model || !chr->model->definition || !chr->model->definition->skel) {
+		return joint;
+	}
+
+	struct skeleton *skel = chr->model->definition->skel;
+
+	if (joint < 0 || joint >= (s32)skel->numthings) {
+		return joint;
+	}
+
+	return (s32)skel->things[joint][1];
+}
+
+static void imguiPropLatch(struct chrdata *chr)
+{
+	if (!imguiOverlayChrIsCurrent(chr)) {
+		return;
+	}
+
+	g_ImGuiPropChr = chr;
+
+	s32 bodynum = (s32)chr->bodynum;
+	bool bodyok = bodynum >= 0 && bodynum < g_NumHeadsAndBodies;
+
+	g_ImGuiPropBaseHeight = bodyok ? (s32)g_HeadsAndBodies[bodynum].height : 0;
+	g_ImGuiPropBaseScale = bodyok ? g_HeadsAndBodies[bodynum].scale : 1.0f;
+	g_ImGuiPropHeight = (f32)g_ImGuiPropBaseHeight;
+	g_ImGuiPropScale = g_ImGuiPropBaseScale;
+	g_ImGuiPropMarkJoint = -1;
+
+	// The override table is uninitialised until something latches. Fill it with
+	// identity rather than relying on the engine-side zero-is-unset guard, so
+	// the values the panel shows are the values the engine reads.
+	for (s32 i = 0; i < MAX_JOINT_OVERRIDES; i++) {
+		g_JointScaleOverride[i][0] = 1.0f;
+		g_JointScaleOverride[i][1] = 1.0f;
+		g_JointScaleOverride[i][2] = 1.0f;
+	}
+}
+
+static void imguiPropApplyLive(struct chrdata *chr)
+{
+	s32 bodynum = (s32)chr->bodynum;
+	bool bodyok = bodynum >= 0 && bodynum < g_NumHeadsAndBodies;
+
+	if (!g_ImGuiPropApply) {
+		g_JointScaleChr = NULL;
+
+		if (chr->model && bodyok) {
+			modelSetScale(chr->model, g_ImGuiPropBaseScale * 0.10000001f);
+		}
+
+		if (imguiPropChrIsPlayer(chr)) {
+			playerSetHeight(g_ImGuiPropBaseHeight, (s32)chr->headnum);
+		}
+
+		return;
+	}
+
+	g_JointScaleChr = chr;
+
+	if (chr->model) {
+		modelSetScale(chr->model, g_ImGuiPropScale * 0.10000001f);
+	}
+
+	if (imguiPropChrIsPlayer(chr)) {
+		playerSetHeight((s32)(g_ImGuiPropHeight + 0.5f), (s32)chr->headnum);
+	}
+}
+
+static void imguiOverlayDrawProportionsPanel(void)
+{
+	// The latch is a raw pointer, and the engine drops it when the chr dies or
+	// the stage resets. Re-check every frame anyway: the panel can outlive a
+	// slot being recycled into a different chr.
+	if (g_ImGuiPropChr && !imguiOverlayChrIsCurrent(g_ImGuiPropChr)) {
+		imguiPropRelease();
+	}
+
+	struct prop *aimed = imguiOverlayCanAimInspect()
+		? propFindAimingAt(HAND_RIGHT, false, FINDPROPCONTEXT_QUERY)
+		: NULL;
+	struct chrdata *aimedchr = NULL;
+
+	if (aimed && imguiOverlayPropIsCurrent(aimed)
+			&& (aimed->type == PROPTYPE_CHR || aimed->type == PROPTYPE_PLAYER)
+			&& imguiOverlayChrIsCurrent(aimed->chr)) {
+		aimedchr = aimed->chr;
+	}
+
+	struct chrdata *self = (g_Vars.currentplayer && g_Vars.currentplayer->prop)
+		? g_Vars.currentplayer->prop->chr
+		: NULL;
+
+	// TODO(catherine): strings throughout this panel are placeholders.
+	if (ImGui::Button("Latch")) {
+		imguiPropLatch(aimedchr ? aimedchr : self);
+	}
+
+	ImGui::SameLine();
+
+	if (aimedchr) {
+		ImGui::Text("aiming at chr 0x%04x", (u32)(u16)aimedchr->chrnum);
+	} else if (self) {
+		ImGui::TextDisabled("nothing aimed at -- latches you");
+	} else {
+		ImGui::TextDisabled("no live player");
+	}
+
+	if (!g_ImGuiPropChr) {
+		ImGui::Separator();
+		ImGui::TextDisabled("Nothing latched.");
+		return;
+	}
+
+	struct chrdata *chr = g_ImGuiPropChr;
+	s32 bodynum = (s32)chr->bodynum;
+	bool bodyok = bodynum >= 0 && bodynum < g_NumHeadsAndBodies;
+	bool isplayer = imguiPropChrIsPlayer(chr);
+
+	ImGui::Text("latched chr 0x%04x%s", (u32)(u16)chr->chrnum, isplayer ? " (you)" : "");
+	ImGui::SameLine();
+
+	if (ImGui::Button("Release")) {
+		imguiPropRelease();
+		return;
+	}
+
+	ImGui::SameLine();
+	ImGui::Checkbox("apply", &g_ImGuiPropApply);
+
+	ImGui::Separator();
+
+	s32 sharing = imguiPropCountSharingBody(bodynum);
+
+	ImGui::Text("body 0x%02x", (u32)bodynum);
+	ImGui::SameLine();
+
+	if (sharing > 1) {
+		ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.30f, 1.0f), "%d live chrs share this row", sharing);
+	} else {
+		ImGui::TextDisabled("only chr on this row");
+	}
+
+	s32 jointcount = imguiPropJointCount(chr);
+
+	ImGui::Text("skeleton: %d joints", jointcount);
+
+	// --- height ----------------------------------------------------------
+	ImGui::SeparatorText("Height");
+
+	if (!isplayer) {
+		ImGui::TextDisabled("AI use a flat chr->height and ignore the body row.");
+		ImGui::TextDisabled("Latch yourself to edit height.");
+	} else if (!bodyok) {
+		ImGui::TextDisabled("body row out of range");
+	} else {
+		f32 h = g_ImGuiPropHeight;
+
+		if (ImGui::DragFloat("eye", &h, 0.25f, 40.0f, 255.0f, "%.0f")) {
+			g_ImGuiPropHeight = h;
+		}
+
+		s32 headnum = (s32)(u8)chr->headnum;
+		s32 headadd = (headnum >= 0 && headnum < g_NumHeadsAndBodies)
+			? (s32)g_HeadsAndBodies[headnum].height
+			: 13;
+		s32 cap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
+		s32 crown = (s32)(g_ImGuiPropHeight + 0.5f) + headadd;
+
+		ImGui::Text("shipped %d  ->  %d   %+d",
+				g_ImGuiPropBaseHeight,
+				(s32)(g_ImGuiPropHeight + 0.5f),
+				(s32)(g_ImGuiPropHeight + 0.5f) - g_ImGuiPropBaseHeight);
+
+		if (crown > cap) {
+			ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f),
+					"crown %d clamps to %d (collision top)", crown, cap);
+		} else {
+			ImGui::TextDisabled("crown %d, cap %d", crown, cap);
+		}
+
+		ImGui::TextDisabled("also changes movement speed, weapon sway and crouch depth.");
+	}
+
+	// --- model scale -----------------------------------------------------
+	ImGui::SeparatorText("Model scale");
+
+	if (!bodyok) {
+		ImGui::TextDisabled("body row out of range");
+	} else {
+		f32 s = g_ImGuiPropScale;
+
+		if (ImGui::DragFloat("scale", &s, 0.0005f, 0.05f, 4.0f, "%.5f")) {
+			g_ImGuiPropScale = s;
+		}
+
+		ImGui::Text("shipped %.5f  ->  %.5f   x%.4f",
+				g_ImGuiPropBaseScale, g_ImGuiPropScale,
+				g_ImGuiPropBaseScale != 0.0f ? g_ImGuiPropScale / g_ImGuiPropBaseScale : 1.0f);
+	}
+
+	// --- joints ----------------------------------------------------------
+	ImGui::SeparatorText("Joints");
+	ImGui::Checkbox("mirror", &g_ImGuiPropMirror);
+	ImGui::SameLine();
+	ImGui::Checkbox("draw marker", &g_ImGuiPropDrawBox);
+
+	if (jointcount <= 0) {
+		ImGui::TextDisabled("no skeleton");
+	} else if (ImGui::BeginTable("fojoproportionjoints", 6,
+			ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+			ImVec2(0.0f, 260.0f))) {
+		ImGui::TableSetupColumn("#");
+		ImGui::TableSetupColumn("mir");
+		ImGui::TableSetupColumn("x");
+		ImGui::TableSetupColumn("y");
+		ImGui::TableSetupColumn("z");
+		ImGui::TableSetupColumn("mark");
+		ImGui::TableSetupScrollFreeze(0, 1);
+		ImGui::TableHeadersRow();
+
+		for (s32 j = 0; j < jointcount; j++) {
+			s32 mirror = imguiPropJointMirror(chr, j);
+
+			ImGui::TableNextRow();
+			ImGui::PushID(j);
+
+			ImGui::TableNextColumn();
+			ImGui::Text("%d", j);
+
+			ImGui::TableNextColumn();
+
+			if (mirror == j) {
+				ImGui::TextDisabled("--");
+			} else {
+				ImGui::Text("%d", mirror);
+			}
+
+			for (s32 axis = 0; axis < 3; axis++) {
+				ImGui::TableNextColumn();
+				ImGui::PushID(axis);
+				ImGui::SetNextItemWidth(72.0f);
+
+				f32 v = g_JointScaleOverride[j][axis];
+
+				if (ImGui::DragFloat("##v", &v, 0.002f, 0.05f, 4.0f, "%.3f")) {
+					g_JointScaleOverride[j][axis] = v;
+
+					if (g_ImGuiPropMirror && mirror != j
+							&& mirror >= 0 && mirror < MAX_JOINT_OVERRIDES) {
+						g_JointScaleOverride[mirror][axis] = v;
+					}
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::TableNextColumn();
+
+			bool marked = g_ImGuiPropMarkJoint == j;
+
+			if (ImGui::RadioButton("##mark", marked)) {
+				g_ImGuiPropMarkJoint = marked ? -1 : j;
+			}
+
+			ImGui::PopID();
+		}
+
+		ImGui::EndTable();
+	}
+
+	if (ImGui::Button("Reset joints")) {
+		for (s32 i = 0; i < MAX_JOINT_OVERRIDES; i++) {
+			g_JointScaleOverride[i][0] = 1.0f;
+			g_JointScaleOverride[i][1] = 1.0f;
+			g_JointScaleOverride[i][2] = 1.0f;
+		}
+	}
+
+	ImGui::SameLine();
+
+	if (ImGui::Button("Reset all")) {
+		imguiPropLatch(chr);
+	}
+
+	imguiPropApplyLive(chr);
+}
+
 static void imguiOverlaySetNextWindowDefaults(const ImVec2 &size, float xAnchor, float yAnchor)
 {
 	const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -2805,6 +3171,7 @@ static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 	ImGui::MenuItem("Memory", NULL, &g_ImGuiOverlayShowMemory);
 	ImGui::MenuItem("Profiler", NULL, &g_ImGuiOverlayShowProfiler);
 	ImGui::MenuItem("Looking At", NULL, &g_ImGuiOverlayShowLookingAt, canOpenLookingAt);
+	ImGui::MenuItem("Proportions", NULL, &g_ImGuiOverlayShowProportions);
 	ImGui::EndPopup();
 }
 
@@ -2953,6 +3320,14 @@ void imguiOverlayRender(void)
 			imguiOverlaySetNextWindowDefaults(ImVec2(430.0f, 340.0f), 1.0f, 0.0f);
 			if (ImGui::Begin("Fojo Looking At", &g_ImGuiOverlayShowLookingAt)) {
 				imguiOverlayDrawLookingAtPanel();
+			}
+			ImGui::End();
+		}
+
+		if (g_ImGuiOverlayShowProportions) {
+			imguiOverlaySetNextWindowDefaults(ImVec2(460.0f, 620.0f), 0.0f, 0.5f);
+			if (ImGui::Begin("Fojo Proportions", &g_ImGuiOverlayShowProportions)) {
+				imguiOverlayDrawProportionsPanel();
 			}
 			ImGui::End();
 		}

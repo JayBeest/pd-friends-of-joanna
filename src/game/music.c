@@ -108,11 +108,20 @@ u16 musicGetVolume(void)
 
 /**
  * fojo: the pause menu track plays under the game's music setting rather than
- * at it. one place to change the fraction.
+ * at it. runtime so the imgui audio panel can tune it live; registered as
+ * Game.MenuMusicDivisor.
  */
+s32 g_MusicMenuVolumeDivisor = 5;
+
 u16 musicGetMenuVolume(void)
 {
-	return musicGetVolume() / MUSIC_MENU_VOLUME_DIVISOR;
+	s32 divisor = g_MusicMenuVolumeDivisor;
+
+	if (divisor < 1) {
+		divisor = 1;
+	}
+
+	return musicGetVolume() / divisor;
 }
 
 void musicSetVolume(u16 volume)
@@ -131,7 +140,7 @@ void musicSetVolume(u16 volume)
 			// lives inside the pause menu, so this path runs while the menu
 			// track is playing and would otherwise snap it to full.
 			if (g_SeqChannels[i].tracktype == TRACKTYPE_MENU) {
-				seqSetVolume(&g_SeqInstances[i], volume / MUSIC_MENU_VOLUME_DIVISOR);
+				seqSetVolume(&g_SeqInstances[i], musicGetMenuVolume());
 			} else {
 				seqSetVolume(&g_SeqInstances[i], volume);
 			}

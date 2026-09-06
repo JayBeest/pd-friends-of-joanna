@@ -6,6 +6,7 @@
 
 u16 musicGetVolume(void);
 u16 musicGetMenuVolume(void);
+extern s32 g_MusicMenuVolumeDivisor;
 void musicSetVolume(u16 volume);
 bool musicIsTrackState(s32 tracktype, s32 state);
 s32 musicGetTrackState(s32 tracktype);

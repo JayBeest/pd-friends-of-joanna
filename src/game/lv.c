@@ -1155,7 +1155,19 @@ Gfx *lvRender(Gfx *gdl)
 				if (chr->blurdrugamount > 0
 						&& !g_Vars.currentplayer->invincible
 						&& !g_Vars.currentplayer->training) {
-					bluramount = (chr->blurdrugamount * 130) / TICKS(5000) + 100;
+					// fojo: the 100 is a constant slab -- vanilla switches it on the
+					// frame the counter leaves zero and drops all of it the frame the
+					// counter reaches zero, so 39% of the effect appears and vanishes
+					// with no transition. ramp it over the last stretch instead.
+					// identical to vanilla above the window, and blurdrugamount is
+					// untouched, so every gameplay threshold keeps its exact timing.
+					u32 floor = 100;
+
+					if (chr->blurdrugamount < TICKS(500)) {
+						floor = (100 * chr->blurdrugamount) / TICKS(500);
+					}
+
+					bluramount = (chr->blurdrugamount * 130) / TICKS(5000) + floor;
 
 					if (bluramount > 230) {
 						bluramount = 230;

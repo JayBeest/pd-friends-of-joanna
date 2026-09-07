@@ -685,19 +685,19 @@ static inline void inputParseBindString(const s32 ctrl, const u32 ck, char *bind
 }
 
 /**
- * Move the right stick click off the third person toggle and onto the combat
- * roll, on a config that predates the roll existing.
+ * Move the right stick click off the jump and onto the combat roll, on a config
+ * that predates the roll existing.
  *
  * The roll's key was in the enum long before it meant anything, so every config
  * ever written has a line for it, saying NONE - an explicit unbind, which the
  * loader honours over the default. Left alone, that config keeps the right
- * stick on the third person toggle and gives the roll no button at all, and no
- * amount of changing the defaults reaches it.
+ * stick on the jump and gives the roll no button at all, and no amount of
+ * changing the defaults reaches it.
  *
  * The pair is the fingerprint: a roll with nothing bound to it and a right
- * stick still sitting on the toggle can only have been written by a build where
+ * stick still sitting on CK_1000 can only have been written by a build where
  * the roll did not exist. A fresh config gets the defaults instead of coming
- * through here, and anyone who binds the roll to anything, or moves the toggle
+ * through here, and anyone who binds the roll to anything, or moves the jump
  * off the right stick, has said what they want and is left with it.
  */
 static void inputMigrateRollBind(s32 ctrl)

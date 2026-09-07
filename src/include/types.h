@@ -885,6 +885,12 @@ struct aibot {
   // honest; aibot is mempAlloc'd in botmgrAllocateBot() and nothing casts
   // ROM bytes to it, so growing it costs nothing but the N64 build's match.
   /*ext*/ s32 jumptimer60;
+  // The lvframe60 a roll was last thrown on, or 0 for never. The cooldown and
+  // the window in which the roll has the body to itself are both measured
+  // from it, the way the player's rolltime60 is.
+  /*ext*/ s32 rolltime60;
+  // Earliest lvframe60 at which this bot may roll again, on the same terms.
+  s32 rolltimer60;
 #endif
 };
 
@@ -2923,6 +2929,13 @@ struct player {
   /*ext*/ f32 camtiltroll;
   /*ext*/ f32 camtiltpitch;
   /*ext*/ f32 codaimfrac; // COD Style Aiming: how far the gun has come up to the sights, 0 to 1
+  // The combat roll's push, in world units per tick, and the frame the roll
+  // started. Held as a vector rather than a direction and a speed so that
+  // turning mid roll does not curve it, and decayed rather than run for a
+  // fixed duration - the same arrangement as a chr's fallspeed, which is what
+  // carries the simulant side of the same move.
+  struct coord rollspeed;
+  s32 rolltime60;
 };
 
 struct ailist {

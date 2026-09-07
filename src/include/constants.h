@@ -2978,6 +2978,62 @@
 #define JUMP_IMPULSE 5.75f
 
 /**
+ * The combat roll.
+ *
+ * Perfect Dark's guards have rolled since release - chrAttackRoll() picks out of
+ * g_RollAttackAnims and ACT_ATTACKROLL runs it, firing on the way through - and
+ * neither a player nor a simulant has ever had one, because neither has an
+ * action that could hold it.
+ *
+ * The push is an impulse rather than a speed held for a duration, because both
+ * movers already had somewhere to put one that decays: a chr's fallspeed is
+ * horizontal as well as vertical, applied to the position every tick and
+ * decayed by 0.9 while it is on the ground, which is how an explosion throws a
+ * body. The player gets the same treatment through its own copy of that
+ * velocity, added where bondforcespeed is added and decayed on the same curve,
+ * so the two roll the same distance out of the same numbers.
+ *
+ * 22.5 a tick decaying by 0.9 covers about 225 units before it drops below the
+ * tenth of a unit that counts as stopped - a little over Jo's standing height,
+ * so the roll clears a doorway and no more. Most of it is spent in the first
+ * half second, which is what makes it read as a dodge rather than a sprint.
+ */
+#define ROLL_IMPULSE  22.5f
+#define ROLL_DECAY    (PAL ? 0.88120001554489f : 0.9f)
+#define ROLL_STOPPED  0.1f
+
+/**
+ * How fast the roll animation plays.
+ *
+ * The guards' own speed is chrGetRangedSpeed(chr, 0.5, 0.8), which spends over
+ * a second and a half on the 78 frames of the longest roll. That is a guard
+ * taking cover with a rifle; this is a dodge, and it wants to be over while the
+ * push it was started with is still moving the body.
+ */
+#define ROLL_ANIMSPEED 1.5f
+
+/**
+ * How long before another roll can be started.
+ *
+ * Long enough that the animation is off the body first, so the second roll
+ * starts from standing rather than out of the middle of the first.
+ */
+#define ROLL_COOLDOWN TICKS(60)
+
+/**
+ * How long a roll has the body to itself.
+ *
+ * A roll is a commitment: no shooting, no punching, no throwing and no jumping
+ * until it is over. That is the trade for the distance it covers, and it is the
+ * only way the animation is ever seen - a simulant that punches or throws two
+ * frames into a roll replaces the roll on the body with the swing, and all that
+ * is left of the dodge is a bot sliding sideways in its running pose.
+ *
+ * Three quarters of a second is about what the four rolls take at
+ * ROLL_ANIMSPEED, so the block lifts as the body comes back up.
+ */
+#define ROLL_BUSY TICKS(45)
+/**
  * How high JUMP_IMPULSE actually gets, v * v / (2 * 0.27777779), rounded up.
  *
  * Only used to bound how far below an airborne simulant its collision cylinder
@@ -4892,6 +4948,7 @@ enum weaponnum {
 #define BUTTON_EYELIDS          CONT_0040
 #define BUTTON_DROPITEM         CONT_0080
 #define BUTTON_MOONJUMP         CONT_0100
+#define BUTTON_ROLL             CONT_0800
 #define BUTTON_TOGGLEGRAVITY    CONT_0200
 
 #define MOUSEAIM_CLASSIC 0 // crosshair moves around the screen in aim mode

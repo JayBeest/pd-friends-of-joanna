@@ -2,6 +2,7 @@
 #include "constants.h"
 #include "../lib/naudio/n_sndp.h"
 #include "game/bondmove.h"
+#include "game/bondwalk.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
 #include "game/inv.h"
@@ -12014,6 +12015,14 @@ bool weaponIsAGun(s32 weaponnum)
 
 void bgunTickGameplay(bool triggeron)
 {
+#ifndef PLATFORM_N64
+	// A roll has the body until it is over, the same as it does for a simulant.
+	// Anything already in flight finishes; nothing new starts.
+	if (bwalkIsRolling()) {
+		triggeron = false;
+	}
+#endif
+
 	s32 gunsfiring[2] = {false, false};
 	struct player *player = g_Vars.currentplayer;
 	s32 i;

@@ -1729,6 +1729,15 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 							g_Vars.currentplayer->crouchpos--;
 						}
 
+						// The combat roll, taken on the button's edge for the
+						// same reason as the jump below it.
+						for (i = 0; i < numsamples; i++) {
+							if (joyGetButtonsPressedOnSample(i, contpad1, c1allowedbuttons) & BUTTON_ROLL) {
+								bwalkTryRoll();
+								break;
+							}
+						}
+
 						// Jump, when the arena has it turned on. Taken on the
 						// button's edge rather than while it is held, so that
 						// resting on the key does not bounce.

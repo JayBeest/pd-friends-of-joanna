@@ -1476,6 +1476,53 @@ void playerChooseBodyAndHead(s32 *bodynum, s32 *headnum, s32 *arg2)
 }
 
 /**
+ * Whether the player has asked for the third person camera.
+ *
+ * This is the request. playerIsThirdPerson() answers the different question of
+ * whether they are getting it this frame, which aiming and a close wall can
+ * both say no to, and that is what the camera, the HUD and the body animation
+ * ask.
+ *
+ * The body is built for the request rather than for the answer: aiming only
+ * moves the camera, and building the body around every shot would be a model
+ * load each way.
+ */
+static bool playerWantsThirdPerson(struct player *player)
+{
+#ifdef PLATFORM_N64
+	return false;
+#else
+	return player->thirdperson;
+#endif
+}
+
+/**
+ * Whether this player's chr body is built inside gunmem.
+ *
+ * Stock, a solo player only ever has a body for a cutscene, an eyespy or a
+ * Slayer rocket - occasions where the first person gun is not being drawn - so
+ * the body is built in gunmem and the gun is evicted for as long as it lasts.
+ * Multiplayer cannot do that, because every player needs a body and a gun at
+ * the same time, so it loads the body the ordinary way instead.
+ *
+ * Playable third person needs the multiplayer arrangement in solo too. Aiming
+ * puts the camera back on the eye and wants the gun there, and it does that
+ * several times a fight: swapping gunmem each way would be a model load each
+ * way, and bgunChangeGunMem() takes ticks and a locked screen to do it.
+ *
+ * The body remembers which of the two it was through gunmem2, so a body built
+ * one way is always taken down the same way.
+ */
+static bool playerBodyUsesGunMem(void)
+{
+	if (playerWantsThirdPerson(g_Vars.currentplayer)) {
+		return false;
+	}
+
+	return !g_Vars.mplayerisrunning || (IS4MB() && PLAYERCOUNT() == 1);
+}
+
+/**
  * Apply an eye height to the current player, deriving the head height and the
  * animated height from it.
  *
@@ -1603,7 +1650,7 @@ void playerTickChrBody(void)
 			headnum = HEAD_DARK_COMBAT;
 		}
 
-		if (!g_Vars.mplayerisrunning || (IS4MB() && PLAYERCOUNT() == 1)) {
+		if (playerBodyUsesGunMem()) {
 			// 1 player
 			if (g_Vars.currentplayer->gunmem2 == NULL) {
 				if (!g_IsModalMenuMode && bgunChangeGunMem(GUNMEMOWNER_CHRBODY)) {
@@ -1700,7 +1747,7 @@ void playerTickChrBody(void)
 
 			texGetPoolLeftPos(&texpool);
 		} else {
-			// 2-4 players
+			// 2-4 players, and solo third person
 			if (g_HeadsAndBodies[bodynum].modeldef == NULL) {
 				g_HeadsAndBodies[bodynum].modeldef = modeldefLoadToNew(g_HeadsAndBodies[bodynum].filenum);
 			}
@@ -1752,7 +1799,9 @@ void playerTickChrBody(void)
 		playerSetHeight((s32)g_HeadsAndBodies[bodynum].height, headnum);
 
 		if (weaponmodelnum >= 0) {
-			if (g_Vars.mplayerisrunning == false) {
+			// The same choice as the body above: allocation, offset1, offset2
+			// and texpool only exist when the gunmem branch ran.
+			if (playerBodyUsesGunMem()) {
 				weaponmodeldef = modeldefLoad(g_ModelStates[weaponmodelnum].fileid, allocation + offset1, offset2 - offset1, &texpool);
 				fileGetLoadedSize(g_ModelStates[weaponmodelnum].fileid);
 				modelAllocateRwData(weaponmodeldef);
@@ -1788,8 +1837,15 @@ void playerRemoveChrBody(void)
 			chrRemove(g_Vars.currentplayer->prop, false);
 			g_Vars.currentplayer->model00d4 = NULL;
 			bmoveUpdateRooms(g_Vars.currentplayer);
-			bgunFreeGunMem();
-			g_Vars.currentplayer->gunmem2 = NULL;
+
+			// A solo third person body was built out of the heap and chrRemove()
+			// has already given it back. gunmem belongs to the first person gun
+			// in that case, and freeing it here would strand the gun with no
+			// memory and no reload pending.
+			if (g_Vars.currentplayer->gunmem2) {
+				bgunFreeGunMem();
+				g_Vars.currentplayer->gunmem2 = NULL;
+			}
 		}
 	}
 }
@@ -3562,6 +3618,231 @@ static void playerTiltCamera(struct coord *camup, struct coord *camlook)
 	camup->z = up.z * cosang + right.z * sinang;
 }
 
+/**
+ * Whether this player is currently watching themselves from behind.
+ *
+ * haschrbody is the whole of the condition beyond the request. Multiplayer
+ * always has a body; solo gets one from the TICKMODE_NORMAL branch of
+ * playerTick() for as long as the request stands, built out of the heap rather
+ * than out of gunmem so that the first person gun keeps its memory. Either way
+ * the frame in which the body is still being built is one the player spends
+ * looking through their own eyes.
+ *
+ * Aiming gives first person back for as long as it lasts. The camera sits 200
+ * units behind the eye and the crosshair still marks where the gun points, but
+ * those 200 units are 200 units of the player's own back and shoulder between
+ * the eye and the shot. Aim mode is the moment the player asks for the precise
+ * view, and the precise view is the one from the eye. insightaimmode is the
+ * whole of that request whichever way it was made - held, toggled, or forced
+ * on by the horizon scanner.
+ *
+ * The toggle itself is left alone, so lowering the gun returns the player to
+ * wherever they had put the camera.
+ *
+ * A dead player is not aiming, whatever insightaimmode still says. Nothing
+ * clears it on death - bmoveProcessInput() stops reading the controller
+ * instead - so dying with the gun up would otherwise leave the request set for
+ * the whole death and hand back the one view the death has no use for.
+ */
+bool playerIsThirdPerson(struct player *player)
+{
+#ifdef PLATFORM_N64
+	return false;
+#else
+	return playerWantsThirdPerson(player)
+		&& (!player->insightaimmode || player->isdead)
+		&& player->haschrbody;
+#endif
+}
+
+#ifndef PLATFORM_N64
+/**
+ * Put the weapons the player is holding into the body's hands, and take out
+ * the ones they are not.
+ *
+ * playermgrCreateWeapon() is called from exactly one place: the frame the
+ * change gun animation raises a new weapon, and then only in multiplayer.
+ * Every other way a gun reaches the player's hands leaves the body empty
+ * handed - spawning holding one, an equip that finds the weapon already
+ * current and returns early, a model that had no slot free on the frame it was
+ * asked for. None of it showed before, because the only body the game drew was
+ * somebody else's, and theirs is filled by their own tick.
+ *
+ * This runs every frame the body is animated, so a create that fails for want
+ * of a model slot is retried on the next frame rather than lost for the life.
+ * playermgrCreateWeapon() only builds what is missing, so the frames where
+ * nothing has changed cost a pointer test per hand.
+ *
+ * The one time empty hands are meant is a gun change: the stock code takes the
+ * old weapon out of them while the arms lower it and puts the new one there as
+ * they raise it. A switch in progress is left to it.
+ *
+ * Everything here works on g_Vars.currentplayer, so it is only ever called for
+ * the player whose tick this is.
+ */
+static void playerSyncBodyWeapons(struct player *player)
+{
+	struct chrdata *chr = player->prop->chr;
+	s32 handnum;
+
+	// A dead player's hands are the death's business: the weapon is freed and
+	// dropped where they fell, and gunctrl keeps naming it for a while yet.
+	// Nothing here should put it back.
+	if (player->isdead) {
+		return;
+	}
+
+	if (player->gunctrl.switchtoweaponnum != -1) {
+		return;
+	}
+
+	for (handnum = 0; handnum < 2; handnum++) {
+		struct prop *held = chr->weapons_held[handnum];
+
+		if (player->hands[handnum].state == HANDSTATE_CHANGEGUN) {
+			continue;
+		}
+
+		// A gun the player has stopped holding. Whatever they hold now is
+		// about to go into the same hand, and the wrong gun reads worse than
+		// no gun.
+		if (held && held->weapon && held->weapon->weaponnum != bgunGetWeaponNum(handnum)) {
+			playermgrDeleteWeapon(handnum);
+			held = NULL;
+		}
+
+		if (held == NULL) {
+			// Does nothing when what they hold has no model to hold: fists,
+			// and the left hand of anything not being dual wielded.
+			playermgrCreateWeapon(handnum);
+		}
+	}
+}
+#endif
+
+/**
+ * Back the camera off along the view axis for third person, stopping short of
+ * whatever is behind the player.
+ *
+ * cdExamLos08() reports the first thing between the eye and where the camera
+ * wants to be and cdGetPos() gives the point it hit. The camera stops
+ * THIRDPERSON_CAMCLEARANCE short of that rather than at it, because sitting
+ * flush against a wall fills the screen with that wall.
+ *
+ * The trace starts at the eye rather than at the player's feet so that it
+ * follows the camera exactly, and only BG and closed doors block it. Props do
+ * not: pulling the view in every time a simulant walked behind you would be
+ * unusable in a match with twenty of them, and a body between the camera and
+ * the player reads as an obstruction anyway.
+ */
+static void playerPullBackCamera(struct coord *campos)
+{
+	struct coord back;
+	struct coord hit;
+	f32 dist = THIRDPERSON_CAMDIST;
+
+	g_Vars.currentplayer->thirdpersondist = 0;
+
+	if (!playerIsThirdPerson(g_Vars.currentplayer)) {
+		return;
+	}
+
+	back.x = campos->x - g_Vars.currentplayer->bond2.unk1c.x * dist;
+	back.y = campos->y - g_Vars.currentplayer->bond2.unk1c.y * dist;
+	back.z = campos->z - g_Vars.currentplayer->bond2.unk1c.z * dist;
+
+	if (cdExamLos08(campos, g_Vars.currentplayer->prop->rooms, &back,
+				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT) == CDRESULT_COLLISION) {
+		cdGetPos(&hit, __LINE__, "player.c");
+
+		dist = sqrtf((hit.x - campos->x) * (hit.x - campos->x)
+				+ (hit.y - campos->y) * (hit.y - campos->y)
+				+ (hit.z - campos->z) * (hit.z - campos->z)) - THIRDPERSON_CAMCLEARANCE;
+
+		// Nothing between here and THIRDPERSON_CAMMINDIST is a view: leave the
+		// camera on the eye and let the HUD put the gun back.
+		if (dist < THIRDPERSON_CAMMINDIST) {
+			return;
+		}
+	}
+
+	g_Vars.currentplayer->thirdpersondist = dist;
+
+	campos->x -= g_Vars.currentplayer->bond2.unk1c.x * dist;
+	campos->y -= g_Vars.currentplayer->bond2.unk1c.y * dist;
+	campos->z -= g_Vars.currentplayer->bond2.unk1c.z * dist;
+
+	// Kept for the death camera, which stops here rather than working out
+	// somewhere of its own to stand.
+	g_Vars.currentplayer->thirdpersoncampos = *campos;
+}
+
+/**
+ * Watch the body fall, from wherever the camera was standing when it did.
+ *
+ * Death is a first person animation. bheadStartDeathAnimation() plays it on
+ * the player's own model and bheadUpdate() hands the head bone's position and
+ * orientation to the camera, which is how stock collapses the view to the
+ * floor. Pulling the camera back along that orientation does not survive it:
+ * within a few frames the head is looking at the carpet, so the trace behind
+ * the eye is straight into the floor, the clamp cuts it below
+ * THIRDPERSON_CAMMINDIST, and the death plays out in first person - the one
+ * view where the animation everyone else can see is the one thing not on
+ * screen.
+ *
+ * So the death camera stops using the head. The eye is still worth having as
+ * the thing to look at, since it is the head bone and follows the body down,
+ * but the camera holds the position it had on the last living frame and turns
+ * to keep the eye centred. It is where the player was already watching from,
+ * so there is nothing to cut to: the picture is unchanged at the moment of
+ * death and the camera simply stays put while the body drops out from under
+ * it.
+ *
+ * That last position is also the last one a wall was traced against, and the
+ * body is not going anywhere, so the clearance it was given still holds and
+ * there is nothing to re-clamp. A distance of 0 means the camera was on the
+ * eye when the player died - first person, or backed into a wall - and stock
+ * takes the death from here.
+ */
+static void playerDeathCamera(struct coord *campos, struct coord *camup, struct coord *camlook)
+{
+	struct coord look;
+	f32 len;
+
+	if (g_Vars.currentplayer->thirdpersondist <= 0
+			|| !playerIsThirdPerson(g_Vars.currentplayer)) {
+		return;
+	}
+
+	look.x = campos->x - g_Vars.currentplayer->thirdpersoncampos.x;
+	look.y = campos->y - g_Vars.currentplayer->thirdpersoncampos.y;
+	look.z = campos->z - g_Vars.currentplayer->thirdpersoncampos.z;
+
+	len = sqrtf(look.x * look.x + look.y * look.y + look.z * look.z);
+
+	// The body would have to have been thrown into the camera's lap for this,
+	// but a look vector of no length has no direction to give.
+	if (len < 1) {
+		return;
+	}
+
+	*campos = g_Vars.currentplayer->thirdpersoncampos;
+
+	// Unit length, because that is what the rest of the game gets from
+	// bond2.unk1c and reads cam_look as. The camera matrix would normalise it
+	// either way; the star field and the gas cloud would not.
+	camlook->x = look.x / len;
+	camlook->y = look.y / len;
+	camlook->z = look.z / len;
+
+	// The head is rolling with the animation and the camera is not following it
+	// any more, so up is up. The camera matrix squares the two off.
+	camup->x = 0;
+	camup->y = 1;
+	camup->z = 0;
+}
+
 void playerTick(bool arg0)
 {
 	f32 aspectratio;
@@ -4123,11 +4404,28 @@ void playerTick(bool arg0)
 		f32 b = 0;
 		f32 c = 0;
 		struct coord spf4;
+		struct coord camup;
+		struct coord camlook;
 		struct prop *prop;
 		struct chrdata *chr;
 		s32 i;
 
-		playerRemoveChrBody();
+		// Solo play tears the body down every tick, having nothing to look at
+		// through its own eyes. Third person is the exception, and needs the
+		// body kept across aiming as well, because aiming only moves the
+		// camera.
+		if (playerWantsThirdPerson(g_Vars.currentplayer)) {
+			if (g_Vars.currentplayer->gunmem2) {
+				// Left over from a cutscene, and so built in gunmem, which is
+				// the first person gun's. Take it down; the next tick builds
+				// ours out of the heap in its place.
+				playerRemoveChrBody();
+			} else {
+				playerTickChrBody();
+			}
+		} else {
+			playerRemoveChrBody();
+		}
 
 		if (g_PlayersWithControl[g_Vars.currentplayernum]) {
 			bmoveTick(1, 1, arg0, 0);
@@ -4149,6 +4447,19 @@ void playerTick(bool arg0)
 		camup = g_Vars.currentplayer->bond2.unk28;
 		camlook = g_Vars.currentplayer->bond2.unk1c;
 
+		// The eye position and both basis vectors in bond2 are left alone, so
+		// everything downstream carries on as if the camera had not moved -
+		// including the room search below, which is handed the player's own
+		// position as the hint and so resolves the camera's room the way the
+		// Slayer rocket's does. Only the copies the camera is built from move,
+		// and while the player is alive only the position of it does.
+		if (g_Vars.currentplayer->isdead) {
+			playerDeathCamera(&spf4, &camup, &camlook);
+		} else {
+			playerPullBackCamera(&spf4);
+		}
+
+		// The lean is applied last, to whatever basis the camera ended up with.
 		playerTiltCamera(&camup, &camlook);
 
 		player0f0c1840(&spf4,
@@ -5034,7 +5345,20 @@ Gfx *playerRenderHud(Gfx *gdl)
 	if (g_Vars.currentplayer->cameramode != CAMERAMODE_EYESPY) {
 		bgunTickGameplay2();
 		gdl = boltbeamsRender(gdl);
-		bgunRender(&gdl);
+
+		// In third person the gun is in Joanna's hands, drawn with the rest of
+		// her. The view model is drawn in screen space from an eye the camera
+		// is no longer sitting at, so it would hang across the picture. Only
+		// the model goes: bgunTickGameplay2() above still runs, and the
+		// crosshair below is still correct, the camera having moved only along
+		// the axis it aims down.
+		//
+		// The distance rather than the toggle, because a wall can hold the
+		// camera on the eye, and that frame wants its gun.
+		if (g_Vars.currentplayer->thirdpersondist <= 0) {
+			bgunRender(&gdl);
+		}
+
 		gdl = lasersightRenderDot(gdl);
 
 		if (g_Vars.currentplayer->visionmode != VISIONMODE_XRAY) {
@@ -5930,14 +6254,29 @@ s32 playerTickThirdPerson(struct prop *prop)
 		}
 	}
 
+	// The first of these is every other player in a multiplayer match: input
+	// drives the player and the body follows it, which is exactly what our own
+	// body needs to do once we can see it. The condition has never had to
+	// include the player looking through their own eyes before.
 	if (player->haschrbody
 			&& player->model00d4
 			&& ((g_Vars.mplayerisrunning && g_Vars.currentplayernum != playernum)
+				|| playerIsThirdPerson(player)
 				|| player->cameramode == CAMERAMODE_EYESPY
 				|| (player->cameramode == CAMERAMODE_THIRDPERSON && player->visionmode == VISIONMODE_SLAYERROCKET))) {
 		chr->actiontype = ACT_BONDMULTI;
 
 		if ((chr->hidden & CHRHFLAG_00000800) == 0) {
+#ifndef PLATFORM_N64
+			// Our own body, and only on the tick that belongs to it. Another
+			// player's body is reached from here too, during whichever tick is
+			// looking at it, and the weapon calls would give the gun to
+			// whoever that tick belongs to instead.
+			if (playernum == g_Vars.currentplayernum && playerWantsThirdPerson(player)) {
+				playerSyncBodyWeapons(player);
+			}
+#endif
+
 			leftprop = chrGetHeldProp(chr, HAND_LEFT);
 			rightprop = chrGetHeldProp(chr, HAND_RIGHT);
 			animnum = modelGetAnimNum(chr->model);

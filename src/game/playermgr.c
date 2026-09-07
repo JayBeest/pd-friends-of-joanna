@@ -669,6 +669,13 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->armourscale = 1;
 
 	g_Vars.players[index]->haschrbody = false;
+#ifndef PLATFORM_N64
+	g_Vars.players[index]->thirdperson = false;
+	g_Vars.players[index]->thirdpersondist = 0;
+	g_Vars.players[index]->thirdpersoncampos.x = 0;
+	g_Vars.players[index]->thirdpersoncampos.y = 0;
+	g_Vars.players[index]->thirdpersoncampos.z = 0;
+#endif
 	g_Vars.players[index]->pausemode = PAUSEMODE_UNPAUSED;
 	g_Vars.players[index]->pausetime60 = 0;
 	g_Vars.players[index]->activatetimelast = 0;

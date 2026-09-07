@@ -2936,6 +2936,20 @@ struct player {
   // carries the simulant side of the same move.
   struct coord rollspeed;
   s32 rolltime60;
+  // Whether this player is watching the match from behind themselves. It is
+  // how one player is looking at the arena rather than a rule of it, so it
+  // lives here and not in mpsetup.options, and is not saved.
+  /*ext*/ bool thirdperson;
+  // How far back the camera actually got this frame after walls were taken
+  // into account, or 0 when it could not get far enough to be worth it. Read
+  // by the HUD, which draws the first person gun whenever the camera is on
+  // the eye.
+  /*ext*/ f32 thirdpersondist;
+  // Where the camera ended up on the last frame it was behind a living
+  // player. Death stops the camera here and turns it to watch the body fall,
+  // so the two are read together: a distance of 0 means there is no frozen
+  // camera to go back to, and the death is the stock first person one.
+  /*ext*/ struct coord thirdpersoncampos;
 };
 
 struct ailist {

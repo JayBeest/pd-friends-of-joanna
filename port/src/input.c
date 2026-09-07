@@ -213,6 +213,7 @@ void inputSetDefaultKeyBinds(s32 cidx, s32 n64mode)
 		{ CK_2000,          SDL_SCANCODE_LCTRL,  0                   },
 		{ CK_1000,          SDL_SCANCODE_SPACE,  0                   },
 		{ CK_0800,          SDL_SCANCODE_C,      0                   },
+		{ CK_0400,          SDL_SCANCODE_V,      0                   },
 		{ CK_DROPITEM,      SDL_SCANCODE_G,      0                   },
 		{ CK_0040,          SDL_SCANCODE_T,      0                   }
 	};

@@ -345,7 +345,11 @@ static const struct romfilepatch filePatches[] = {
 
 static struct romfile fileSlots[64][ROMDATA_MAX_FILES];
 void fileSlotsInit(u32 numMods) {
-	for (s32 i = 0; i < numMods - 1; ++i) {
+	// `i < numMods - 1` skipped the last mod row, and with the shipped default
+	// of one mod dir the bound was 0, so no row was given the patch list at
+	// all. numMods is unsigned, so the old form also wrapped to ~4 billion
+	// iterations over a 64-row array if it were ever called with zero.
+	for (s32 i = 0; i < (s32)numMods; ++i) {
 		for (s32 j = 0; j < ROMDATA_MAX_FILES; ++j) {
 				fileSlots[i][j].patches = filePatches;
 				fileSlots[i][j].numpatches = 2;
@@ -1014,7 +1018,9 @@ static inline void romdataInitFiles(void)
 		}
 
 		for (i = 1; i < (u32)(sizeof(fileSlots[0]) / sizeof(fileSlots[0][0])); ++i) {
-			for (s32 mod = 1; mod < (g_NumModDirs - 1); ++mod) {
+			// `mod < g_NumModDirs - 1` skipped the last mod row, so the
+			// last mod never inherited the ROM's file names and sizes.
+			for (s32 mod = 1; mod < (s32)g_NumModDirs; ++mod) {
 				fileSlots[mod][i] = fileSlots[0][i];
 			}
 		}

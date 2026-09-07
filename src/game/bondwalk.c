@@ -12,6 +12,7 @@
 #include "game/prop.h"
 #include "game/propsnd.h"
 #include "game/objectives.h"
+#include "game/atan2f.h"
 #include "game/bondgun.h"
 #include "game/player.h"
 #include "game/inv.h"
@@ -347,31 +348,77 @@ void bwalkTryJump(void)
 
 #ifndef PLATFORM_N64
 /**
- * Throw the player sideways, and the body with them.
+ * Wrap an angle into -pi..pi, the range atan2f() and the walk's own lean use.
+ */
+static f32 bwalkWrapAngle(f32 angle)
+{
+	while (angle > M_BADPI) {
+		angle -= M_BADTAU;
+	}
+
+	while (angle < -M_BADPI) {
+		angle += M_BADTAU;
+	}
+
+	return angle;
+}
+
+/**
+ * Throw the player the way they are going, and the body with them.
  *
  * The push goes in where bondforcespeed goes in and decays on the chr's curve,
  * so a roll covers the same ground whoever throws it - see ROLL_IMPULSE. It is
  * held in world space rather than as a direction and a speed, so a player who
  * spins the mouse mid roll still lands where the roll was aimed.
  *
- * Which way is the way they are already going: the strafe the roll came out of
- * is the one they meant, and standing still rolls right.
- *
- * The direction comes off bond2.unk00, the flat look direction, and not off
- * chrGetSideVector() the way the simulants' does. A simulant's look angle is
+ * Which way is the way they are already going, now in any direction rather than
+ * only sideways: the movement the roll came out of is the one they meant, and
+ * standing still still rolls right. The direction is built out of bond2.unk00,
+ * the flat look direction, and the strafe axis written out of it, and not off
+ * chrGetSideVector() the way the simulants' is. A simulant's look angle is
  * where it is going, but a player's body carries angleoffset - the lean the
  * walk animation is given so a strafe points where it is headed - and rolling
  * along that would send the roll somewhere the camera is not pointing. The
  * camera is what the player aimed the roll with.
  *
+ * THE ANIMATION ONLY GOES SIDEWAYS. All four roll animations in the ROM are the
+ * guards' combat roll, thrown along the body's own left or right; there is no
+ * forward roll in there to play. So the body is turned instead. angleoffset is
+ * already the channel for exactly this - it is how a strafing walk animation is
+ * made to point where the walk is going, and chrGetAimAngle() reads the same
+ * slot out of an attack animation's own config as animcfg->unk0c - so a roll
+ * sets it to whatever is left over after the nearer of the two sideways
+ * animations is chosen. Rolling right is that animation with no turn at all,
+ * exactly as before; rolling forward is the same animation with the body turned
+ * a quarter turn, so its sideways is the world's forwards. The offset is never
+ * more than a quarter turn, because the animation for the other side is always
+ * available to halve it.
+ *
+ * It snaps on and eases off: playerChooseThirdPersonAnimation() leaves
+ * angleoffset alone while a one shot is playing and then walks it back at its
+ * own limit, which is the roll finishing and her squaring up again. A guard's
+ * unk0c arrives the same way, outright on the frame the animation starts.
+ *
  * The animation is only half of it and can be missing entirely - solo in first
- * person has no body to roll - so it is asked for and not waited on. The push
- * is the move.
+ * person has no body to roll - so the turn is only applied if the animation
+ * actually started. The push is the move, and it goes in whatever direction was
+ * asked for either way.
  */
 void bwalkTryRoll(void)
 {
 	struct chrdata *chr = g_Vars.currentplayer->prop->chr;
+	struct coord fwd;
 	struct coord side;
+	struct coord dir;
+	f32 sidespeed = g_Vars.currentplayer->speedsideways;
+	f32 fwdspeed = g_Vars.currentplayer->speedforwards;
+	f32 rollangle;
+	f32 offsetleft;
+	f32 offsetright;
+	f32 absleft;
+	f32 absright;
+	f32 offset;
+	f32 len;
 	bool toleft;
 
 	if (g_Vars.currentplayer->isdead
@@ -382,24 +429,62 @@ void bwalkTryRoll(void)
 		return;
 	}
 
-	toleft = g_Vars.currentplayer->speedsideways < 0;
-
-	// chrGetSideVector()'s left, written out of the player's own basis:
-	// strafing right is bond2.unk00 turned that way, so left is its negative.
+	// The flat look direction and the strafe axis written out of it. Standing
+	// still has no direction of its own, so it keeps the one it always had.
+	fwd.x = g_Vars.currentplayer->bond2.unk00.x;
+	fwd.z = g_Vars.currentplayer->bond2.unk00.z;
 	side.x = -g_Vars.currentplayer->bond2.unk00.z;
 	side.z = g_Vars.currentplayer->bond2.unk00.x;
 
-	if (toleft) {
-		side.x = -side.x;
-		side.z = -side.z;
+	if (sidespeed == 0.0f && fwdspeed == 0.0f) {
+		sidespeed = 1.0f;
 	}
 
-	g_Vars.currentplayer->rollspeed.x = side.x * ROLL_IMPULSE;
+	dir.x = fwd.x * fwdspeed + side.x * sidespeed;
+	dir.z = fwd.z * fwdspeed + side.z * sidespeed;
+	len = sqrtf(dir.x * dir.x + dir.z * dir.z);
+
+	if (len < 0.0001f) {
+		dir = side;
+	} else {
+		dir.x /= len;
+		dir.z /= len;
+	}
+
+	// The direction in the same terms playerChooseThirdPersonAnimation()
+	// measures a walk in - atan2f(sideways, forwards) - so the number that
+	// comes out of it means what angleoffset means.
+	rollangle = atan2f(sidespeed, fwdspeed);
+
+	// What is left to turn after each of the two animations. A quarter turn is
+	// where each one's own travel points.
+	offsetright = bwalkWrapAngle(rollangle - M_BADPI * 0.5f);
+	offsetleft = bwalkWrapAngle(rollangle + M_BADPI * 0.5f);
+
+	absleft = offsetleft < 0.0f ? -offsetleft : offsetleft;
+	absright = offsetright < 0.0f ? -offsetright : offsetright;
+
+	if (absleft < absright - 0.0001f) {
+		toleft = true;
+	} else if (absright < absleft - 0.0001f) {
+		toleft = false;
+	} else {
+		// Straight forward or straight back: both animations are a quarter turn
+		// away and neither is the one she meant, so it is a coin toss - which is
+		// how the game picks between a pair of rolls anyway.
+		toleft = (rngRandom() % 2) != 0;
+	}
+
+	offset = toleft ? offsetleft : offsetright;
+
+	g_Vars.currentplayer->rollspeed.x = dir.x * ROLL_IMPULSE;
 	g_Vars.currentplayer->rollspeed.y = 0;
-	g_Vars.currentplayer->rollspeed.z = side.z * ROLL_IMPULSE;
+	g_Vars.currentplayer->rollspeed.z = dir.z * ROLL_IMPULSE;
 	g_Vars.currentplayer->rolltime60 = g_Vars.lvframe60;
 
-	chrPlayRollAnimation(chr, toleft);
+	if (chrPlayRollAnimation(chr, toleft)) {
+		g_Vars.currentplayer->angleoffset = offset;
+	}
 }
 #endif
 

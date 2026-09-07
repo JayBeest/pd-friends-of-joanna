@@ -113,7 +113,7 @@ bool chrIsOneShotAnimPlaying(struct chrdata *chr);
 s32 chrPlayPunchAnimation(struct chrdata *chr);
 void chrArmPunchHit(struct chrdata *chr, s32 hitframe, s32 handnum, s32 damage, s32 range);
 void chrTickPunchHit(struct chrdata *chr);
-void chrPlayRollAnimation(struct chrdata *chr, bool toleft);
+bool chrPlayRollAnimation(struct chrdata *chr, bool toleft);
 void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart);
 void chrPlayDeathAnimation(struct chrdata *chr, f32 relangle, s32 hitpart);
 bool chrPlayYeetAnimation(struct chrdata *chr, struct coord *exppos, f32 force);

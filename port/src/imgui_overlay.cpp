@@ -15,12 +15,7 @@
 #undef false
 #include "ext_tex.h"
 #include "fs.h"
-#include "game/camera.h"
-#include "game/chr.h"
 #include "game/modeldef.h"
-#include "game/player.h"
-#include "game/prop.h"
-#include "lib/model.h"
 #include "imgui_overlay.h"
 #include "input.h"
 #include "mod.h"
@@ -46,6 +41,7 @@ static bool g_ImGuiOverlayShowTextures = false;
 static bool g_ImGuiOverlayShowLookingAt = false;
 static bool g_ImGuiOverlayShowProportions = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
+static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
@@ -153,8 +149,24 @@ extern "C" void texLoad(texnum_t *updateword, struct texpool *pool, bool unuseda
 extern "C" struct tex *texFindInPool(s32 texturenum, struct texpool *pool);
 extern "C" Gfx *texBuildDebugLoadGdl(Gfx *gdl, struct tex *tex);
 extern "C" s32 texGetSizeInBytes(struct tex *tex, s32 lod);
+extern "C" void modelSetScale(struct model *model, f32 scale);
+extern "C" void playerSetHeight(s32 eyeheight, s32 headnum);
+
+// Proportion editor overrides, defined in src/game/chr.c. Declared by hand
+// rather than included, for the same reason as everything above: the game
+// headers are not extern "C"-wrapped.
+extern "C" struct chrdata *g_JointScaleChr;
+extern "C" f32 g_JointScaleOverride[][3];
+
+// Mirrors MAX_JOINT_OVERRIDES in src/include/game/chr.h. Kept in step by
+// hand; the panel never indexes past it.
+static const s32 kFojoMaxJointOverrides = 40;
 
 static bool imguiOverlayHasRomTexture(u16 textureId);
+static void imguiPropLatch(struct chrdata *chr);
+static bool imguiOverlayChrIsCurrent(struct chrdata *chr);
+static void imguiOverlayFocusChr(struct chrdata *chr);
+static void imguiOverlayFocusProp(struct prop *prop);
 
 static void *imguiOverlaySettingsReadOpen(ImGuiContext *, ImGuiSettingsHandler *handler, const char *name)
 {
@@ -694,6 +706,72 @@ static bool imguiOverlayChrPassesTextFilter(struct chrdata *chr, s32 index)
 	return g_ImGuiOverlayChrTextFilter.PassFilter(text);
 }
 
+
+/**
+ * Right-click menu shared by the Props and Characters lists.
+ *
+ * Attaches to whatever item was drawn last, so call it immediately after the
+ * TreeNode and before its children. Either argument may be NULL; a prop that
+ * carries a chr gets the character entries too.
+ */
+static void imguiOverlayDrawEntityContextMenu(struct prop *prop, struct chrdata *chr)
+{
+	char buf[64];
+
+	if (!chr && prop && (prop->type == PROPTYPE_CHR || prop->type == PROPTYPE_PLAYER)
+			&& imguiOverlayChrIsCurrent(prop->chr)) {
+		chr = prop->chr;
+	}
+
+	if (!ImGui::BeginPopupContextItem()) {
+		return;
+	}
+
+	if (chr && imguiOverlayChrIsCurrent(chr)) {
+		ImGui::SeparatorText("Character");
+
+		// TODO(catherine): label is a placeholder.
+		if (ImGui::MenuItem("Latch in proportions")) {
+			imguiPropLatch(chr);
+			g_ImGuiOverlayShowProportions = true;
+		}
+
+		if (ImGui::MenuItem("Show in Characters")) {
+			imguiOverlayFocusChr(chr);
+		}
+
+		if (chr->prop && imguiOverlayPropIsCurrent(chr->prop)
+				&& ImGui::MenuItem("Show its prop")) {
+			imguiOverlayFocusProp(chr->prop);
+		}
+
+		if (ImGui::MenuItem("Copy chrnum")) {
+			snprintf(buf, sizeof(buf), "0x%04x", (u32)(u16)chr->chrnum);
+			ImGui::SetClipboardText(buf);
+		}
+
+		if (ImGui::MenuItem("Copy chr pointer")) {
+			snprintf(buf, sizeof(buf), "%p", (void *)chr);
+			ImGui::SetClipboardText(buf);
+		}
+	}
+
+	if (prop && imguiOverlayPropIsCurrent(prop)) {
+		ImGui::SeparatorText("Prop");
+
+		if (ImGui::MenuItem("Show in Props")) {
+			imguiOverlayFocusProp(prop);
+		}
+
+		if (ImGui::MenuItem("Copy prop pointer")) {
+			snprintf(buf, sizeof(buf), "%p", (void *)prop);
+			ImGui::SetClipboardText(buf);
+		}
+	}
+
+	ImGui::EndPopup();
+}
+
 static void imguiOverlayDrawPropNode(struct prop *prop, s32 index)
 {
 	if (!imguiOverlayPropPassesFilters(prop) || !imguiOverlayPropPassesTextFilter(prop, index)) {
@@ -705,7 +783,12 @@ static void imguiOverlayDrawPropNode(struct prop *prop, s32 index)
 		ImGui::SetNextItemOpen(focus ? true : g_ImGuiOverlayExpandValue);
 	}
 
-	if (ImGui::TreeNode(prop, "%s %d (%p)", imguiOverlayPropTypeName(prop->type), index, prop)) {
+	const bool open = ImGui::TreeNode(prop, "%s %d (%p)",
+			imguiOverlayPropTypeName(prop->type), index, prop);
+
+	imguiOverlayDrawEntityContextMenu(prop, NULL);
+
+	if (open) {
 		if (focus) {
 			ImGui::SetScrollHereY(0.25f);
 			g_ImGuiOverlayFocusProp = NULL;
@@ -1113,7 +1196,12 @@ static void imguiOverlayDrawEntitiesPanel(void)
 				if (g_ImGuiOverlayExpandLatch || focus) {
 					ImGui::SetNextItemOpen(focus ? true : g_ImGuiOverlayExpandValue);
 				}
-				if (ImGui::TreeNode(chr, "Slot %d: 0x%04x (%p)", index, (u16)chr->chrnum, chr)) {
+				const bool open = ImGui::TreeNode(chr, "Slot %d: 0x%04x (%p)",
+						index, (u16)chr->chrnum, chr);
+
+				imguiOverlayDrawEntityContextMenu(chr->prop, chr);
+
+				if (open) {
 					if (focus) {
 						ImGui::SetScrollHereY(0.25f);
 						g_ImGuiOverlayFocusChr = NULL;
@@ -2816,7 +2904,24 @@ static void imguiOverlaySetVisible(bool visible)
 static void imguiPropRelease(void)
 {
 	g_ImGuiPropChr = NULL;
+	g_ImGuiPropChrnum = -1;
 	g_JointScaleChr = NULL;
+}
+
+/**
+ * The latch survives the panel being closed -- only losing the chr should
+ * end it. A slot pointer alone is not enough to say the chr is still the
+ * same one: chrnum goes to -1 when a slot is freed and a fresh number is
+ * assigned when it is reused, and g_ChrSlots is reallocated per stage, so a
+ * stale pointer can land in bounds on somebody else entirely. Pin the chrnum
+ * at latch and compare it, or edits meant for one character silently follow
+ * the slot to whoever spawns into it next.
+ */
+static bool imguiPropLatchIsLive(void)
+{
+	return g_ImGuiPropChr
+		&& imguiOverlayChrIsCurrent(g_ImGuiPropChr)
+		&& (s32)g_ImGuiPropChr->chrnum == g_ImGuiPropChrnum;
 }
 
 static bool imguiPropChrIsPlayer(struct chrdata *chr)
@@ -2851,7 +2956,7 @@ static s32 imguiPropJointCount(struct chrdata *chr)
 
 	s32 n = (s32)chr->model->definition->skel->numthings;
 
-	return n > MAX_JOINT_OVERRIDES ? MAX_JOINT_OVERRIDES : n;
+	return n > kFojoMaxJointOverrides ? kFojoMaxJointOverrides : n;
 }
 
 static s32 imguiPropJointMirror(struct chrdata *chr, s32 joint)
@@ -2876,6 +2981,7 @@ static void imguiPropLatch(struct chrdata *chr)
 	}
 
 	g_ImGuiPropChr = chr;
+	g_ImGuiPropChrnum = (s32)chr->chrnum;
 
 	s32 bodynum = (s32)chr->bodynum;
 	bool bodyok = bodynum >= 0 && bodynum < g_NumHeadsAndBodies;
@@ -2889,7 +2995,7 @@ static void imguiPropLatch(struct chrdata *chr)
 	// The override table is uninitialised until something latches. Fill it with
 	// identity rather than relying on the engine-side zero-is-unset guard, so
 	// the values the panel shows are the values the engine reads.
-	for (s32 i = 0; i < MAX_JOINT_OVERRIDES; i++) {
+	for (s32 i = 0; i < kFojoMaxJointOverrides; i++) {
 		g_JointScaleOverride[i][0] = 1.0f;
 		g_JointScaleOverride[i][1] = 1.0f;
 		g_JointScaleOverride[i][2] = 1.0f;
@@ -2928,10 +3034,11 @@ static void imguiPropApplyLive(struct chrdata *chr)
 
 static void imguiOverlayDrawProportionsPanel(void)
 {
-	// The latch is a raw pointer, and the engine drops it when the chr dies or
-	// the stage resets. Re-check every frame anyway: the panel can outlive a
-	// slot being recycled into a different chr.
-	if (g_ImGuiPropChr && !imguiOverlayChrIsCurrent(g_ImGuiPropChr)) {
+	// Switching stages, or anything else that takes the chr out of memory, is
+	// the only thing that ends a latch -- closing this window does not. The
+	// engine drops its own pointer in the chr free path and in lvReset; this
+	// catches the case where the panel was closed while that happened.
+	if (g_ImGuiPropChr && !imguiPropLatchIsLive()) {
 		imguiPropRelease();
 	}
 
@@ -2960,10 +3067,15 @@ static void imguiOverlayDrawProportionsPanel(void)
 	if (aimedchr) {
 		ImGui::Text("aiming at chr 0x%04x", (u32)(u16)aimedchr->chrnum);
 	} else if (self) {
-		ImGui::TextDisabled("nothing aimed at -- latches you");
+		ImGui::TextDisabled("latches you");
 	} else {
 		ImGui::TextDisabled("no live player");
 	}
+
+	// The aim path reads the player's gun direction, which is frozen while
+	// the overlay has the mouse -- so it only finds whoever you were already
+	// pointing at. Right-clicking a row in Entities is the reliable way in.
+	ImGui::TextDisabled("or right-click a character in Entities");
 
 	if (!g_ImGuiPropChr) {
 		ImGui::Separator();
@@ -3106,7 +3218,7 @@ static void imguiOverlayDrawProportionsPanel(void)
 					g_JointScaleOverride[j][axis] = v;
 
 					if (g_ImGuiPropMirror && mirror != j
-							&& mirror >= 0 && mirror < MAX_JOINT_OVERRIDES) {
+							&& mirror >= 0 && mirror < kFojoMaxJointOverrides) {
 						g_JointScaleOverride[mirror][axis] = v;
 					}
 				}
@@ -3129,7 +3241,7 @@ static void imguiOverlayDrawProportionsPanel(void)
 	}
 
 	if (ImGui::Button("Reset joints")) {
-		for (s32 i = 0; i < MAX_JOINT_OVERRIDES; i++) {
+		for (s32 i = 0; i < kFojoMaxJointOverrides; i++) {
 			g_JointScaleOverride[i][0] = 1.0f;
 			g_JointScaleOverride[i][1] = 1.0f;
 			g_JointScaleOverride[i][2] = 1.0f;

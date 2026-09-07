@@ -3427,6 +3427,16 @@ void chrGetBloodColour(s16 bodynum, u8 *colour1, u32 *colour2)
  */
 static u8 chrGetCameraFadeFrac(struct chrdata *chr)
 {
+	// Only while the camera this describes is the one being used.
+	// playerPullBackCamera() runs inside playerTick()'s TICKMODE_NORMAL branch
+	// and nowhere else, so through a cutscene, a warp, the Combat Sim spawn
+	// swirl or an autowalk nothing updates the value and it keeps whatever the
+	// last frame of play left in it - which is how a body that happened to end
+	// a level near a wall turned up cloaked in the cutscene after it.
+	if (g_Vars.tickmode != TICKMODE_NORMAL) {
+		return 0;
+	}
+
 	if (g_Vars.currentplayer == NULL || chr->prop != g_Vars.currentplayer->prop) {
 		return 0;
 	}

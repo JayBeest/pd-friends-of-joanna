@@ -260,9 +260,15 @@ endif()
 list(APPEND LIBS "${EXTRA_LIBRARIES}")
 
 # Sources
+#
+# CONFIGURE_DEPENDS on every glob: without it the file list is fixed at the
+# moment the build dir was configured, so a source file added afterwards is
+# silently left out and only shows up as undefined symbols at link. Costs a
+# stat of the globbed directories per build; needs cmake 3.12 and works on the
+# Makefile and Ninja generators, which is all this project uses.
 
-file(GLOB_RECURSE SRC_PORT "${CMAKE_SOURCE_DIR}/port/*.c")
-file(GLOB_RECURSE SRC_PORT_CXX "${CMAKE_SOURCE_DIR}/port/*.cpp")
+file(GLOB_RECURSE SRC_PORT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/port/*.c")
+file(GLOB_RECURSE SRC_PORT_CXX CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/port/*.cpp")
 list(FILTER SRC_PORT_CXX EXCLUDE REGEX "/port/third_party/imgui/")
 list(APPEND SRC_PORT_CXX
   port/third_party/imgui/imgui.cpp
@@ -272,12 +278,12 @@ list(APPEND SRC_PORT_CXX
   port/third_party/imgui/backends/imgui_impl_sdl2.cpp
 )
 
-file(GLOB_RECURSE SRC_GAME "${CMAKE_SOURCE_DIR}/src/game/*.c")
+file(GLOB_RECURSE SRC_GAME CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/game/*.c")
 
-file(GLOB SRC_LIB_MP3 "${CMAKE_SOURCE_DIR}/src/lib/mp3/*.c")
-file(GLOB SRC_LIB_NAUDIO "${CMAKE_SOURCE_DIR}/src/lib/naudio/*.c")
-file(GLOB SRC_LIB_ULTRA_AUDIO "${CMAKE_SOURCE_DIR}/src/lib/ultra/audio/*.c")
-file(GLOB SRC_LIB_GU "${CMAKE_SOURCE_DIR}/src/lib/ultra/gu/*.c")
+file(GLOB SRC_LIB_MP3 CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/lib/mp3/*.c")
+file(GLOB SRC_LIB_NAUDIO CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/lib/naudio/*.c")
+file(GLOB SRC_LIB_ULTRA_AUDIO CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/lib/ultra/audio/*.c")
+file(GLOB SRC_LIB_GU CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/lib/ultra/gu/*.c")
 set(SRC_LIB
   src/lib/ultra/io/vimodentsclan1.c
   src/lib/ultra/io/vimodepallan1.c

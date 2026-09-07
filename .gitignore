@@ -25,6 +25,8 @@ src/assets/*/sequences/*.seq
 src/assets/*/textures/*.bin
 src/generated
 tools/mkrom/mkrom
+tools/mkfiletable/mkfiletable
+tools/mkfiletable/pdft_reencode
 release-*/*
 /.vs
 CppProperties.json

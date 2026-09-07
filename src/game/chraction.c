@@ -8640,7 +8640,7 @@ void chrTickPunchHit(struct chrdata *chr)
  * set by which hand the gun is in: mirroring a roll swaps the arm the body
  * rolls over.
  */
-void chrPlayRollAnimation(struct chrdata *chr, bool toleft)
+bool chrPlayRollAnimation(struct chrdata *chr, bool toleft)
 {
 	struct attackanimconfig *animcfg;
 	struct prop *leftgun;
@@ -8649,7 +8649,7 @@ void chrPlayRollAnimation(struct chrdata *chr, bool toleft)
 	bool flip;
 
 	if (!chrCanPlayOneShotAnim(chr)) {
-		return;
+		return false;
 	}
 
 	leftgun = chrGetHeldProp(chr, HAND_LEFT);
@@ -8680,6 +8680,8 @@ void chrPlayRollAnimation(struct chrdata *chr, bool toleft)
 	modelSetAnimEndFrame(chr->model, animcfg->unk18);
 
 	chr->oneshotanim = animcfg->animnum;
+
+	return true;
 }
 #endif
 

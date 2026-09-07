@@ -1332,6 +1332,20 @@ static MenuItemHandlerResult menuhandlerCrosshairSway(s32 operation, struct menu
 	return 0;
 }
 
+static MenuItemHandlerResult menuhandlerCameraTilt(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GETSLIDER:
+		data->slider.value = g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt * 10.f + 0.5f;
+		break;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt = (f32)data->slider.value / 10.f;
+		break;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCrosshairEdgeBoundary(s32 operation, struct menuitem* item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1568,6 +1582,14 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		(uintptr_t)"Crosshair Sway",
 		20,
 		menuhandlerCrosshairSway,
+	},
+	{
+		MENUITEMTYPE_SLIDER,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+		(uintptr_t)"Camera Tilt",
+		40,
+		menuhandlerCameraTilt,
 	},
 	{
 		MENUITEMTYPE_SLIDER,

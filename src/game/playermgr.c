@@ -368,6 +368,8 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->fastmovecentreenabled = false;
 	g_Vars.players[index]->automovecentre = true;
 	g_Vars.players[index]->insightaimmode = false;
+	g_Vars.players[index]->camtiltroll = 0;
+	g_Vars.players[index]->camtiltpitch = 0;
 
 	g_Vars.players[index]->autoyaimenabled = true;
 	g_Vars.players[index]->autoaimy = 0;

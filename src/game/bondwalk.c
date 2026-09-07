@@ -43,6 +43,9 @@ void bwalkInit(void)
 	g_Vars.currentplayer->unk1af0 = NULL;
 	g_Vars.currentplayer->bondonturret = false;
 
+	g_Vars.currentplayer->camtiltroll = 0;
+	g_Vars.currentplayer->camtiltpitch = 0;
+
 	g_Vars.currentplayer->swaypos = 0;
 	g_Vars.currentplayer->swayoffset = 0;
 	g_Vars.currentplayer->swaytarget = 0;

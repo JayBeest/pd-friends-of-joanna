@@ -2895,6 +2895,11 @@ struct player {
   /*0x1c74*/ f32 swivelpos[2];
 #endif
   /*ext*/ bool advancedendscreen;
+  // Camera Tilt: where the lean has got to, in degrees, chasing the
+  // sidestep and the look speed a little behind them so that neither
+  // starting nor stopping is a jolt.
+  /*ext*/ f32 camtiltroll;
+  /*ext*/ f32 camtiltpitch;
 };
 
 struct ailist {
@@ -6292,6 +6297,7 @@ struct extplayerconfig {
   s32 crouchmode;
   f32 radialmenuspeed;
   f32 crosshairsway;
+  f32 cameratilt;
   s32 extcontrols;
   u32 crosshaircolour;
   u32 crosshairsize;

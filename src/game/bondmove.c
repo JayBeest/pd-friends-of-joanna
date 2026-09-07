@@ -6,6 +6,7 @@
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
 #include "game/cheats.h"
+#include "game/modspectate.h"
 #include "game/chraction.h"
 #include "game/footstep.h"
 #include "game/game_006900.h"
@@ -2686,7 +2687,16 @@ void bmoveTick(bool allowc1x, bool allowc1y, bool allowc1buttons, bool ignorec2)
 	} else if (g_Vars.currentplayer->bondmovemode == MOVEMODE_CUTSCENE) {
 		bcutsceneTick();
 	} else if (g_Vars.currentplayer->bondmovemode == MOVEMODE_WALK) {
-		bwalkTick();
+		// Spectating replaces the walk rather than sitting alongside it: the
+		// camera is flying, so gravity, the floor and the collision the walk
+		// exists to do are all things it must not have.
+		modSpectateApplyStart();
+
+		if (modSpectateIsOn()) {
+			modSpectateTick();
+		} else {
+			bwalkTick();
+		}
 	}
 
 	// Update footstep sounds

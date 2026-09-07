@@ -7,6 +7,7 @@
 #include <PR/os_message.h>
 
 #include "lib/main.h"
+#include "game/modspectate.h"
 #include "bss.h"
 #include "data.h"
 
@@ -174,6 +175,10 @@ int main(int argc, const char **argv)
 		sysLogPrintf(LOG_NOTE, "Model/mod scaling debugging enabled");
 	}
 
+	// Spectator from the first frame. A button press cannot happen before the
+	// stage loads, and the headless runs that want this cannot press one at all.
+	g_ModSpectateStart = sysArgCheck("--spectate");
+
 	g_StageNum = sysArgGetInt("--boot-stage", STAGE_TITLE);
 
 	if (g_StageNum == STAGE_TITLE && (sysArgCheck("--skip-intro") || g_SkipIntro)) {
@@ -214,6 +219,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterString("Game.DefaultReality", g_DefaultReality, sizeof(g_DefaultReality));
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
+	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);
 	for (s32 j = 0; j < MAX_PLAYERS; ++j) {

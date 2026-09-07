@@ -213,6 +213,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterString("Game.DefaultProfile", g_DefaultProfile, sizeof(g_DefaultProfile));
 	configRegisterString("Game.DefaultReality", g_DefaultReality, sizeof(g_DefaultReality));
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
+	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);
 	for (s32 j = 0; j < MAX_PLAYERS; ++j) {

@@ -3403,6 +3403,9 @@ void botTickUnpaused(struct chrdata *chr)
 								if (aibot->punchtimer60[i] < 0) {
 									chrUncloakTemporarily(chr);
 									chrPunchInflictDamage(chr, 2, range, false);
+#ifndef PLATFORM_N64
+									chrPlayPunchAnimation(chr);
+#endif
 
 									if (i == HAND_RIGHT) {
 										// Set the punch cooldown timer

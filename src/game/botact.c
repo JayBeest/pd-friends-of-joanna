@@ -398,6 +398,12 @@ void botactThrow(struct chrdata *chr)
 
 	bgunCreateThrownProjectile2(chr, &gset, &prop->pos, prop->rooms, &sp164, &sp228);
 
+#ifndef PLATFORM_N64
+	// The arm that threw it. Stock never animates this, so a simulant's
+	// grenades leave a body that is still running.
+	chrPlayThrowAnimation(chr, HAND_RIGHT);
+#endif
+
 	if (gset.weaponnum == WEAPON_REMOTEMINE) {
 		chr->aibot->flags |= BOTFLAG_THREWREMOTEMINE;
 	}
@@ -425,7 +431,7 @@ s32 botactGetShootInterval60(s32 weaponnum, s32 funcnum)
 			} else if (func->type == INVENTORYFUNCTYPE_SHOOT_PROJECTILE) {
 				struct weaponfunc_shoot *func2 = (struct weaponfunc_shoot *)func;
 				result = func2->unk24 + func2->unk25;
-			} else if (func->type == INVENTORYFUNCTYPE_MELEE && weaponnum != WEAPON_REAPER) {
+			} else if (func->type == INVENTORYFUNCTYPE_MELEE && !weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 				result = 60;
 			}
 		}

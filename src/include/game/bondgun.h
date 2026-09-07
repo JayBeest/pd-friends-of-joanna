@@ -28,6 +28,8 @@ void bgun0f098df8(s32 weaponfunc, struct handweaponinfo *info, struct hand *hand
 void bgun0f098f8c(struct handweaponinfo *info, struct hand *hand);
 bool bgun0f099008(s32 handnum);
 bool bgunIsWeaponFuncUnusable(struct weaponfunc *basefunc, struct weapon *weapon);
+bool bgunScopeCoversView(s32 weaponnum);
+bool weaponIsAGun(s32 weaponnum);
 bool bgunCanUseWeaponFunc(struct hand *hand, s32 gunfunc);
 s32 bgunTickIncIdle(struct handweaponinfo *info, s32 handnum, struct hand *hand, s32 lvupdate);
 void bgunSetArmPitch(struct hand *hand, f32 angle);
@@ -94,6 +96,7 @@ s32 bgunGetShotsToTake(s32 handnum);
 void bgunFreeWeapon(s32 handnum);
 void bgunTickSwitch2(void);
 void bgunEquipWeapon(s32 weaponnum);
+struct weapon *bgunGetWeaponDefinition(s32 weaponnum);
 s32 bgunGetWeaponNum(s32 handnum);
 bool bgun0f0a1a10(s32 weaponnum);
 s32 bgunGetSwitchToWeapon(s32 handnum);

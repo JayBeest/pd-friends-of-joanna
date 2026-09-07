@@ -2,6 +2,7 @@
 #include "constants.h"
 #include "../lib/naudio/n_sndp.h"
 #include "game/bondmove.h"
+#include "game/bondwalk.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
 #include "game/inv.h"
@@ -459,22 +460,19 @@ glabel bgunRumble
 );
 #endif
 
+/**
+ * Which unequipped reload animation this weapon uses, or -1 for none.
+ *
+ * This was four weapon numbers written into the code. It is a property of the
+ * weapon, so it lives on the weapon - which is the only way a mod that brings
+ * its own guns can say which of them reload out of sight.
+ */
 s32 bgunGetUnequippedReloadIndex(s32 weaponnum)
 {
-	if (weaponnum == WEAPON_CROSSBOW) {
-		return 0;
-	}
+	const struct weapon *weapon = bgunGetWeaponDefinition(weaponnum);
 
-	if (weaponnum == WEAPON_SHOTGUN) {
-		return 1;
-	}
-
-	if (weaponnum == WEAPON_DY357MAGNUM) {
-		return 2;
-	}
-
-	if (weaponnum == WEAPON_DY357LX) {
-		return 3;
+	if (weapon && (weapon->flags2 & WEAPONFLAG2_UNEQUIPPEDRELOAD)) {
+		return weapon->unequippedreloadindex;
 	}
 
 	return -1;
@@ -1273,7 +1271,7 @@ s32 bgunTickIncIdle(struct handweaponinfo *info, s32 handnum, struct hand *hand,
 
 			// Consider switching to another weapon
 			if (weaponHasFlag(info->weaponnum, WEAPONFLAG_THROWABLE)
-					&& (info->weaponnum != WEAPON_REMOTEMINE || handnum != HAND_LEFT)
+					&& (!weaponHasFlag2(info->weaponnum, WEAPONFLAG2_DETONATORHAND) || handnum != HAND_LEFT)
 					&& bgunSetState(handnum, HANDSTATE_AUTOSWITCH)) {
 				return lvupdate;
 			}
@@ -1285,7 +1283,7 @@ s32 bgunTickIncIdle(struct handweaponinfo *info, s32 handnum, struct hand *hand,
 				sp30 = bgun0f098ca0(1 - hand->gset.weaponfunc, info, hand);
 
 				if (bgunCanUseWeaponFunc(hand, 1 - hand->gset.weaponfunc)
-						&& info->weaponnum != WEAPON_REAPER) {
+						&& !weaponHasFlag2(info->weaponnum, WEAPONFLAG2_MINIGUN)) {
 					if (info->gunctrl->wantammo) {
 						func = weaponGetFunction(&hand->gset, 1 - hand->gset.weaponfunc);
 
@@ -1446,7 +1444,7 @@ s32 bgunTickIncAutoSwitch(struct handweaponinfo *info, s32 handnum, struct hand 
 				hand->gset.weaponfunc = gunfunc;
 			}
 
-			if (info->weaponnum == WEAPON_REMOTEMINE
+			if (weaponHasFlag2(info->weaponnum, WEAPONFLAG2_DETONATORHAND)
 					&& gunfunc != hand->gset.weaponfunc
 					&& bgunSetState(handnum, HANDSTATE_CHANGEFUNC)) {
 				return lvupdate;
@@ -1575,7 +1573,7 @@ s32 bgunTickIncReload(struct handweaponinfo *info, s32 handnum, struct hand *han
 						hand->incrementalreloading = true;
 					}
 
-					if (info->weaponnum == WEAPON_GRENADE || info->weaponnum == WEAPON_NBOMB) {
+					if (weaponHasFlag2(info->weaponnum, WEAPONFLAG2_NOEJECT)) {
 						hand->ejectstate = EJECTSTATE_INACTIVE;
 					}
 				} else {
@@ -1666,25 +1664,8 @@ s32 bgunTickIncReload(struct handweaponinfo *info, s32 handnum, struct hand *han
 					&& bgunIsLoaded()
 					&& !g_PlayerInvincible
 					&& !g_Vars.currentplayer->isdead) {
-				switch (info->weaponnum) {
-				case WEAPON_NONE:
-				case WEAPON_UNARMED:
-				case WEAPON_COMBATKNIFE:
-				case WEAPON_LASER:
-				case WEAPON_GRENADE:
-				case WEAPON_TIMEDMINE:
-				case WEAPON_PROXIMITYMINE:
-				case WEAPON_REMOTEMINE:
-				case WEAPON_ECMMINE:
-				case WEAPON_COMMSRIDER:
-				case WEAPON_TRACERBUG:
-				case WEAPON_TARGETAMPLIFIER:
-				case WEAPON_BRIEFCASE2:
-					// No reload sound
-					break;
-				default:
+				if (!weaponHasFlag2(info->weaponnum, WEAPONFLAG2_NORELOADSOUND)) {
 					sndStart(var80095200, SFX_RELOAD_DEFAULT, 0, -1, -1, -1, -1, -1);
-					break;
 				}
 			}
 		}
@@ -2007,7 +1988,7 @@ void bgun0f09a6f8(struct handweaponinfo *info, s32 handnum, struct hand *hand, s
 
 				hand->lastshootframe60 = g_Vars.lvframe60;
 
-				if (hand->gset.weaponnum == WEAPON_MAULER && handle) {
+				if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_CHARGEABLE) && handle) {
 					s32 matmot = hand->matmot1;
 					f32 tmp;
 					f32 frac = matmot / 3.0f;
@@ -2268,7 +2249,7 @@ bool bgunTickIncAttackingShoot(struct handweaponinfo *info, s32 handnum, struct 
 			sp68 = true;
 		}
 
-		if (hand->gset.weaponnum == WEAPON_SHOTGUN && hand->animmode == HANDANIMMODE_BUSY) {
+		if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_PUMPACTION) && hand->animmode == HANDANIMMODE_BUSY) {
 			sp68 = false;
 		}
 
@@ -2278,7 +2259,7 @@ bool bgunTickIncAttackingShoot(struct handweaponinfo *info, s32 handnum, struct 
 			hand->matmot2 = 0;
 		}
 
-		if (hand->gset.weaponnum == WEAPON_MAULER) {
+		if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_CHARGEABLE)) {
 			hand->matmot1 = 0;
 		}
 
@@ -2343,7 +2324,7 @@ bool bgunTickIncAttackingThrow(s32 handnum, struct hand *hand)
 			return true;
 		}
 
-		if (hand->gset.weaponnum == WEAPON_REMOTEMINE
+		if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_DETONATORHAND)
 				&& bgunIsUsingSecondaryFunction() == true
 				&& hand->triggerreleased
 				&& hand->triggeron) {
@@ -2408,7 +2389,7 @@ bool bgunTickIncAttackingMelee(s32 handnum, struct hand *hand)
 		return true;
 	}
 
-	if (hand->gset.weaponnum == WEAPON_REAPER) {
+	if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_MINIGUN)) {
 		if (hand->statecycles == 0) {
 			hand->matmot2 = 0.1f;
 			hand->burstbullets = 0;
@@ -2732,7 +2713,11 @@ s32 bgunTickIncAttack(struct handweaponinfo *info, s32 handnum, struct hand *han
 	}
 
 	if (finished) {
-		if (hand->gset.weaponnum == WEAPON_REAPER && hand->triggeron) {
+		// A minigun without a grinder (a mod's) has no secondary to hold
+		// the trigger into, and switching to one that is not there would
+		// leave the hand in a function that never fires
+		if (weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_MINIGUN) && hand->triggeron
+				&& weaponGetFunctionById(hand->gset.weaponnum, FUNC_SECONDARY)) {
 			hand->gset.weaponfunc = FUNC_SECONDARY;
 			finished = false;
 		}
@@ -2859,7 +2844,7 @@ s32 bgunTickIncChangeGun(struct handweaponinfo *info, s32 handnum, struct hand *
 		bool skipanim = false;
 
 		if (weaponHasFlag(info->weaponnum, WEAPONFLAG_THROWABLE)
-				&& !(info->weaponnum == WEAPON_REMOTEMINE && handnum == HAND_LEFT)
+				&& !(weaponHasFlag2(info->weaponnum, WEAPONFLAG2_DETONATORHAND) && handnum == HAND_LEFT)
 				&& bgun0f098ca0(0, info, hand) < 0) {
 			skipanim = true;
 		}
@@ -3002,7 +2987,7 @@ s32 bgunTickIncChangeGun(struct handweaponinfo *info, s32 handnum, struct hand *
 			bgun0f098f8c(info, hand);
 
 			if (weaponHasFlag(info->weaponnum, WEAPONFLAG_THROWABLE)
-					&& (info->weaponnum != WEAPON_REMOTEMINE || handnum != HAND_LEFT)
+					&& (!weaponHasFlag2(info->weaponnum, WEAPONFLAG2_DETONATORHAND) || handnum != HAND_LEFT)
 					&& bgun0f098ca0(0, info, hand) < 0
 					&& bgunSetState(handnum, HANDSTATE_AUTOSWITCH)) {
 				hand->stateminor = HANDSTATEMINOR_AUTOSWITCH_DELETE;
@@ -4415,6 +4400,16 @@ struct defaultobj *bgunCreateThrownProjectile2(struct chrdata *chr, struct gset 
 		return false;
 	}
 
+	// Only a throw function has a projectile to throw. The hand's throw
+	// state is entered by function type, but the gun-change state throws
+	// whatever a hand holds once gunctrl.throwing is set, and under Akimbo
+	// the other hand can hold anything; a mod's table with a different kind
+	// of function behind a stock number is the other way in. Either reads
+	// the model number out of a shoot function's fields.
+	if ((basefunc->type & 0xff) != INVENTORYFUNCTYPE_THROW) {
+		return NULL;
+	}
+
 	if (gset->weaponnum == WEAPON_COMBATKNIFE) {
 		guRotateF(mtx.m, 90.0f / (RANDOMFRAC() + 12.1f),
 				arg4->m[1][0], arg4->m[1][1], arg4->m[1][2]);
@@ -5101,7 +5096,7 @@ void bgunSwivel(f32 screenx, f32 screeny, f32 crossdamp, f32 aimdamp)
 		}
 	}
 
-	if (player->hands[HAND_LEFT].gset.weaponnum == WEAPON_REMOTEMINE) {
+	if (weaponHasFlag2(player->hands[HAND_LEFT].gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 		x[HAND_LEFT] = g_Vars.currentplayer->speedtheta * 0.3f + g_Vars.currentplayer->gunextraaimx;
 		y[HAND_LEFT] = -g_Vars.currentplayer->speedverta * 0.1f + g_Vars.currentplayer->gunextraaimy;
 		ignore[HAND_LEFT] = true;
@@ -5527,7 +5522,7 @@ void bgunTickSwitch2(void)
 				righthand->inuse = true;
 			}
 
-			if (ctrl->weaponnum == WEAPON_REMOTEMINE) {
+			if (weaponHasFlag2(ctrl->weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 				ctrl->dualwielding = true;
 			}
 			// Clear drop cooldown when weapon changes
@@ -5761,7 +5756,7 @@ void bgunCycleBack(void)
 		weaponnum1 = bgunGetSwitchToWeapon(HAND_RIGHT);
 		weaponnum2 = bgunGetSwitchToWeapon(HAND_LEFT);
 
-		if (weaponnum2 == WEAPON_REMOTEMINE) {
+		if (weaponHasFlag2(weaponnum2, WEAPONFLAG2_DETONATORHAND)) {
 			weaponnum2 = WEAPON_NONE;
 		}
 
@@ -6051,6 +6046,19 @@ s32 bgunIsFiring(s32 handnum)
 s32 bgunGetAttackType(s32 handnum)
 {
 	return g_Vars.currentplayer->hands[handnum].attacktype;
+}
+
+/**
+ * The weapon's definition, or NULL. g_Weapons is indexed by weapon number and
+ * the callers here are given one by a mod as readily as by the game.
+ */
+struct weapon *bgunGetWeaponDefinition(s32 weaponnum)
+{
+	if (weaponnum < 0 || weaponnum > WEAPON_SUICIDEPILL) {
+		return NULL;
+	}
+
+	return g_Weapons[weaponnum];
 }
 
 char *bgunGetName(s32 weaponnum)
@@ -6345,14 +6353,7 @@ void bgunHandlePlayerDead(void)
 #if VERSION >= VERSION_NTSC_1_0
 bool bgunIsMissionCritical(s32 weaponnum)
 {
-	if (weaponnum == WEAPON_TIMEDMINE
-			|| weaponnum == WEAPON_REMOTEMINE
-			|| weaponnum == WEAPON_ECMMINE
-			|| weaponnum == WEAPON_TRACERBUG) {
-		return true;
-	}
-
-	return false;
+	return weaponHasFlag2(weaponnum, WEAPONFLAG2_MISSIONCRITICAL);
 }
 #endif
 
@@ -6640,7 +6641,7 @@ void bgunStartDetonateAnimation(s32 playernum)
 	s32 prevplayernum = g_Vars.currentplayernum;
 	setCurrentPlayerNum(playernum);
 
-	if (g_Vars.currentplayer->hands[HAND_LEFT].gset.weaponnum == WEAPON_REMOTEMINE) {
+	if (weaponHasFlag2(g_Vars.currentplayer->hands[HAND_LEFT].gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 		bgunStartAnimation(var80070200, 1, &g_Vars.currentplayer->hands[HAND_LEFT]);
 	}
 
@@ -6759,7 +6760,7 @@ void bgunUpdateGangsta(struct hand *hand, s32 handnum, struct coord *arg2, struc
 void bgunUpdateSmoke(struct hand *hand, s32 handnum, s32 weaponnum, struct weaponfunc *funcdef)
 {
 	if (hand->firing) {
-		if (weaponnum == WEAPON_DY357MAGNUM || weaponnum == WEAPON_DY357LX) {
+		if (weaponHasFlag2(weaponnum, WEAPONFLAG2_HEAVYSMOKE)) {
 			if ((funcdef->type & 0xff) == INVENTORYFUNCTYPE_SHOOT) {
 				hand->gunsmokepoint += 0.6f;
 			}
@@ -6828,14 +6829,19 @@ void bgunUpdateSmoke(struct hand *hand, s32 handnum, s32 weaponnum, struct weapo
 				hand->createsmoke = true;
 			}
 			break;
-		case WEAPON_REAPER:
-			hand->forcecreatesmoke = true;
-			// fall-through
 		case WEAPON_SHOTGUN:
 			if (hand->firing) {
 				hand->createsmoke = true;
 			}
 			break;
+		}
+
+		if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
+			hand->forcecreatesmoke = true;
+
+			if (hand->firing) {
+				hand->createsmoke = true;
+			}
 		}
 	}
 
@@ -6853,12 +6859,13 @@ void bgunUpdateSmoke(struct hand *hand, s32 handnum, s32 weaponnum, struct weapo
 		case WEAPON_DY357LX:
 			smoketype = SMOKETYPE_MUZZLE_PISTOL;
 			break;
-		case WEAPON_REAPER:
-			smoketype = SMOKETYPE_MUZZLE_REAPER;
-			break;
 		case WEAPON_SHOTGUN:
 			smoketype = SMOKETYPE_MUZZLE_SHOTGUN;
 			break;
+		}
+
+		if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
+			smoketype = SMOKETYPE_MUZZLE_REAPER;
 		}
 
 		smokerooms[0] = g_Vars.currentplayer->cam_room;
@@ -7419,7 +7426,7 @@ void bgun0f0a4e44(struct hand *hand, struct weapon *weapondef, struct modeldef *
 	mtx00015ea8(muzzlez, &spd8);
 	mtx4Copy(&spd8, mtx);
 
-	if (shotstotake == 0 && weaponnum != WEAPON_REAPER) {
+	if (shotstotake == 0 && !weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 		shotstotake++;
 	}
 
@@ -7442,7 +7449,7 @@ void bgun0f0a4e44(struct hand *hand, struct weapon *weapondef, struct modeldef *
 		struct modelnode *node = modelGetPart(modeldef, partnum);
 		struct coord sp60;
 
-		if (node && weaponnum != WEAPON_REAPER && weaponnum != WEAPON_SHOTGUN) {
+		if (node && !weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN) && weaponnum != WEAPON_SHOTGUN) {
 			struct modelrodata_position *rodata = &node->rodata->position;
 			s32 mtxindex = modelFindNodeMtxIndex(node, 0);
 
@@ -7484,11 +7491,11 @@ void bgunCreateFx(struct hand *hand, s32 handnum, struct weaponfunc *funcdef, s3
 	if (funcdef) {
 		ground = g_Vars.currentplayer->vv_ground;
 
-		if (modeldef && weaponnum != WEAPON_DY357MAGNUM && weaponnum != WEAPON_DY357LX) {
+		if (modeldef && !weaponHasFlag2(weaponnum, WEAPONFLAG2_NOCARTEJECT)) {
 			s32 partnum = MODELPART_GUN_CARTEJECTPOS;
 			struct modelnode *node;
 
-			if (weaponnum == WEAPON_REAPER) {
+			if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 				partnum = (hand->burstbullets & 1) == 1 ? MODELPART_REAPER_CARTEJECTPOS1 : MODELPART_REAPER_CARTEJECTPOS2;
 			}
 
@@ -7624,7 +7631,7 @@ void bgun0f0a5550(s32 handnum)
 
 	weapondef = weaponFindById(weaponnum);
 
-	if (handnum == HAND_LEFT && weaponnum == WEAPON_REMOTEMINE) {
+	if (handnum == HAND_LEFT && weaponHasFlag2(weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 		isdetonator = true;
 	}
 
@@ -7709,6 +7716,24 @@ void bgun0f0a5550(s32 handnum)
 	sp274.f[0] += fspare1;
 	sp274.f[1] -= fspare2;
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: the gun comes in to the centre and up to the eye
+	// by however far the tween has got, so it swings rather than snaps.
+	// Two guns come in to either side of it, close enough to aim by and
+	// far enough apart to see.
+	if (player->codaimfrac > 0.0f) {
+		f32 inx = 0.0f;
+
+		if (player->gunctrl.dualwielding) {
+			inx = handnum == HAND_RIGHT ? 4.5f : -4.5f;
+		}
+
+		sp274.f[0] += (inx - func0f0b131c(handnum)) * player->codaimfrac;
+		sp274.f[1] += 3.5f * player->codaimfrac;
+		sp274.f[2] += 3.0f * player->codaimfrac;
+	}
+#endif
+
 	hand->visible = true;
 
 	if (!weaponHasFlag(weaponnum, WEAPONFLAG_00000040)
@@ -7768,6 +7793,26 @@ void bgun0f0a5550(s32 handnum)
 		hand->posoffset.z = 0.0f;
 	}
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: at the sights the gun holds straight ahead. The
+	// look and up here are the gun animation's sway, which rolls and
+	// pitches the gun as it bobs; at the sights that is faded out to the
+	// rest pose by the tween, and the aim rotation below with it.
+	if (player->codaimfrac > 0.0f) {
+		struct coord look;
+		struct coord up;
+		f32 keep = 1.0f - player->codaimfrac;
+
+		look.x = hand->damplook.x * keep;
+		look.y = hand->damplook.y * keep;
+		look.z = hand->damplook.z * keep - player->codaimfrac;
+		up.x = hand->dampup.x * keep;
+		up.y = hand->dampup.y * keep + player->codaimfrac;
+		up.z = hand->dampup.z * keep;
+
+		mtx00016d58(&sp284, 0.0f, 0.0f, 0.0f, look.x, look.y, look.z, up.x, up.y, up.z);
+	} else
+#endif
 	mtx00016d58(&sp284, 0.0f, 0.0f, 0.0f,
 			hand->damplook.x, hand->damplook.y, hand->damplook.z,
 			hand->dampup.x, hand->dampup.y, hand->dampup.z);
@@ -7786,6 +7831,14 @@ void bgun0f0a5550(s32 handnum)
 
 	sp1a4.y = -bgun0f0a2498(sp118.x, sp118.z, sp274.f[0], sp274.f[2]);
 	sp1a4.x = bgun0f0a2498(sp118.y, sp118.z, sp274.f[1], sp274.f[2]);
+
+#ifndef PLATFORM_N64
+	// COD Style Aiming: the turn towards the crosshair goes with the sway
+	if (player->codaimfrac > 0.0f) {
+		sp1a4.x *= 1.0f - player->codaimfrac;
+		sp1a4.y *= 1.0f - player->codaimfrac;
+	}
+#endif
 
 	hand->lastrotangx = sp1a4.f[0];
 	hand->lastrotangy = sp1a4.f[1];
@@ -7846,13 +7899,10 @@ void bgun0f0a5550(s32 handnum)
 		var8009d0dc = -1;
 		var8009d0f0[0] = var8009d0f0[1] = var8009d0f0[2] = -1;
 
-		switch (weaponnum) {
-		case WEAPON_LASER:
+		if (weaponnum == WEAPON_LASER) {
 			bgunUpdateLaser(hand);
-			break;
-		case WEAPON_REAPER:
+		} else if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 			bgunUpdateReaper(hand, modeldef);
-			break;
 		}
 
 		{
@@ -7877,10 +7927,11 @@ void bgun0f0a5550(s32 handnum)
 				a0 = false;
 			}
 
-			switch (weaponnum) {
-			case WEAPON_REAPER:
+			if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 				a0 = false;
-				break;
+			}
+
+			switch (weaponnum) {
 			case WEAPON_COMBATKNIFE:
 				if (player->hands[HAND_LEFT].loadedammo[0] == 0) {
 					a0 = false;
@@ -8047,7 +8098,7 @@ void bgun0f0a5550(s32 handnum)
 
 			node = modelGetPart(modeldef, MODELPART_GUN_MUZZLEPOS);
 
-			if (weaponnum == WEAPON_REAPER) {
+			if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 				if (hand->flashon || hand->firing) {
 					node = modelGetPart(modeldef, MODELPART_REAPER_001E + (hand->burstbullets % 3));
 				} else {
@@ -11009,6 +11060,22 @@ void bgunRender(Gfx **gdlptr)
 
 	gdl = vi0000aca4(gdl, 1.5, 1000);
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: a gun at the sights is drawn at the ADS fov however
+	// far the view has zoomed. The view model goes through the view's own
+	// projection, and at the K7 Avenger's 3x a gun brought to the sights
+	// was three times the size and off the bottom of the screen; with its
+	// own projection the K7 keeps its 3x and sits under the crosshair.
+	if (player->codaimfrac > 0.0f) {
+		f32 adsfov = PLAYER_DEFAULT_FOV * 0.8f;
+		f32 viewfov = viGetFovY();
+
+		if (viewfov < adsfov) {
+			gdl = viSetPerspectiveWithFov(gdl, viewfov + (adsfov - viewfov) * player->codaimfrac, 1.5, 1000);
+		}
+	}
+#endif
+
 	if (g_Vars.currentplayer->teleportstate != TELEPORTSTATE_INACTIVE) {
 		f32 f2;
 
@@ -11269,13 +11336,7 @@ void bgunPlayPropHitSound(struct gset *gset, struct prop *prop, s32 texturenum)
 		return;
 	}
 
-	if (gset->weaponnum == WEAPON_REMOTEMINE
-			|| gset->weaponnum == WEAPON_PROXIMITYMINE
-			|| gset->weaponnum == WEAPON_TIMEDMINE
-			|| gset->weaponnum == WEAPON_COMMSRIDER
-			|| gset->weaponnum == WEAPON_TRACERBUG
-			|| gset->weaponnum == WEAPON_TARGETAMPLIFIER
-			|| gset->weaponnum == WEAPON_ECMMINE) {
+	if (weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_LANDSONHIT)) {
 		psCreate(NULL, prop, SFX_80AA, -1, -1, 0, 0, PSTYPE_NONE, NULL, -1, NULL, -1, -1, -1, -1);
 		return;
 	}
@@ -11414,13 +11475,7 @@ void bgunPlayPropHitSound(struct gset *gset, struct prop *prop, s32 texturenum)
 		return;
 	}
 
-	if (gset->weaponnum == WEAPON_REMOTEMINE
-			|| gset->weaponnum == WEAPON_PROXIMITYMINE
-			|| gset->weaponnum == WEAPON_TIMEDMINE
-			|| gset->weaponnum == WEAPON_COMMSRIDER
-			|| gset->weaponnum == WEAPON_TRACERBUG
-			|| gset->weaponnum == WEAPON_TARGETAMPLIFIER
-			|| gset->weaponnum == WEAPON_ECMMINE) {
+	if (weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_LANDSONHIT)) {
 		psCreate(NULL, prop, SFX_80AA, -1, -1, 0, 0, PSTYPE_NONE, NULL, -1, NULL, -1, -1, -1, -1);
 		return;
 	}
@@ -11589,13 +11644,7 @@ void bgunPlayBgHitSound(struct gset *gset, struct coord *hitpos, s32 texturenum,
 			soundnum = SFX_HIT_METAL_8079;
 			sndStart(var80095200, soundnum, handle, -1, -1, -1, -1, -1);
 			overridden = true;
-		} else if (gset->weaponnum == WEAPON_REMOTEMINE
-				|| gset->weaponnum == WEAPON_PROXIMITYMINE
-				|| gset->weaponnum == WEAPON_TIMEDMINE
-				|| gset->weaponnum == WEAPON_COMMSRIDER
-				|| gset->weaponnum == WEAPON_TRACERBUG
-				|| gset->weaponnum == WEAPON_TARGETAMPLIFIER
-				|| gset->weaponnum == WEAPON_ECMMINE) {
+		} else if (weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_LANDSONHIT)) {
 			// Mine landing/activation sound
 			soundnum = SFX_80AA;
 			sndStart(var80095200, soundnum, handle, -1, -1, -1, -1, -1);
@@ -11683,13 +11732,7 @@ void bgunPlayBgHitSound(struct gset *gset, struct coord *hitpos, s32 texturenum,
 			soundnum = SFX_HIT_METAL_8079;
 			sndStart(var80095200, soundnum, handle, -1, -1, -1, -1, -1);
 			overridden = true;
-		} else if (gset->weaponnum == WEAPON_REMOTEMINE
-				|| gset->weaponnum == WEAPON_PROXIMITYMINE
-				|| gset->weaponnum == WEAPON_TIMEDMINE
-				|| gset->weaponnum == WEAPON_COMMSRIDER
-				|| gset->weaponnum == WEAPON_TRACERBUG
-				|| gset->weaponnum == WEAPON_TARGETAMPLIFIER
-				|| gset->weaponnum == WEAPON_ECMMINE) {
+		} else if (weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_LANDSONHIT)) {
 			// Mine landing/activation sound
 			sndStart(var80095200, SFX_80AA, handle, -1, -1, -1, -1, -1);
 			overridden = true;
@@ -11934,8 +11977,52 @@ bool bgunIsUsingSecondaryFunction(void)
  *
  * This function is not called during cutscenes.
  */
+#ifndef PLATFORM_N64
+/**
+ * Whether this gun's scope covers the view when the gun is raised to the
+ * eye: the three with a manual zoom - Sniper Rifle, FarSight, Horizon
+ * Scanner - and the Falcon 2 Scope, whose scope sits over the crosshair.
+ * The other guns with a zoom of their own (K7 Avenger, MagSec 4, AR34,
+ * the Dragons) come up to the sights like the rest.
+ */
+bool bgunScopeCoversView(s32 weaponnum)
+{
+	return weaponHasAimFlag(weaponnum, INVAIMFLAG_MANUALZOOM) || weaponnum == WEAPON_FALCON2_SCOPE;
+}
+
+/**
+ * Whether the item in hand is a gun rather than a gadget or an empty hand.
+ */
+bool weaponIsAGun(s32 weaponnum)
+{
+	switch (weaponnum) {
+	case WEAPON_NONE:
+	case WEAPON_UNARMED:
+	case WEAPON_DISABLED:
+	case WEAPON_MPSHIELD:
+	case WEAPON_COMBATBOOST:
+	case WEAPON_CLOAKINGDEVICE:
+	case WEAPON_XRAYSCANNER:
+	case WEAPON_NIGHTVISION:
+	case WEAPON_IRSCANNER:
+	case WEAPON_BRIEFCASE2:
+		return false;
+	default:
+		return weaponnum > WEAPON_NONE && weaponFindById(weaponnum) != NULL;
+	}
+}
+#endif
+
 void bgunTickGameplay(bool triggeron)
 {
+#ifndef PLATFORM_N64
+	// A roll has the body until it is over, the same as it does for a simulant.
+	// Anything already in flight finishes; nothing new starts.
+	if (bwalkIsRolling()) {
+		triggeron = false;
+	}
+#endif
+
 	s32 gunsfiring[2] = {false, false};
 	struct player *player = g_Vars.currentplayer;
 	s32 i;
@@ -12001,6 +12088,32 @@ void bgunTickGameplay(bool triggeron)
 		g_Vars.currentplayer->hands[HAND_RIGHT].firing = false;
 	}
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: where the guns are on their way to, tweened sixty
+	// percent of the way each tick - settled in four ticks, a snap with a
+	// little motion left in it. Not for the empty hand, and not for a gun
+	// whose scope would cover the view: raised to the eye, a Sniper Rifle's
+	// scope sat across the middle of it and hid what the zoom was showing.
+	{
+		f32 target = bmoveIsCodAiming()
+			&& player->insightaimmode
+			&& player->hands[HAND_RIGHT].inuse
+			&& weaponIsAGun(player->gunctrl.weaponnum)
+			&& !bgunScopeCoversView(player->gunctrl.weaponnum) ? 1.0f : 0.0f;
+		f32 step = 0.6f * LVUPDATE60FREAL();
+
+		if (step > 1.0f) {
+			step = 1.0f;
+		}
+
+		player->codaimfrac += (target - player->codaimfrac) * step;
+
+		if (player->codaimfrac < 0.01f) {
+			player->codaimfrac = 0.0f;
+		}
+	}
+#endif
+
 	player->playertriggerprev = player->playertriggeron;
 	player->playertriggeron = triggeron;
 
@@ -12016,7 +12129,7 @@ void bgunTickGameplay(bool triggeron)
 
 		if (player->hands[HAND_LEFT].inuse
 				&& player->hands[HAND_RIGHT].inuse
-				&& player->gunctrl.weaponnum != WEAPON_REMOTEMINE) {
+				&& !weaponHasFlag2(player->gunctrl.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 			if (player->playertrigtime240 > TICKS(80)) {
 				gunsfiring[player->curguntofire] = 1;
 
@@ -12039,7 +12152,7 @@ void bgunTickGameplay(bool triggeron)
 				player->curguntofire = 1 - player->curguntofire;
 			}
 
-			if (player->gunctrl.weaponnum == WEAPON_REMOTEMINE) {
+			if (weaponHasFlag2(player->gunctrl.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 				player->curguntofire = 0;
 			}
 
@@ -13093,7 +13206,7 @@ Gfx *bgunDrawHud(Gfx *gdl)
 	// Left hand - mag
 	if (lefthand->inuse
 			&& weapon->ammos[ammoindex] != NULL
-			&& lefthand->gset.weaponnum != WEAPON_REMOTEMINE) {
+			&& !weaponHasFlag2(lefthand->gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 		xpos = viGetViewLeft() / g_ScaleX + 24;
 
 		if (playercount == 2 && (optionsGetScreenSplit() == SCREENSPLIT_VERTICAL || IS4MB()) && playernum == 1) {
@@ -13327,7 +13440,7 @@ void bgun0f0abd30(s32 handnum)
 
 			hand->clipsizes[i] = weapon->ammos[i]->clipsize;
 
-			if (handnum == HAND_LEFT && hand->gset.weaponnum == WEAPON_REMOTEMINE) {
+			if (handnum == HAND_LEFT && weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 				hand->clipsizes[i] = 0;
 			}
 

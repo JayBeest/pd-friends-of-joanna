@@ -879,6 +879,19 @@ struct aibot {
   /*0x2d4*/ f32 randomfrac;
   /*0x2d8*/ u32 unk2d8; // unused
   /*0x2dc*/ u32 unk2dc; // unused
+#ifndef PLATFORM_N64
+  // Earliest lvframe60 at which this bot may jump again. Appended rather
+  // than folded into one of the unused fields above so the ROM offsets stay
+  // honest; aibot is mempAlloc'd in botmgrAllocateBot() and nothing casts
+  // ROM bytes to it, so growing it costs nothing but the N64 build's match.
+  /*ext*/ s32 jumptimer60;
+  // The lvframe60 a roll was last thrown on, or 0 for never. The cooldown and
+  // the window in which the roll has the body to itself are both measured
+  // from it, the way the player's rolltime60 is.
+  /*ext*/ s32 rolltime60;
+  // Earliest lvframe60 at which this bot may roll again, on the same terms.
+  s32 rolltimer60;
+#endif
 };
 
 struct geo {
@@ -1385,6 +1398,21 @@ struct chrdata {
   /*0x362*/ u8 drcarollimage_left : 4;
   /*0x362*/ u8 drcarollimage_right : 4;
   /*0x364*/ struct prop *lift;
+#ifndef PLATFORM_N64
+  // Which swing of the melee combo the next attack is, and the frame the last
+  // one was thrown on; a combo left alone for long enough starts over, so the
+  // two are read together. Out here rather than in the action union, because
+  // bots melee without ever being in ACT_BONDMULTI - they hold whichever
+  // action their AI is running, and the union belongs to that.
+  /*ext*/ s32 punchstep;
+  /*ext*/ s32 punchtime60;
+  // The animation number of the one shot the third person body is part way
+  // through - a punch, a roll, a flinch, a throw - or 0 for none.
+  // playerChooseThirdPersonAnimation() leaves the body alone while this is
+  // still running, and the walk it would otherwise have chosen is never one
+  // of these, so a stale value cannot hold the body hostage either.
+  /*ext*/ s16 oneshotanim;
+#endif
   /*ext*/ s32
       hiddenelsemask; // used by aiSetHiddenElseMask and aiIfChrActivatedObject
   /*ext*/ s32
@@ -2895,6 +2923,19 @@ struct player {
   /*0x1c74*/ f32 swivelpos[2];
 #endif
   /*ext*/ bool advancedendscreen;
+  // Camera Tilt: where the lean has got to, in degrees, chasing the
+  // sidestep and the look speed a little behind them so that neither
+  // starting nor stopping is a jolt.
+  /*ext*/ f32 camtiltroll;
+  /*ext*/ f32 camtiltpitch;
+  /*ext*/ f32 codaimfrac; // COD Style Aiming: how far the gun has come up to the sights, 0 to 1
+  // The combat roll's push, in world units per tick, and the frame the roll
+  // started. Held as a vector rather than a direction and a speed so that
+  // turning mid roll does not curve it, and decayed rather than run for a
+  // fixed duration - the same arrangement as a chr's fallspeed, which is what
+  // carries the simulant side of the same move.
+  struct coord rollspeed;
+  s32 rolltime60;
 };
 
 struct ailist {
@@ -3132,6 +3173,9 @@ struct weapon {
   /*0x48*/ u16 manufacturer;
   /*0x4a*/ u16 description;
   /*0x4c*/ u32 flags;
+  /*0x50*/ u32 flags2;
+  /*0x54*/ s8 unequippedreloadindex;
+  /*0x56*/ u16 pickupsound; // 0 to let the pickup code choose
 };
 
 struct cutscene {
@@ -6292,6 +6336,9 @@ struct extplayerconfig {
   s32 crouchmode;
   f32 radialmenuspeed;
   f32 crosshairsway;
+  f32 cameratilt;
+  s32 codaiming;
+  s32 codaimlock;
   s32 extcontrols;
   u32 crosshaircolour;
   u32 crosshairsize;

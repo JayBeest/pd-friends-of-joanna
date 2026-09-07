@@ -3447,10 +3447,127 @@ void playerConfigureVi(void)
 	viSetBufSize(playerGetFbWidth(), playerGetFbHeight());
 }
 
+/**
+ * Camera Tilt: lean the view the way the head would.
+ *
+ * A sidestep rolls the picture into the direction of travel, and a look up
+ * or down leans the camera a little further that way for as long as the
+ * view is moving. Both chase their target rather than snapping to it, so a
+ * tap of the strafe key is a nod and not a jolt, and both come back to level
+ * on their own when the input stops.
+ *
+ * Only the copies the camera matrix is built from are rotated. bond2's basis
+ * vectors, which the gun aims and the walk traces along, are left as they
+ * were: the roll is about the look axis, so the centre of the screen still
+ * points where it did, and the lean is a degree or two that is gone by the
+ * time the look settles. The gun is drawn in screen space and comes with the
+ * picture.
+ *
+ * The right vector is look cross up. Strafing right is a positive sideways
+ * speed, and the world's right hand is where that cross product points, so a
+ * positive roll tips the top of the picture to the right - into the step,
+ * which is what a lean is. A positive look speed is up, and a positive lean
+ * turns the look toward up.
+ *
+ * Dead the lean is retired: the death camera has its own ideas about which
+ * way is up.
+ */
+#define CAMTILT_ROLL_DEGREES  2.0f  // at a full sidestep, times the setting
+#define CAMTILT_PITCH_DEGREES 1.5f  // at full look speed, times the setting
+#define CAMTILT_RATE          0.15f // of the remaining distance, per 60Hz tick
+
+static void playerTiltCamera(struct coord *camup, struct coord *camlook)
+{
+	struct player *player = g_Vars.currentplayer;
+	f32 scale = PLAYER_EXTCFG().cameratilt;
+	f32 rolltarget = 0;
+	f32 pitchtarget = 0;
+	f32 rate;
+	f32 roll;
+	f32 pitch;
+	f32 cosang;
+	f32 sinang;
+	struct coord right;
+	struct coord up;
+	struct coord look;
+
+	if (scale > 0 && !player->isdead && player->bondmovemode == MOVEMODE_WALK) {
+		f32 strafe = player->speedsideways;
+		// Full stick is 0.7, the limit bmoveGetSpeedVertaLimit() gives it;
+		// the mouse can push past that on a flick.
+		f32 lookspeed = player->speedverta / 0.7f;
+
+		if (strafe > 1) {
+			strafe = 1;
+		} else if (strafe < -1) {
+			strafe = -1;
+		}
+
+		if (lookspeed > 1) {
+			lookspeed = 1;
+		} else if (lookspeed < -1) {
+			lookspeed = -1;
+		}
+
+		rolltarget = strafe * CAMTILT_ROLL_DEGREES * scale;
+		pitchtarget = lookspeed * CAMTILT_PITCH_DEGREES * scale;
+	}
+
+	rate = CAMTILT_RATE * g_Vars.lvupdate60freal;
+
+	if (rate > 1) {
+		rate = 1;
+	}
+
+	player->camtiltroll += (rolltarget - player->camtiltroll) * rate;
+	player->camtiltpitch += (pitchtarget - player->camtiltpitch) * rate;
+
+	if (player->camtiltroll > -0.001f && player->camtiltroll < 0.001f
+			&& player->camtiltpitch > -0.001f && player->camtiltpitch < 0.001f) {
+		player->camtiltroll = 0;
+		player->camtiltpitch = 0;
+		return;
+	}
+
+	roll = player->camtiltroll * (M_PI / 180.0f);
+	pitch = player->camtiltpitch * (M_PI / 180.0f);
+
+	up = *camup;
+	look = *camlook;
+
+	right.x = look.y * up.z - look.z * up.y;
+	right.y = look.z * up.x - look.x * up.z;
+	right.z = look.x * up.y - look.y * up.x;
+
+	// The lean first, about the right vector, which it leaves alone
+	cosang = cosf(pitch);
+	sinang = sinf(pitch);
+
+	camlook->x = look.x * cosang + up.x * sinang;
+	camlook->y = look.y * cosang + up.y * sinang;
+	camlook->z = look.z * cosang + up.z * sinang;
+
+	camup->x = up.x * cosang - look.x * sinang;
+	camup->y = up.y * cosang - look.y * sinang;
+	camup->z = up.z * cosang - look.z * sinang;
+
+	// Then the roll, about the look the lean gave, which it leaves alone
+	cosang = cosf(roll);
+	sinang = sinf(roll);
+
+	up = *camup;
+
+	camup->x = up.x * cosang + right.x * sinang;
+	camup->y = up.y * cosang + right.y * sinang;
+	camup->z = up.z * cosang + right.z * sinang;
+}
+
 void playerTick(bool arg0)
 {
 	f32 aspectratio;
 	f32 f20;
+	struct coord camup;
+	struct coord camlook;
 
 	g_ViRes = g_HiResEnabled;
 
@@ -4029,9 +4146,14 @@ void playerTick(bool arg0)
 		spf4.y = b + spf4.y;
 		spf4.z = c + spf4.z;
 
+		camup = g_Vars.currentplayer->bond2.unk28;
+		camlook = g_Vars.currentplayer->bond2.unk1c;
+
+		playerTiltCamera(&camup, &camlook);
+
 		player0f0c1840(&spf4,
-				&g_Vars.currentplayer->bond2.unk28,
-				&g_Vars.currentplayer->bond2.unk1c,
+				&camup,
+				&camlook,
 				&g_Vars.currentplayer->prop->pos,
 				g_Vars.currentplayer->prop->rooms);
 
@@ -5985,6 +6107,17 @@ void playerChooseThirdPersonAnimation(struct chrdata *chr, s32 crouchpos, f32 sp
 		}
 
 		animcfg = NULL;
+	} else if (chrIsOneShotAnimPlaying(chr)) {
+		// A punch, a kick, a combat roll, a flinch or a throw, started at the
+		// moment the thing itself happened. Each is a one shot animation with
+		// an end frame, so the test stops being true when it runs out and the
+		// walk selector below has the body back; until then this leaves both
+		// the animation and its speed exactly as they were started, which is
+		// what keeps the reconfigure at the bottom from restarting it every
+		// frame.
+		animnum = prevanimnum;
+		speed = modelGetAnimSpeed(chr->model);
+		animcfg = NULL;
 	} else {
 		struct prop *chrprop = chr->prop;
 
@@ -6150,7 +6283,17 @@ void playerChooseThirdPersonAnimation(struct chrdata *chr, s32 crouchpos, f32 sp
 	}
 
 	if (reconfigure) {
-		if (chr->model->anim->animnum2 == 0) {
+		// A death goes on the body whatever it was in the middle of. Everything
+		// else waits for a merge to finish, because starting an animation on
+		// top of a blend that is still settling makes a walk jitter - but a
+		// body that takes a bullet and then a fatal one a few frames later has
+		// a flinch merging into it when the death arrives, and waiting the
+		// merge out spends the first quarter second of dying on a stagger.
+		//
+		// modelCopyAnimForMerge() is built for this: handed a model already
+		// merging, it takes the blend in progress as the thing to blend out of,
+		// so the death still eases in from wherever the body had got to.
+		if (chr->model->anim->animnum2 == 0 || chrIsDead(chr)) {
 			modelSetAnimation(chr->model, animnum, false, startframe >= 0 ? startframe : 0, speed, 16);
 
 			if (startframe >= 0) {

@@ -108,6 +108,13 @@ bool chrGoToCoverProp(struct chrdata *chr);
 bool chrDropItem(struct chrdata *chr, u32 modelnum, u32 weaponnum);
 void chrPunchInflictDamage(struct chrdata *chr, s32 damage, s32 range, u8 reverse);
 bool chrTryPunch(struct chrdata *chr, u8 reverse);
+bool chrIsOneShotAnimPlaying(struct chrdata *chr);
+#ifndef PLATFORM_N64
+void chrPlayPunchAnimation(struct chrdata *chr);
+void chrPlayRollAnimation(struct chrdata *chr, bool toleft);
+void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart);
+void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum);
+#endif
 struct eyespy *chrToEyespy(struct chrdata *chr);
 void chrTickStand(struct chrdata *chr);
 void chrTickAnim(struct chrdata *chr);

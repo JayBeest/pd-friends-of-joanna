@@ -213,6 +213,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterString("Game.DefaultProfile", g_DefaultProfile, sizeof(g_DefaultProfile));
 	configRegisterString("Game.DefaultReality", g_DefaultReality, sizeof(g_DefaultReality));
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
+	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);
 	for (s32 j = 0; j < MAX_PLAYERS; ++j) {
@@ -224,6 +225,9 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 		configRegisterFloat(strFmt("Game.Player%d.MouseAimSpeedY", i), &g_PlayerExtCfg[j].mouseaimspeedy, 0.f, 10.f);
 		configRegisterFloat(strFmt("Game.Player%d.RadialMenuSpeed", i), &g_PlayerExtCfg[j].radialmenuspeed, 0.f, 10.f);
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairSway", i), &g_PlayerExtCfg[j].crosshairsway, 0.f, 10.f);
+		configRegisterFloat(strFmt("Game.Player%d.CameraTilt", i), &g_PlayerExtCfg[j].cameratilt, 0.f, 4.f);
+		configRegisterInt(strFmt("Game.Player%d.CodAiming", i), &g_PlayerExtCfg[j].codaiming, 0, 1);
+		configRegisterInt(strFmt("Game.Player%d.CodAimLock", i), &g_PlayerExtCfg[j].codaimlock, 0, 1);
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairEdgeBoundary", i), &g_PlayerExtCfg[j].crosshairedgeboundary, 0.0f, 1.0f);
 		configRegisterInt(strFmt("Game.Player%d.CrouchMode", i), &g_PlayerExtCfg[j].crouchmode, 0, CROUCHMODE_TOGGLE_ANALOG);
 		configRegisterInt(strFmt("Game.Player%d.ExtendedControls", i), &g_PlayerExtCfg[j].extcontrols, 0, 1);

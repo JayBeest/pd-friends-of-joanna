@@ -455,7 +455,7 @@ void weaponPlayWhooshSound(s32 weaponnum, struct prop *prop)
 	if (weaponnum == WEAPON_TRANQUILIZER) {
 		soundnum = SFX_RELOAD_04FB;
 		speed = 2.78f;
-	} else if (weaponnum == WEAPON_REAPER) {
+	} else if (weaponHasFlag2(weaponnum, WEAPONFLAG2_MINIGUN)) {
 		// empty
 	} else if (weaponnum == WEAPON_COMBATKNIFE) {
 		soundnum = rngRandom() % 2 == 1 ? SFX_8060 : SFX_8061;
@@ -1098,7 +1098,7 @@ struct prop *propFindAimingAt(s32 handnum, bool isshooting, u32 context)
 
 	bgunCalculatePlayerShotSpread(&gunpos2d, &gundir2d, handnum, context);
 
-	if (context == FINDPROPCONTEXT_SHOOT && bgunGetWeaponNum(HAND_RIGHT) == WEAPON_REAPER) {
+	if (context == FINDPROPCONTEXT_SHOOT && weaponHasFlag2(bgunGetWeaponNum(HAND_RIGHT), WEAPONFLAG2_MINIGUN)) {
 		gunpos2d.y -= 15 * RANDOMFRAC();
 	}
 
@@ -1408,7 +1408,7 @@ void handTickAttack(s32 handnum)
 	if (g_Vars.currentplayer->hands[handnum].unk0d0f_02) {
 		s32 doit = true;
 
-		if (bgunGetWeaponNum(handnum) == WEAPON_REAPER
+		if (weaponHasFlag2(bgunGetWeaponNum(handnum), WEAPONFLAG2_MINIGUN)
 				&& (g_Vars.currentplayer->hands[handnum].burstbullets % 3) != 1) {
 			doit = false;
 		}
@@ -1456,6 +1456,15 @@ void handTickAttack(s32 handnum)
 		case HANDATTACKTYPE_MELEE:
 			chrUncloakTemporarily(g_Vars.currentplayer->prop->chr);
 			handInflictMeleeDamage(handnum, &gset, false);
+
+			// The blow landing, and the one report a swing always makes: the
+			// other melee type below is the arm coming up, which only weapons
+			// with a first person melee animation report at all. Taking the
+			// landing gives the body one swing per attack whatever is being
+			// swung, which is what the combo counts.
+#ifndef PLATFORM_N64
+			chrPlayPunchAnimation(g_Vars.currentplayer->prop->chr);
+#endif
 			break;
 		case HANDATTACKTYPE_MELEENOUNCLOAK:
 			handInflictMeleeDamage(handnum, &gset, true);
@@ -1484,6 +1493,9 @@ void handTickAttack(s32 handnum)
 			break;
 		case HANDATTACKTYPE_THROWPROJECTILE:
 			bgunCreateThrownProjectile(handnum, &gset);
+#ifndef PLATFORM_N64
+			chrPlayThrowAnimation(g_Vars.currentplayer->prop->chr, handnum);
+#endif
 			break;
 		case HANDATTACKTYPE_RCP120CLOAK:
 			cloaked = (g_Vars.currentplayer->devicesactive & DEVICE_CLOAKRCP120) != 0;

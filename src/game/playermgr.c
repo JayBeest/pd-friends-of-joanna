@@ -368,6 +368,12 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->fastmovecentreenabled = false;
 	g_Vars.players[index]->automovecentre = true;
 	g_Vars.players[index]->insightaimmode = false;
+	g_Vars.players[index]->rollspeed.x = 0;
+	g_Vars.players[index]->rollspeed.y = 0;
+	g_Vars.players[index]->rollspeed.z = 0;
+	g_Vars.players[index]->rolltime60 = 0;
+	g_Vars.players[index]->camtiltroll = 0;
+	g_Vars.players[index]->camtiltpitch = 0;
 
 	g_Vars.players[index]->autoyaimenabled = true;
 	g_Vars.players[index]->autoaimy = 0;
@@ -501,6 +507,9 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->gunctrl.gunmemtype = 0;
 	g_Vars.players[index]->gunctrl.gunmem = NULL;
 	g_Vars.players[index]->gunctrl.gunmodeldef = NULL;
+#ifndef PLATFORM_N64
+	g_Vars.players[index]->codaimfrac = 0.0f;
+#endif
 
 	g_Vars.players[index]->gunctrl.weaponnum = WEAPON_NONE;
 	g_Vars.players[index]->gunctrl.prevweaponnum = -1;

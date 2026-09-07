@@ -1041,6 +1041,8 @@
 
 #define FUNCFLAG_00000001               0x00000001
 #define FUNCFLAG_BURST3                 0x00000002
+#define FUNCFLAG_PROXIMITYMINE          0x00000004 // What it leaves behind acts as a proximity mine
+#define FUNCFLAG_LEAVESSMOKE            0x00000008 // And leaves smoke to be cleared with it
 #define FUNCFLAG_BURST50                0x00000020 // automatics only
 #define FUNCFLAG_NOAUTOAIM              0x00000040
 #define FUNCFLAG_STICKTOWALL            0x00000100
@@ -2946,6 +2948,113 @@
 #define MPOPTION_FRIENDLYFIRE           0x02000000
 #define MPOPTION_NOPLAYERONRADAR        0x04000000
 #define MPOPTION_NODOORS                0x08000000
+// Jump is a three-bit field rather than a flag: 0 is off, 1 to JUMPHEIGHT_MAX
+// select the height multiplier. These are the last three bits of the word, so
+// an on/off flag plus a separate height would not have fitted - and would have
+// been two settings for what is one choice. options is saved as a flat 32 bits,
+// so a field inside it needs no save format change.
+#define MPOPTION_JUMP_SHIFT             29
+#define MPOPTION_JUMP_MASK              0xe0000000
+
+/**
+ * Upward velocity a jump starts with, in units per tick at 60fps.
+ *
+ * Gravity is 0.27777779 units per tick squared for both the player
+ * (bwalkUpdateVertical) and chrs (func0f0965e4), so the apex is
+ * v * v / (2 * 0.27777779): 5.75 clears a little under 60 units. That is
+ * between a duck (-45) and a full squat (-90) - enough for a railing, not
+ * enough to reach anywhere an arena was not built to be stood on.
+ *
+ * Two ceilings constrain this from above, both on the simulant side.
+ * posIsArrivingAtPos() refuses to count a waypoint as reached while the chr is
+ * more than 150 units off its height, and chrTickGoPos() damages a chr that has
+ * not moved for a second. A hop this size is 60 units and 0.7 seconds, so it
+ * clears neither.
+ *
+ * For the player it also lands at -5.75, in the gap between the knee bend at
+ * -5 and the grunt and footstep sound at -6, so a hop bends the knees on
+ * landing without Jo complaining about it every time.
+ */
+#define JUMP_IMPULSE 5.75f
+
+/**
+ * The combat roll.
+ *
+ * Perfect Dark's guards have rolled since release - chrAttackRoll() picks out of
+ * g_RollAttackAnims and ACT_ATTACKROLL runs it, firing on the way through - and
+ * neither a player nor a simulant has ever had one, because neither has an
+ * action that could hold it.
+ *
+ * The push is an impulse rather than a speed held for a duration, because both
+ * movers already had somewhere to put one that decays: a chr's fallspeed is
+ * horizontal as well as vertical, applied to the position every tick and
+ * decayed by 0.9 while it is on the ground, which is how an explosion throws a
+ * body. The player gets the same treatment through its own copy of that
+ * velocity, added where bondforcespeed is added and decayed on the same curve,
+ * so the two roll the same distance out of the same numbers.
+ *
+ * 22.5 a tick decaying by 0.9 covers about 225 units before it drops below the
+ * tenth of a unit that counts as stopped - a little over Jo's standing height,
+ * so the roll clears a doorway and no more. Most of it is spent in the first
+ * half second, which is what makes it read as a dodge rather than a sprint.
+ */
+#define ROLL_IMPULSE  22.5f
+#define ROLL_DECAY    (PAL ? 0.88120001554489f : 0.9f)
+#define ROLL_STOPPED  0.1f
+
+/**
+ * How fast the roll animation plays.
+ *
+ * The guards' own speed is chrGetRangedSpeed(chr, 0.5, 0.8), which spends over
+ * a second and a half on the 78 frames of the longest roll. That is a guard
+ * taking cover with a rifle; this is a dodge, and it wants to be over while the
+ * push it was started with is still moving the body.
+ */
+#define ROLL_ANIMSPEED 1.5f
+
+/**
+ * How long before another roll can be started.
+ *
+ * Long enough that the animation is off the body first, so the second roll
+ * starts from standing rather than out of the middle of the first.
+ */
+#define ROLL_COOLDOWN TICKS(60)
+
+/**
+ * How long a roll has the body to itself.
+ *
+ * A roll is a commitment: no shooting, no punching, no throwing and no jumping
+ * until it is over. That is the trade for the distance it covers, and it is the
+ * only way the animation is ever seen - a simulant that punches or throws two
+ * frames into a roll replaces the roll on the body with the swing, and all that
+ * is left of the dodge is a bot sliding sideways in its running pose.
+ *
+ * Three quarters of a second is about what the four rolls take at
+ * ROLL_ANIMSPEED, so the block lifts as the body comes back up.
+ */
+#define ROLL_BUSY TICKS(45)
+
+/**
+ * How fast a thrown grenade's animation plays on a third person body.
+ *
+ * The guards use chrGetRangedSpeed(chr, 0.5, 1.2), scaled by how good a shot
+ * the guard is. Nobody here has a speed rating to scale by, so this is the top
+ * of that range: the arm goes over in about half a second, which is roughly
+ * where bondgun's own throw leaves the grenade.
+ */
+#define THROW_ANIMSPEED 1.2f
+
+/**
+ * How high JUMP_IMPULSE actually gets, v * v / (2 * 0.27777779), rounded up.
+ *
+ * Only used to bound how far below an airborne simulant its collision cylinder
+ * is allowed to reach. chr->ground is around -100000 where there is no floor
+ * under the chr at all, so it cannot be used as that bound unguarded.
+ */
+#define JUMP_APEX 60.0f
+
+#define JUMPHEIGHT_MIN 1
+#define JUMPHEIGHT_MAX 5
 
 #define MPPAUSEMODE_UNPAUSED 0
 #define MPPAUSEMODE_PAUSED   1
@@ -4609,6 +4718,30 @@ enum weaponnum {
 #define WEAPONFLAG_AIMTRACK          0x40000000 // Allow drawing red box around targets in aim mode
 #define WEAPONFLAG_FIRETOACTIVATE    0x80000000 // For devices/gadgets
 
+// A second flags word, because the first has all 32 bits spoken for. These are
+// behaviours the game used to decide by comparing the weapon number, which a
+// mod that renumbers the weapons cannot change. See modconfig's weapon block.
+#define WEAPONFLAG2_UNEQUIPPEDRELOAD 0x00000001 // Reloads while unequipped; the animation is unequippedreloadindex
+#define WEAPONFLAG2_PUMPACTION       0x00000002 // Keeps the gun moving while the reload animation plays
+#define WEAPONFLAG2_CHARGEABLE       0x00000004 // Holding the trigger winds the shot up
+#define WEAPONFLAG2_MISSIONCRITICAL  0x00000008 // Never dropped on disarm: the mission may need it
+#define WEAPONFLAG2_NOEJECT          0x00000010 // Throws the whole thing, so there is no casing to eject
+#define WEAPONFLAG2_LANDSONHIT       0x00000020 // A device that lands rather than strikes: mine sound, no ricochet
+#define WEAPONFLAG2_NOCARTEJECT      0x00000040 // No cartridge eject position on the model
+#define WEAPONFLAG2_HEAVYSMOKE       0x00000080 // Smokes harder per shot
+#define WEAPONFLAG2_DETONATORHAND    0x00000100 // The left hand holds a detonator for it, not a second one
+#define WEAPONFLAG2_NORELOADSOUND    0x00000200 // Makes no sound when reloaded
+#define WEAPONFLAG2_PICKUPSINGLE     0x00000400 // Picked up one at a time rather than by the magazine
+#define WEAPONFLAG2_EXPLODESWHENSHOT 0x00000800 // Lying on the ground, it goes off when damaged
+#define WEAPONFLAG2_NOPICKUPWHILEARMED 0x00001000 // Not picked up while its timer is running
+#define WEAPONFLAG2_NOPICKUPINFLIGHT 0x00002000 // Not picked up while it is still flying
+#define WEAPONFLAG2_NOWALLHIT        0x00004000 // Leaves no bullet hole
+#define WEAPONFLAG2_ISPROXIMITYMINE  0x00008000 // The weapon itself is a proximity mine, whichever function threw it
+#define WEAPONFLAG2_STICKSTOWALL     0x00010000 // Thrown, it stays where it lands
+#define WEAPONFLAG2_HARDWHENLANDED   0x00020000 // Once down it cannot be shot off again
+#define WEAPONFLAG2_POISONS          0x00040000 // Poisons whatever it embeds itself in
+#define WEAPONFLAG2_MINIGUN          0x00080000 // Fires like the Reaper: the trigger spins the barrel up, a shot lands every third burst tick, three muzzles take turns, its own eject parts and smoke
+
 #define WEAPONSET_RANDOMFIVE 0x0c
 #define WEAPONSET_RANDOM     0x0d
 #define WEAPONSET_CUSTOM     0x0e
@@ -4818,6 +4951,7 @@ enum weaponnum {
 #define BUTTON_CROUCH_CYCLE   CONT_8000
 #define BUTTON_HALF_CROUCH    CONT_4000
 #define BUTTON_FULL_CROUCH    CONT_2000
+#define BUTTON_JUMP           CONT_1000
 
 #define BUTTON_UI_ACCEPT      CONT_0010
 #define BUTTON_UI_CANCEL      CONT_0020
@@ -4825,6 +4959,7 @@ enum weaponnum {
 #define BUTTON_EYELIDS          CONT_0040
 #define BUTTON_DROPITEM         CONT_0080
 #define BUTTON_MOONJUMP         CONT_0100
+#define BUTTON_ROLL             CONT_0800
 #define BUTTON_TOGGLEGRAVITY    CONT_0200
 
 #define MOUSEAIM_CLASSIC 0 // crosshair moves around the screen in aim mode

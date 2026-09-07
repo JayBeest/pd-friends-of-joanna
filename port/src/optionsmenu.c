@@ -1332,6 +1332,49 @@ static MenuItemHandlerResult menuhandlerCrosshairSway(s32 operation, struct menu
 	return 0;
 }
 
+static MenuItemHandlerResult menuhandlerCodAiming(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].codaiming;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].codaiming = data->checkbox.value;
+		break;
+	}
+
+	return 0;
+}
+
+static MenuItemHandlerResult menuhandlerCodAimLock(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].codaimlock;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].codaimlock = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		// Nothing without COD Style Aiming itself
+		return !g_PlayerExtCfg[g_ExtMenuPlayer].codaiming;
+	}
+
+	return 0;
+}
+
+static MenuItemHandlerResult menuhandlerCameraTilt(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GETSLIDER:
+		data->slider.value = g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt * 10.f + 0.5f;
+		break;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt = (f32)data->slider.value / 10.f;
+		break;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCrosshairEdgeBoundary(s32 operation, struct menuitem* item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1573,6 +1616,30 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		MENUITEMTYPE_SLIDER,
 		0,
 		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+		(uintptr_t)"Camera Tilt",
+		40,
+		menuhandlerCameraTilt,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"COD Style Aiming",
+		0,
+		menuhandlerCodAiming,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Aim Lock",
+		0,
+		menuhandlerCodAimLock,
+	},
+	{
+		MENUITEMTYPE_SLIDER,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
 		(uintptr_t)"Crosshair Edge Deadzone",
 		10,
 		menuhandlerCrosshairEdgeBoundary,
@@ -1712,6 +1779,8 @@ static const struct menubind menuBinds[] = {
 	{ CK_8000,   "Cycle Crouch [+]\n",  "N64 Ext 8000\n" },
 	{ CK_4000,   "Half Crouch [+]\n",   "N64 Ext 4000\n" },
 	{ CK_2000,   "Full Crouch [+]\n",   "N64 Ext 2000\n" },
+	{ CK_1000,   "Jump [+]\n",          "N64 Ext 1000\n" },
+	{ CK_0800,   "Combat Roll [+]\n",   "N64 Ext 0800\n" },
 	{ CK_0040,   "Toggle Eyelids [+]\n", "N64 Ext 0040\n" },
 	{ CK_0100,   "Moon Jump [+]\n",     "N64 Ext 0100\n" },
 	{ CK_0200,   "Toggle Gravity [+]\n","N64 Ext 0200\n" },
@@ -1735,6 +1804,7 @@ static MenuItemHandlerResult menuhandlerResetBindsN64(s32 operation, struct menu
 	}
 
 struct menuitem g_ExtendedBindsMenuItems[] = {
+	DEFINE_MENU_BIND(),
 	DEFINE_MENU_BIND(),
 	DEFINE_MENU_BIND(),
 	DEFINE_MENU_BIND(),

@@ -3405,7 +3405,120 @@ void chrBeginDeath(struct chrdata *chr, struct coord *dir, f32 relangle, s32 hit
 	}
 }
 
-void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
+#ifndef PLATFORM_N64
+/**
+ * Whether the third person body is part way through a one shot animation.
+ *
+ * The punches, the roll, the flinch and the throw are all started the same way:
+ * on a body whose animation playerChooseThirdPersonAnimation() picks a frame at
+ * a time, with an end frame, and with the animation number left in oneshotanim
+ * so this can tell that the body is still busy with it. The chooser asks, and
+ * gets the walk back on the frame the animation runs out.
+ *
+ * A body that has reached the end frame is done even though the pose is still
+ * the last frame of it, and something else changing the animation ends it too.
+ * Either way the record is dropped, so the next question is answered without
+ * looking at a stale one.
+ */
+bool chrIsOneShotAnimPlaying(struct chrdata *chr)
+{
+	if (chr == NULL || chr->model == NULL || chr->oneshotanim == 0) {
+		return false;
+	}
+
+	if (modelGetAnimNum(chr->model) != chr->oneshotanim
+			|| modelGetCurAnimFrame(chr->model) >= modelGetAnimEndFrame(chr->model)) {
+		chr->oneshotanim = 0;
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Whether the one shot the body is playing is a combat roll.
+ *
+ * The roll is the one of these with a push attached. Its sideways velocity
+ * decays on its own and does not care what the body is doing, so a body taken
+ * off the roll animation part way through goes on sliding with nothing to
+ * explain it. Everything else here is over when its animation is, and can be
+ * interrupted with nothing left behind.
+ */
+static bool chrIsRollAnimPlaying(struct chrdata *chr)
+{
+	s32 i;
+
+	if (!chrIsOneShotAnimPlaying(chr)) {
+		return false;
+	}
+
+	// The first four are the whole set. Entries 4 to 7 are the same four
+	// animations again with the frames a one handed guard switches on.
+	for (i = 0; i < 4; i++) {
+		if (g_RollAttackAnims[i].animnum == chr->oneshotanim) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Whether a one shot animation can be started on this chr at all.
+ *
+ * Only a body whose animation playerChooseThirdPersonAnimation() is choosing,
+ * which is what leaves an animation free to be interrupted and given back: a
+ * player under ACT_BONDMULTI, or a bot, which botApplyMovement() puts through
+ * the same chooser whatever action its AI is holding. Anything else - a
+ * cutscene, an eyespy, a death - is running its own animation for a reason.
+ *
+ * A body part way through a merge is not refused, though the chooser refuses
+ * its own walk transitions on exactly that test. The chooser can afford to
+ * wait, because the walk it wanted will still be the walk it wants next frame;
+ * these cannot, because the throw or the punch happened on this one. And a
+ * moving body is merging most of the time - every change of walk row starts
+ * another sixteen frames of it - so waiting meant the throw played when
+ * standing still and was dropped on the spot when running.
+ *
+ * modelCopyAnimForMerge() is built for it: handed a model already merging, it
+ * takes the blend in progress as the thing to blend out of.
+ */
+static bool chrCanPlayOneShotAnim(struct chrdata *chr)
+{
+	if (chr == NULL || chr->model == NULL || chr->model->anim == NULL) {
+		return false;
+	}
+
+	if (chr->aibot == NULL && chr->actiontype != ACT_BONDMULTI) {
+		return false;
+	}
+
+	if (chrIsDead(chr)) {
+		return false;
+	}
+
+	return true;
+}
+
+#endif
+
+/**
+ * Play an injury animation, and optionally take the action that goes with it.
+ *
+ * Stock, being shot in the arm puts a guard into ACT_ARGH with an animation
+ * chosen for the arm, out of g_AnimTablesByRace by hit location. Simulants were
+ * turned away at the door - the early return below names chr->aibot - and
+ * players never arrived, being damaged down a different path entirely. What
+ * both of them get is chrFlinchBody(), a twitch of the body node, and that is
+ * all either has ever done when shot.
+ *
+ * Neither can be put into ACT_ARGH: a bot would lose whatever its AI was doing
+ * and a player's body would stop taking its movement from the player. So they
+ * come in with animonly, which skips the action, the sleep and the ceasefire
+ * and takes the animation - the whole selection, hit location and all, because
+ * that is the part that was worth having.
+ */
+static void chrBeginArghWithAction(struct chrdata *chr, f32 angle, s32 hitpart, bool animonly)
 {
 	bool doneanim = false;
 	s32 instant;
@@ -3422,7 +3535,7 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 		return;
 	}
 
-	if (race == RACE_EYESPY || chr->aibot) {
+	if (race == RACE_EYESPY || (chr->aibot && !animonly)) {
 		return;
 	}
 
@@ -3472,12 +3585,14 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 			{ 0x0037, 0, -1, 0.5, 0, -1, -1 },
 		};
 
-		chrStopFiring(chr);
+		if (!animonly) {
+			chrStopFiring(chr);
 
-		chr->actiontype = ACT_ARGH;
-		chr->act_argh.notifychrindex = 0;
-		chr->act_argh.lvframe60 = g_Vars.lvframe60;
-		chr->sleep = 0;
+			chr->actiontype = ACT_ARGH;
+			chr->act_argh.notifychrindex = 0;
+			chr->act_argh.lvframe60 = g_Vars.lvframe60;
+			chr->sleep = 0;
+		}
 
 		row = &rows[rngRandom() % 8];
 
@@ -3490,6 +3605,12 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 			modelSetAnimEndFrame(model, chrGetRangedArghSpeed(chr, animGetNumFrames(row->animnum) - 1, 8));
 			doneanim = true;
 		}
+
+#ifndef PLATFORM_N64
+		if (animonly) {
+			chr->oneshotanim = row->animnum;
+		}
+#endif
 	}
 
 	if (!doneanim
@@ -3516,12 +3637,14 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 
 		row = &g_AnimTablesByRace[race][index].injuryanims[rowindex];
 
-		chrStopFiring(chr);
+		if (!animonly) {
+			chrStopFiring(chr);
 
-		chr->actiontype = ACT_ARGH;
-		chr->act_argh.notifychrindex = 0;
-		chr->act_argh.lvframe60 = g_Vars.lvframe60;
-		chr->sleep = 0;
+			chr->actiontype = ACT_ARGH;
+			chr->act_argh.notifychrindex = 0;
+			chr->act_argh.lvframe60 = g_Vars.lvframe60;
+			chr->sleep = 0;
+		}
 
 		modelSetAnimationWithMerge(model, row->animnum, row->flip, 0, row->speed, 16, !instant);
 
@@ -3530,8 +3653,98 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 		} else {
 			modelSetAnimEndFrame(model, chrGetRangedArghSpeed(chr, animGetNumFrames(row->animnum) - 1, 8));
 		}
+
+#ifndef PLATFORM_N64
+		if (animonly) {
+			chr->oneshotanim = row->animnum;
+		}
+#endif
 	}
 }
+
+void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
+{
+	chrBeginArghWithAction(chr, angle, hitpart, false);
+}
+
+#ifndef PLATFORM_N64
+/**
+ * Throw, on a third person body that is driving its own movement.
+ *
+ * chrThrowGrenade() is the guards' version: ACT_THROWGRENADE, and a tick that
+ * pulls the pin at one frame of the animation and lets go at another. A player
+ * and a simulant have already let go - bondgun made the projectile for one and
+ * botactThrow() for the other - so what is left is the arm, and stock gives
+ * neither of them any. A simulant's grenades come out of a body that is still
+ * running.
+ *
+ * The three animations and the frames they are entered on are the guards' own,
+ * taken from chrThrowGrenadeChooseAnimation()'s branch for a chr that does not
+ * need to equip anything first, which is the same position ours are in: the
+ * throw without the fumbling for it. They are picked at random, as the guards
+ * pick them.
+ *
+ * The end frame is the frame chrTickThrowGrenade() lets go of the grenade on.
+ * What is past it is a guard recovering, which is a second of standing still
+ * that a body under someone's control has no way to spend, and the sixteen
+ * frame merge back into the walk covers the follow through anyway.
+ */
+void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum)
+{
+	bool flip = handnum != HAND_RIGHT;
+	s32 animnum;
+	f32 startframe;
+	f32 endframe;
+
+	if (!chrCanPlayOneShotAnim(chr)) {
+		return;
+	}
+
+	switch (rngRandom() % 3) {
+	case 0:
+		animnum = ANIM_THROWGRENADE_CROUCHING;
+		startframe = 5;
+		endframe = 58;
+		break;
+	case 1:
+		animnum = ANIM_THROWGRENADE_NOPIN;
+		startframe = 6;
+		endframe = 57;
+		break;
+	default:
+		animnum = ANIM_THROWGRENADE_STANDING;
+		startframe = 84;
+		endframe = 119;
+		break;
+	}
+
+	modelSetAnimation(chr->model, animnum, flip, startframe, THROW_ANIMSPEED, 16);
+	modelSetAnimEndFrame(chr->model, endframe);
+
+	chr->oneshotanim = animnum;
+}
+#endif
+
+#ifndef PLATFORM_N64
+/**
+ * Flinch, on a third person body that is driving its own movement.
+ *
+ * The animation and nothing else. Repeat hits restart it, the way a guard under
+ * fire keeps staggering, and a hit landing mid punch takes the body off the
+ * swing: being shot is the more interesting thing that just happened to it.
+ *
+ * A roll is left to finish, because the roll is still moving the body and the
+ * animation is what says why.
+ */
+void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart)
+{
+	if (!chrCanPlayOneShotAnim(chr) || chrIsRollAnimPlaying(chr)) {
+		return;
+	}
+
+	chrBeginArghWithAction(chr, angle, hitpart, true);
+}
+#endif
 
 void chrReactToDamage(struct chrdata *chr, struct coord *vector, f32 angle, s32 hitpart, struct gset *gset, s32 aplayernum)
 {
@@ -4859,11 +5072,14 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 
 					if (g_Vars.currentplayer->haschrbody) {
 						chrFlinchBody(chr);
+#ifndef PLATFORM_N64
+						chrPlayArghAnimation(chr, angle, hitpart);
+#endif
 					}
 				}
 
 				// Handle player boost
-				if (ismelee && gset->weaponnum == WEAPON_REAPER) {
+				if (ismelee && weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_MINIGUN)) {
 					boostscale = 0.1f;
 				} else if (g_Vars.normmplayerisrunning) {
 					boostscale = 0.75f;
@@ -4948,7 +5164,7 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 			if (chr->aibot) {
 				f32 boostscale;
 
-				if (ismelee && gset->weaponnum == WEAPON_REAPER) {
+				if (ismelee && weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_MINIGUN)) {
 					boostscale = 0.1f;
 				} else {
 					boostscale = 0.75f;
@@ -5014,6 +5230,22 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 					if (chr->damage >= chr->maxdamage) {
 						chrDie(chr, aplayernum);
 					}
+#ifndef PLATFORM_N64
+					else {
+						botTryDodge(chr);
+
+						// Not on the shot that kills. A flinch starts a sixteen
+						// frame merge, and an animation asked for while one is
+						// in progress is refused until it finishes - by
+						// playerChooseThirdPersonAnimation() here, and by
+						// chrStartAnim() for a chr - so a flinch thrown at a
+						// dying body holds its death animation off for a
+						// quarter of a second. The player side of this never
+						// had the problem: playerDieByShooter() runs before the
+						// flinch there, and chrIsDead() then turns it away.
+						chrPlayArghAnimation(chr, angle, hitpart);
+					}
+#endif
 				} else if (explosion) {
 					// Chrs die instantly from explosion damage provided they
 					// don't have any armour (the chr has armour if their
@@ -7914,6 +8146,225 @@ bool chrTryPunch(struct chrdata *chr, u8 reverse)
 	return false;
 }
 
+/**
+ * The animation each race's melee combo finishes on, as an index into its punch
+ * table.
+ *
+ * The skedar one is not a guess: chrTryPunch() labels index 5 the kick behind
+ * and only reaches it when asked to punch in reverse, which nothing ever asks,
+ * so it is a kick the game has never played. The human table has no such label.
+ * 11 is the entry chrTryPunch()'s modulus leaves out, so it is the other
+ * animation in the ROM no guard has thrown, and it stands in until the kick is
+ * picked out by eye.
+ */
+#define PUNCHANIM_HUMANKICK  11
+#define PUNCHANIM_SKEDARKICK 5
+
+/**
+ * How many swings the combo is, and how long a gap ends one.
+ *
+ * The window has to cover the slowest melee anyone throws, or the combo never
+ * reaches its last swing: a bot on the meat difficulty waits two seconds
+ * between punches with some weapons, but half of that is the longest a player
+ * holding the trigger down ever waits.
+ */
+#define PUNCHCOMBO_LENGTH 3
+#define PUNCHCOMBO_WINDOW TICKS(90)
+
+/**
+ * One melee attack can be reported twice - the arm coming up and the blow
+ * landing - and dual wielding can land two on the same frame. Neither is a
+ * second swing.
+ */
+#define PUNCHCOMBO_DEBOUNCE TICKS(10)
+
+/**
+ * How far through the punch tables the combo's cycle has got.
+ *
+ * The swings before the last one walk the table in order rather than picking at
+ * random, so that every animation in it gets thrown and none of them can hide.
+ * The cursor is per table and not per chr, so a match with several bots
+ * swinging walks the list faster rather than each of them starting over.
+ */
+static s32 g_NextHumanPunchAnim = 0;
+static s32 g_NextSkedarPunchAnim = 0;
+
+/**
+ * The punch animations available to this chr's race, and the frame the guards
+ * start them on.
+ *
+ * The whole table, not the part chrTryPunch() draws from: an animation that was
+ * legal to start is still legal to be in the middle of, whatever the chr has
+ * picked up or dropped since.
+ */
+static struct punchanim *chrGetPunchAnims(struct chrdata *chr, s32 *count, f32 *startframe)
+{
+	if (CHRRACE(chr) == RACE_HUMAN) {
+		*count = ARRAYCOUNT(g_HumanPunchAnims);
+		*startframe = 10;
+		return g_HumanPunchAnims;
+	}
+
+	if (CHRRACE(chr) == RACE_SKEDAR) {
+		*count = ARRAYCOUNT(g_SkedarPunchAnims);
+		*startframe = 20;
+		return g_SkedarPunchAnims;
+	}
+
+	return NULL;
+}
+
+#ifndef PLATFORM_N64
+/**
+ * Play a punch or kick on a chr that is driving its own movement.
+ *
+ * chrTryPunch() is the solo version and it is the whole attack: the guard goes
+ * into ACT_ANIM and that action's tick reads the hit frame, radius and damage
+ * out of the same table to land the blow. Players and bots arrive here having
+ * already dealt their own damage - bondgun's melee state machine for one,
+ * botTick() for the other - and neither can be put into ACT_ANIM without
+ * handing its movement to the animation. So this takes the animation and
+ * nothing else.
+ *
+ * Nothing else was missing. The kicks and the rifle butts are stock and have
+ * always been in the ROM; a player has never thrown one because the third
+ * person body only ever had a walk and an aim, and a bot has never thrown one
+ * for the same reason.
+ */
+// Melee combos: the punch and kick chain solo has always thrown, in MP too.
+s32 g_MeleeCombosEnabled = true;
+
+void chrPlayPunchAnimation(struct chrdata *chr)
+{
+	struct punchanim *anims;
+	bool flip = (rngRandom() % 256) > 128;
+	f32 startframe;
+	s32 elapsed;
+	s32 count;
+	s32 index;
+	s32 step;
+
+	if (!g_MeleeCombosEnabled || !chrCanPlayOneShotAnim(chr)) {
+		return;
+	}
+
+	anims = chrGetPunchAnims(chr, &count, &startframe);
+
+	if (anims == NULL) {
+		return;
+	}
+
+	// A swing already under way is interrupted rather than left to finish. That
+	// is what makes the combo a combo: the second punch lands on top of the
+	// first through the same 16 frame merge every other change of animation
+	// uses, instead of waiting for a body that is still following through.
+	elapsed = g_Vars.lvframe60 - chr->punchtime60;
+
+	if (elapsed >= 0 && elapsed < PUNCHCOMBO_DEBOUNCE) {
+		return;
+	}
+
+	if (elapsed < 0 || elapsed > PUNCHCOMBO_WINDOW) {
+		// Long enough since the last swing that this one starts a new combo.
+		step = 0;
+	} else {
+		step = chr->punchstep;
+	}
+
+	if (step >= PUNCHCOMBO_LENGTH - 1) {
+		index = (CHRRACE(chr) == RACE_HUMAN) ? PUNCHANIM_HUMANKICK : PUNCHANIM_SKEDARKICK;
+		chr->punchstep = 0;
+	} else {
+		s32 *cursor = (CHRRACE(chr) == RACE_HUMAN) ? &g_NextHumanPunchAnim : &g_NextSkedarPunchAnim;
+
+		if (*cursor == PUNCHANIM_HUMANKICK && CHRRACE(chr) == RACE_HUMAN) {
+			*cursor = (*cursor + 1) % count;
+		} else if (*cursor == PUNCHANIM_SKEDARKICK && CHRRACE(chr) == RACE_SKEDAR) {
+			*cursor = (*cursor + 1) % count;
+		}
+
+		index = *cursor;
+		*cursor = (*cursor + 1) % count;
+		chr->punchstep = step + 1;
+	}
+
+	chr->punchtime60 = g_Vars.lvframe60;
+
+	if (CHRRACE(chr) == RACE_SKEDAR && index >= 3 && index <= 4
+			&& (!chr->weapons_held[HAND_RIGHT] || !chr->weapons_held[HAND_LEFT])) {
+		// Skedar 3 and 4 swing whichever gun the animation was built around, so
+		// swing with the hand the gun is actually in.
+		flip = chr->weapons_held[HAND_LEFT] != NULL;
+	}
+
+	modelSetAnimation(chr->model, anims[index].animnum, flip, startframe, 0.85f, 16);
+	modelSetAnimEndFrame(chr->model, anims[index].endframe);
+
+	chr->oneshotanim = anims[index].animnum;
+}
+#endif
+
+#ifndef PLATFORM_N64
+/**
+ * Roll, on a chr that is driving its own movement.
+ *
+ * chrAttackRoll() is the guards' version and, like chrTryPunch() before it, it
+ * is the whole move: ACT_ATTACKROLL, a gun fired on the way through, a recoil,
+ * and a follow on animation chosen when the roll lands. A player or a bot is
+ * pushed by its own mover - a decaying sideways velocity either way - and
+ * cannot be put into that action without handing its movement over, so this
+ * takes the animation and nothing else.
+ *
+ * The four rolls come in a left pair and a right pair, and again at index 4 as
+ * the one handed cut of the same four. Which of a pair is thrown is a coin
+ * toss, the way chrAttackRoll() throws it. flip mirrors the animation, so the
+ * pair is chosen against it rather than for the direction directly, and it is
+ * set by which hand the gun is in: mirroring a roll swaps the arm the body
+ * rolls over.
+ */
+void chrPlayRollAnimation(struct chrdata *chr, bool toleft)
+{
+	struct attackanimconfig *animcfg;
+	struct prop *leftgun;
+	struct prop *rightgun;
+	bool onehanded;
+	bool flip;
+
+	if (!chrCanPlayOneShotAnim(chr)) {
+		return;
+	}
+
+	leftgun = chrGetHeldProp(chr, HAND_LEFT);
+	rightgun = chrGetHeldProp(chr, HAND_RIGHT);
+
+	if (leftgun && rightgun) {
+		onehanded = true;
+		flip = rngRandom() % 2;
+	} else {
+		onehanded = weaponIsOneHanded(leftgun) || weaponIsOneHanded(rightgun);
+		flip = leftgun != NULL;
+	}
+
+	if ((toleft && !flip) || (!toleft && flip)) {
+		animcfg = (rngRandom() % 2) ? &g_RollAttackAnims[0] : &g_RollAttackAnims[2];
+	} else {
+		animcfg = (rngRandom() % 2) ? &g_RollAttackAnims[1] : &g_RollAttackAnims[3];
+	}
+
+	if (onehanded) {
+		animcfg += 4;
+	}
+
+	// unk10 is the frame the guards start a roll on and unk18 the frame it
+	// lands. What is past that is the guard coming up firing, which is
+	// ACT_ATTACKROLL's business and not a dodge's.
+	modelSetAnimation(chr->model, animcfg->animnum, flip, animcfg->unk10, ROLL_ANIMSPEED, 16);
+	modelSetAnimEndFrame(chr->model, animcfg->unk18);
+
+	chr->oneshotanim = animcfg->animnum;
+}
+#endif
+
 void func0f03c03c(void)
 {
 	// empty
@@ -9911,6 +10362,32 @@ const char var7f1a8ae4[] = "aimadjust=%d";
  * This should be called on every frame while the chr is shooting.
  * The function takes care of the gun's fire rate.
  */
+/**
+ * The projectile function behind a launcher's number, or NULL when what sits
+ * in that slot is not a launcher. Stock keys chrTickShoot()'s launcher branch
+ * on the weapon number alone, which holds for its own table; a mod's can put
+ * anything behind a number - GE-X's timed mine is in the Crossbow's slot, a
+ * throw function of 0x24 bytes - and the cast then reads past the function
+ * it has and hands setupLoadModeldef() garbage. A Guards Alerted! guard on
+ * GE-X's Runway rolled that slot and crashed the game with its first shot.
+ * This is the test bgunCreateFiredProjectile() makes for the player's hand.
+ */
+static struct weaponfunc_shootprojectile *chrGetProjectileFunc(struct gset *gset)
+{
+	struct weapon *weapondef = weaponFindById(gset->weaponnum);
+	struct weaponfunc *func = NULL;
+
+	if (weapondef && gset->weaponfunc <= FUNC_SECONDARY) {
+		func = weapondef->functions[gset->weaponfunc];
+	}
+
+	if (func && func->type == INVENTORYFUNCTYPE_SHOOT_PROJECTILE) {
+		return (struct weaponfunc_shootprojectile *)func;
+	}
+
+	return NULL;
+}
+
 void chrTickShoot(struct chrdata *chr, s32 handnum)
 {
 	struct prop *chrprop = chr->prop;
@@ -9966,7 +10443,7 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 			makebeam = true;
 		} else {
 			if (chr->aibot
-					&& chr->aibot->weaponnum == WEAPON_REAPER
+					&& weaponHasFlag2(chr->aibot->weaponnum, WEAPONFLAG2_MINIGUN)
 					&& chr->aibot->gunfunc == FUNC_PRIMARY) {
 				f32 sp208 = (TICKS(90) - chr->aibot->reaperspeed[handnum]) * (1.0f / TICKS(18.0f));
 				tickspershot *= 1 + sp208;
@@ -10127,13 +10604,15 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 
 				sqshotdist = xdiff * xdiff + ydiff * ydiff + zdiff * zdiff;
 
-				// Handle projectile launchers specially
-				if (gset.weaponnum == WEAPON_ROCKETLAUNCHER
+				// Handle projectile launchers specially - when the weapon
+				// behind the number is one; see chrGetProjectileFunc()
+				if ((gset.weaponnum == WEAPON_ROCKETLAUNCHER
 						|| gset.weaponnum == WEAPON_SLAYER
 						|| (gset.weaponnum == WEAPON_SUPERDRAGON && gset.weaponfunc == FUNC_SECONDARY)
 						|| gset.weaponnum == WEAPON_DEVASTATOR
 						|| gset.weaponnum == WEAPON_CROSSBOW
-						|| gset.weaponnum == WEAPON_ROCKETLAUNCHER_34) {
+						|| gset.weaponnum == WEAPON_ROCKETLAUNCHER_34)
+						&& chrGetProjectileFunc(&gset) != NULL) {
 					makebeam = false;
 
 					// Solo chrs won't fire their projectile weapon
@@ -10146,8 +10625,7 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 						struct coord sp15c;
 						Mtxf projectilemtx;
 						Mtxf yrotmtx;
-						struct weapon *weapondef = weaponFindById(gset.weaponnum);
-						struct weaponfunc_shootprojectile *func = weapondef->functions[gset.weaponfunc];
+						struct weaponfunc_shootprojectile *func = chrGetProjectileFunc(&gset);
 
 						// Handle creating the projectile
 						if (gset.weaponnum == WEAPON_ROCKETLAUNCHER

@@ -158,6 +158,29 @@ bool bmoveIsAutoAimYEnabledForCurrentWeapon(void)
 	return bmoveIsAutoAimYEnabled();
 }
 
+#ifndef PLATFORM_N64
+/**
+ * COD Style Aiming: aim mode as a modern shooter has it. The crosshair stays
+ * in the centre and the gun comes up to it with a little zoom, and the player
+ * keeps moving, slower. Per player, like the other comfort settings.
+ */
+bool bmoveIsCodAiming(void)
+{
+	return PLAYER_EXTCFG().codaiming != 0;
+}
+
+/**
+ * Aim Lock, under COD Style Aiming: the crosshair is held in the centre and
+ * the aim stick turns the view, as the mouse always does there. Off, the
+ * stick moves the crosshair about the screen as it does in the game's own aim
+ * mode. Nothing without COD Style Aiming itself.
+ */
+bool bmoveIsCodAimLock(void)
+{
+	return PLAYER_EXTCFG().codaiming != 0 && PLAYER_EXTCFG().codaimlock != 0;
+}
+#endif
+
 bool bmoveIsInSightAimMode(void)
 {
 	return g_Vars.currentplayer->insightaimmode;
@@ -807,7 +830,7 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 #ifndef PLATFORM_N64
 	if (allowmlook) {
 		inputMouseGetScaledDelta(&movedata.freelookdx, &movedata.freelookdy);
-		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) &&
+		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !bmoveIsCodAimLock() &&
 			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 		if (movedata.invertpitch) {
 			movedata.freelookdy = -movedata.freelookdy;
@@ -1261,6 +1284,15 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 						movedata.analogstrafe = c2stickx;
 						movedata.analogwalk = c2sticky;
 						movedata.unk14 = (c2stickx || c2sticky);
+#ifndef PLATFORM_N64
+					} else if (bmoveIsCodAiming()) {
+						// COD Style Aiming: still moving, at sixty percent.
+						// Forward and back stay with a scope's zoom, which
+						// has no other control.
+						movedata.analogstrafe = c2stickx * 0.6f;
+						movedata.analogwalk = canmanualzoom ? 0.f : c2sticky * 0.6f;
+						movedata.unk14 = (c2stickx || c2sticky);
+#endif
 					} else {
 						movedata.analogstrafe = 0.f;
 						movedata.analogwalk = 0.f;
@@ -1335,6 +1367,32 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 						movedata.digitalstepforward = !g_Vars.currentplayer->insightaimmode && (c1buttons & sumask);
 						movedata.digitalstepback = !g_Vars.currentplayer->insightaimmode && (c1buttons & sdmask);
 						movedata.canlookahead = (controlmode == CONTROLMODE_PC) && !g_Vars.currentplayer->insightaimmode && (c2stickx || c2sticky);
+
+#ifndef PLATFORM_N64
+						// COD Style Aiming: the movement keys keep working while
+						// aiming, as sixty percent walks on the analogue path,
+						// which is how the walk code takes a speed short of full
+						if (bmoveIsCodAiming() && g_Vars.currentplayer->insightaimmode && controlmode == CONTROLMODE_PC) {
+							if (canmanualzoom) {
+								// forward and back are the scope's zoom
+							} else if (c1buttons & sumask) {
+								movedata.analogwalk = 42.0f;
+							} else if (c1buttons & sdmask) {
+								movedata.analogwalk = -42.0f;
+							}
+
+							if (c1buttons & srmask) {
+								movedata.analogstrafe = 42.0f;
+							} else if (c1buttons & slmask) {
+								movedata.analogstrafe = -42.0f;
+							}
+
+							// the walk code takes the analogue strafe only with
+							// this set, and the forward speed only with that
+							movedata.unk14 = movedata.unk14 || movedata.analogstrafe != 0;
+							movedata.canlookahead = movedata.analogwalk != 0.0f || movedata.analogstrafe != 0.0f;
+						}
+#endif
 						movedata.cannaturalpitch = !g_Vars.currentplayer->insightaimmode;
 						movedata.speedvertadown = 0;
 						movedata.speedvertaup = 0;
@@ -1349,7 +1407,15 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 								movedata.analogwalk = 0;
 								movedata.analoglean = 0.f;
 							}
-							if (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_LOCKED || bgunGetWeaponNum(HAND_RIGHT) == WEAPON_HORIZONSCANNER) {
+							if (bmoveIsCodAimLock()) {
+								// Aim Lock: the aim stick turns the view as it
+								// does outside aim mode, the crosshair staying
+								// put, and the mouse with it. The fov scaling
+								// on that path is the lower sensitivity down
+								// the sights.
+								movedata.cannaturalpitch = true;
+								movedata.cannaturalturn = true;
+							} else if (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_LOCKED || bgunGetWeaponNum(HAND_RIGHT) == WEAPON_HORIZONSCANNER) {
 								movedata.cannaturalpitch = movedata.cannaturalpitch || (movedata.freelookdy != 0.0f);
 								movedata.cannaturalturn = movedata.cannaturalturn  || (movedata.freelookdx != 0.0f);
 							}
@@ -1715,7 +1781,17 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 					if (allowc1buttons && (controlmode != CONTROLMODE_PC || (PLAYER_EXTCFG().crouchmode & CROUCHMODE_ANALOG))) {
 #endif
 						for (i = 0; i < numsamples; i++) {
-							if (!canmanualzoom && aimonhist[i]) {
+							// COD Style Aiming: the movement keys and stick are
+							// movement while aiming, so up and down do not
+							// crouch there. The aim tap below still stands up.
+							bool aimcrouch = aimonhist[i];
+#ifndef PLATFORM_N64
+							if (bmoveIsCodAiming() && controlmode == CONTROLMODE_PC) {
+								aimcrouch = false;
+							}
+#endif
+
+							if (!canmanualzoom && aimcrouch) {
 								bool goUp = joyGetButtonsPressedOnSample(i, contpad1, c1allowedbuttons & sumask);
 								if (controlmode == CONTROLMODE_PC) {
 									goUp = goUp || ((joyGetRStickYOnSample(i, contpad1) > 30 && joyGetRStickYOnSampleIndex(i, contpad1) <= 30));
@@ -1799,7 +1875,14 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 						movedata.rleanright = g_Vars.currentplayer->insightaimmode && (c1buttons & srmask);
 #ifndef PLATFORM_N64
 						if (controlmode == CONTROLMODE_PC && g_Vars.currentplayer->insightaimmode) {
-							movedata.analoglean = c2stickx / 127.f;
+							if (bmoveIsCodAiming()) {
+								// COD Style Aiming: left and right strafe, and
+								// only strafe
+								movedata.rleanleft = false;
+								movedata.rleanright = false;
+							} else {
+								movedata.analoglean = c2stickx / 127.f;
+							}
 						}
 #endif
 					}
@@ -2117,6 +2200,24 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 			zoomfov = currentPlayerGetGunZoomFov();
 		}
 
+#ifndef PLATFORM_N64
+		// COD Style Aiming: a little zoom down the sights for a gun that
+		// comes up to them - the same guns as the pose - unless the gun's
+		// own zoom has gone further (the K7 Avenger's 3x), which it keeps;
+		// bgunRender() draws the gun at the ADS fov regardless. A gun
+		// without a zoom reads as none at all here, so zero is the default.
+		if (bmoveIsCodAiming()
+				&& g_Vars.currentplayer->insightaimmode
+				&& weaponIsAGun(weaponnum)
+				&& !bgunScopeCoversView(weaponnum)) {
+			f32 adsfov = PLAYER_DEFAULT_FOV * 0.8f;
+
+			if (zoomfov <= 0 || zoomfov > adsfov) {
+				zoomfov = adsfov;
+			}
+		}
+#endif
+
 		if (zoomfov <= 0) {
 			zoomfov = PLAYER_DEFAULT_FOV;
 		}
@@ -2404,6 +2505,13 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		// when holding aim and moving stick
 		bgunSetAimType(0);
 #ifndef PLATFORM_N64
+		if (bmoveIsCodAimLock()) {
+			// Aim Lock: the crosshair is held in the centre and the stick
+			// has gone to turning the view
+			bgunSwivelWithoutDamp(0.0f, 0.0f);
+			return;
+		}
+
 		if (allowmcross) {
 			// joystick is inactive, move crosshair using the mouse
 			const f32 xcoeff = 320.f / 1080.f;

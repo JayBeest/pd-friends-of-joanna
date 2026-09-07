@@ -10,6 +10,8 @@ void bmoveSetAutoAimY(bool enabled);
 bool bmoveIsAutoAimYEnabled(void);
 bool bmoveIsAutoAimYEnabledForCurrentWeapon(void);
 bool bmoveIsInSightAimMode(void);
+bool bmoveIsCodAiming(void);
+bool bmoveIsCodAimLock(void);
 void bmoveUpdateAutoAimYProp(struct prop *prop, f32 autoaimy);
 void bmoveSetAutoAimX(bool enabled);
 bool bmoveIsAutoAimXEnabled(void);

@@ -1332,6 +1332,35 @@ static MenuItemHandlerResult menuhandlerCrosshairSway(s32 operation, struct menu
 	return 0;
 }
 
+static MenuItemHandlerResult menuhandlerCodAiming(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].codaiming;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].codaiming = data->checkbox.value;
+		break;
+	}
+
+	return 0;
+}
+
+static MenuItemHandlerResult menuhandlerCodAimLock(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].codaimlock;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].codaimlock = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		// Nothing without COD Style Aiming itself
+		return !g_PlayerExtCfg[g_ExtMenuPlayer].codaiming;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCameraTilt(s32 operation, struct menuitem *item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1590,6 +1619,22 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		(uintptr_t)"Camera Tilt",
 		40,
 		menuhandlerCameraTilt,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"COD Style Aiming",
+		0,
+		menuhandlerCodAiming,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Aim Lock",
+		0,
+		menuhandlerCodAimLock,
 	},
 	{
 		MENUITEMTYPE_SLIDER,

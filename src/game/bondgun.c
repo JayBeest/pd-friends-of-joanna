@@ -7715,6 +7715,24 @@ void bgun0f0a5550(s32 handnum)
 	sp274.f[0] += fspare1;
 	sp274.f[1] -= fspare2;
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: the gun comes in to the centre and up to the eye
+	// by however far the tween has got, so it swings rather than snaps.
+	// Two guns come in to either side of it, close enough to aim by and
+	// far enough apart to see.
+	if (player->codaimfrac > 0.0f) {
+		f32 inx = 0.0f;
+
+		if (player->gunctrl.dualwielding) {
+			inx = handnum == HAND_RIGHT ? 4.5f : -4.5f;
+		}
+
+		sp274.f[0] += (inx - func0f0b131c(handnum)) * player->codaimfrac;
+		sp274.f[1] += 3.5f * player->codaimfrac;
+		sp274.f[2] += 3.0f * player->codaimfrac;
+	}
+#endif
+
 	hand->visible = true;
 
 	if (!weaponHasFlag(weaponnum, WEAPONFLAG_00000040)
@@ -7774,6 +7792,26 @@ void bgun0f0a5550(s32 handnum)
 		hand->posoffset.z = 0.0f;
 	}
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: at the sights the gun holds straight ahead. The
+	// look and up here are the gun animation's sway, which rolls and
+	// pitches the gun as it bobs; at the sights that is faded out to the
+	// rest pose by the tween, and the aim rotation below with it.
+	if (player->codaimfrac > 0.0f) {
+		struct coord look;
+		struct coord up;
+		f32 keep = 1.0f - player->codaimfrac;
+
+		look.x = hand->damplook.x * keep;
+		look.y = hand->damplook.y * keep;
+		look.z = hand->damplook.z * keep - player->codaimfrac;
+		up.x = hand->dampup.x * keep;
+		up.y = hand->dampup.y * keep + player->codaimfrac;
+		up.z = hand->dampup.z * keep;
+
+		mtx00016d58(&sp284, 0.0f, 0.0f, 0.0f, look.x, look.y, look.z, up.x, up.y, up.z);
+	} else
+#endif
 	mtx00016d58(&sp284, 0.0f, 0.0f, 0.0f,
 			hand->damplook.x, hand->damplook.y, hand->damplook.z,
 			hand->dampup.x, hand->dampup.y, hand->dampup.z);
@@ -7792,6 +7830,14 @@ void bgun0f0a5550(s32 handnum)
 
 	sp1a4.y = -bgun0f0a2498(sp118.x, sp118.z, sp274.f[0], sp274.f[2]);
 	sp1a4.x = bgun0f0a2498(sp118.y, sp118.z, sp274.f[1], sp274.f[2]);
+
+#ifndef PLATFORM_N64
+	// COD Style Aiming: the turn towards the crosshair goes with the sway
+	if (player->codaimfrac > 0.0f) {
+		sp1a4.x *= 1.0f - player->codaimfrac;
+		sp1a4.y *= 1.0f - player->codaimfrac;
+	}
+#endif
 
 	hand->lastrotangx = sp1a4.f[0];
 	hand->lastrotangy = sp1a4.f[1];
@@ -11013,6 +11059,22 @@ void bgunRender(Gfx **gdlptr)
 
 	gdl = vi0000aca4(gdl, 1.5, 1000);
 
+#ifndef PLATFORM_N64
+	// COD Style Aiming: a gun at the sights is drawn at the ADS fov however
+	// far the view has zoomed. The view model goes through the view's own
+	// projection, and at the K7 Avenger's 3x a gun brought to the sights
+	// was three times the size and off the bottom of the screen; with its
+	// own projection the K7 keeps its 3x and sits under the crosshair.
+	if (player->codaimfrac > 0.0f) {
+		f32 adsfov = PLAYER_DEFAULT_FOV * 0.8f;
+		f32 viewfov = viGetFovY();
+
+		if (viewfov < adsfov) {
+			gdl = viSetPerspectiveWithFov(gdl, viewfov + (adsfov - viewfov) * player->codaimfrac, 1.5, 1000);
+		}
+	}
+#endif
+
 	if (g_Vars.currentplayer->teleportstate != TELEPORTSTATE_INACTIVE) {
 		f32 f2;
 
@@ -11914,6 +11976,42 @@ bool bgunIsUsingSecondaryFunction(void)
  *
  * This function is not called during cutscenes.
  */
+#ifndef PLATFORM_N64
+/**
+ * Whether this gun's scope covers the view when the gun is raised to the
+ * eye: the three with a manual zoom - Sniper Rifle, FarSight, Horizon
+ * Scanner - and the Falcon 2 Scope, whose scope sits over the crosshair.
+ * The other guns with a zoom of their own (K7 Avenger, MagSec 4, AR34,
+ * the Dragons) come up to the sights like the rest.
+ */
+bool bgunScopeCoversView(s32 weaponnum)
+{
+	return weaponHasAimFlag(weaponnum, INVAIMFLAG_MANUALZOOM) || weaponnum == WEAPON_FALCON2_SCOPE;
+}
+
+/**
+ * Whether the item in hand is a gun rather than a gadget or an empty hand.
+ */
+bool weaponIsAGun(s32 weaponnum)
+{
+	switch (weaponnum) {
+	case WEAPON_NONE:
+	case WEAPON_UNARMED:
+	case WEAPON_DISABLED:
+	case WEAPON_MPSHIELD:
+	case WEAPON_COMBATBOOST:
+	case WEAPON_CLOAKINGDEVICE:
+	case WEAPON_XRAYSCANNER:
+	case WEAPON_NIGHTVISION:
+	case WEAPON_IRSCANNER:
+	case WEAPON_BRIEFCASE2:
+		return false;
+	default:
+		return weaponnum > WEAPON_NONE && weaponFindById(weaponnum) != NULL;
+	}
+}
+#endif
+
 void bgunTickGameplay(bool triggeron)
 {
 	s32 gunsfiring[2] = {false, false};
@@ -11980,6 +12078,32 @@ void bgunTickGameplay(bool triggeron)
 		g_Vars.currentplayer->hands[HAND_LEFT].firing = false;
 		g_Vars.currentplayer->hands[HAND_RIGHT].firing = false;
 	}
+
+#ifndef PLATFORM_N64
+	// COD Style Aiming: where the guns are on their way to, tweened sixty
+	// percent of the way each tick - settled in four ticks, a snap with a
+	// little motion left in it. Not for the empty hand, and not for a gun
+	// whose scope would cover the view: raised to the eye, a Sniper Rifle's
+	// scope sat across the middle of it and hid what the zoom was showing.
+	{
+		f32 target = bmoveIsCodAiming()
+			&& player->insightaimmode
+			&& player->hands[HAND_RIGHT].inuse
+			&& weaponIsAGun(player->gunctrl.weaponnum)
+			&& !bgunScopeCoversView(player->gunctrl.weaponnum) ? 1.0f : 0.0f;
+		f32 step = 0.6f * LVUPDATE60FREAL();
+
+		if (step > 1.0f) {
+			step = 1.0f;
+		}
+
+		player->codaimfrac += (target - player->codaimfrac) * step;
+
+		if (player->codaimfrac < 0.01f) {
+			player->codaimfrac = 0.0f;
+		}
+	}
+#endif
 
 	player->playertriggerprev = player->playertriggeron;
 	player->playertriggeron = triggeron;

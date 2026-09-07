@@ -2900,6 +2900,7 @@ struct player {
   // starting nor stopping is a jolt.
   /*ext*/ f32 camtiltroll;
   /*ext*/ f32 camtiltpitch;
+  /*ext*/ f32 codaimfrac; // COD Style Aiming: how far the gun has come up to the sights, 0 to 1
 };
 
 struct ailist {
@@ -6301,6 +6302,8 @@ struct extplayerconfig {
   f32 radialmenuspeed;
   f32 crosshairsway;
   f32 cameratilt;
+  s32 codaiming;
+  s32 codaimlock;
   s32 extcontrols;
   u32 crosshaircolour;
   u32 crosshairsize;

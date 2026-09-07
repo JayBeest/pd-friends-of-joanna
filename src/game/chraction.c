@@ -4863,7 +4863,7 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 				}
 
 				// Handle player boost
-				if (ismelee && gset->weaponnum == WEAPON_REAPER) {
+				if (ismelee && weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_MINIGUN)) {
 					boostscale = 0.1f;
 				} else if (g_Vars.normmplayerisrunning) {
 					boostscale = 0.75f;
@@ -4948,7 +4948,7 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 			if (chr->aibot) {
 				f32 boostscale;
 
-				if (ismelee && gset->weaponnum == WEAPON_REAPER) {
+				if (ismelee && weaponHasFlag2(gset->weaponnum, WEAPONFLAG2_MINIGUN)) {
 					boostscale = 0.1f;
 				} else {
 					boostscale = 0.75f;
@@ -9911,6 +9911,32 @@ const char var7f1a8ae4[] = "aimadjust=%d";
  * This should be called on every frame while the chr is shooting.
  * The function takes care of the gun's fire rate.
  */
+/**
+ * The projectile function behind a launcher's number, or NULL when what sits
+ * in that slot is not a launcher. Stock keys chrTickShoot()'s launcher branch
+ * on the weapon number alone, which holds for its own table; a mod's can put
+ * anything behind a number - GE-X's timed mine is in the Crossbow's slot, a
+ * throw function of 0x24 bytes - and the cast then reads past the function
+ * it has and hands setupLoadModeldef() garbage. A Guards Alerted! guard on
+ * GE-X's Runway rolled that slot and crashed the game with its first shot.
+ * This is the test bgunCreateFiredProjectile() makes for the player's hand.
+ */
+static struct weaponfunc_shootprojectile *chrGetProjectileFunc(struct gset *gset)
+{
+	struct weapon *weapondef = weaponFindById(gset->weaponnum);
+	struct weaponfunc *func = NULL;
+
+	if (weapondef && gset->weaponfunc <= FUNC_SECONDARY) {
+		func = weapondef->functions[gset->weaponfunc];
+	}
+
+	if (func && func->type == INVENTORYFUNCTYPE_SHOOT_PROJECTILE) {
+		return (struct weaponfunc_shootprojectile *)func;
+	}
+
+	return NULL;
+}
+
 void chrTickShoot(struct chrdata *chr, s32 handnum)
 {
 	struct prop *chrprop = chr->prop;
@@ -9966,7 +9992,7 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 			makebeam = true;
 		} else {
 			if (chr->aibot
-					&& chr->aibot->weaponnum == WEAPON_REAPER
+					&& weaponHasFlag2(chr->aibot->weaponnum, WEAPONFLAG2_MINIGUN)
 					&& chr->aibot->gunfunc == FUNC_PRIMARY) {
 				f32 sp208 = (TICKS(90) - chr->aibot->reaperspeed[handnum]) * (1.0f / TICKS(18.0f));
 				tickspershot *= 1 + sp208;
@@ -10127,13 +10153,15 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 
 				sqshotdist = xdiff * xdiff + ydiff * ydiff + zdiff * zdiff;
 
-				// Handle projectile launchers specially
-				if (gset.weaponnum == WEAPON_ROCKETLAUNCHER
+				// Handle projectile launchers specially - when the weapon
+				// behind the number is one; see chrGetProjectileFunc()
+				if ((gset.weaponnum == WEAPON_ROCKETLAUNCHER
 						|| gset.weaponnum == WEAPON_SLAYER
 						|| (gset.weaponnum == WEAPON_SUPERDRAGON && gset.weaponfunc == FUNC_SECONDARY)
 						|| gset.weaponnum == WEAPON_DEVASTATOR
 						|| gset.weaponnum == WEAPON_CROSSBOW
-						|| gset.weaponnum == WEAPON_ROCKETLAUNCHER_34) {
+						|| gset.weaponnum == WEAPON_ROCKETLAUNCHER_34)
+						&& chrGetProjectileFunc(&gset) != NULL) {
 					makebeam = false;
 
 					// Solo chrs won't fire their projectile weapon
@@ -10146,8 +10174,7 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 						struct coord sp15c;
 						Mtxf projectilemtx;
 						Mtxf yrotmtx;
-						struct weapon *weapondef = weaponFindById(gset.weaponnum);
-						struct weaponfunc_shootprojectile *func = weapondef->functions[gset.weaponfunc];
+						struct weaponfunc_shootprojectile *func = chrGetProjectileFunc(&gset);
 
 						// Handle creating the projectile
 						if (gset.weaponnum == WEAPON_ROCKETLAUNCHER

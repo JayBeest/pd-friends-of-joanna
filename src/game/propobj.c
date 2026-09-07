@@ -80,6 +80,9 @@
 #include "textures.h"
 #include "types.h"
 #include "string.h"
+#ifndef PLATFORM_N64
+#include "system.h"
+#endif
 
 #define DEBUG_MODELS(fmt, ...) \
 	do { if (g_DebugModels) sysLogPrintf(LOG_NOTE, fmt, ##__VA_ARGS__); } while (0)
@@ -2428,20 +2431,13 @@ void objFree(struct defaultobj *obj, bool freeprop, bool canregen)
 			weapon->dualweapon = NULL;
 		}
 
-		if (weapon->weaponnum == WEAPON_PROXIMITYMINE) {
+		// four blocks that each unregistered the proxy, and at most one of
+		// them could ever match
+		if (weaponIsProximityMine(weapon->weaponnum, weapon->gunfunc)) {
 			weaponUnregisterProxy(weapon);
 		}
 
-		if (weapon->weaponnum == WEAPON_DRAGON && weapon->gunfunc == FUNC_SECONDARY) {
-			weaponUnregisterProxy(weapon);
-		}
-
-		if (weapon->weaponnum == WEAPON_NBOMB && weapon->gunfunc == FUNC_SECONDARY) {
-			weaponUnregisterProxy(weapon);
-		}
-
-		if (weapon->weaponnum == WEAPON_GRENADE && weapon->gunfunc == FUNC_SECONDARY) {
-			weaponUnregisterProxy(weapon);
+		if (weaponfuncHasFlag(weapon->weaponnum, weapon->gunfunc, FUNCFLAG_LEAVESSMOKE)) {
 			smokeClearForProp(obj->prop);
 		}
 
@@ -4135,10 +4131,7 @@ void objLand(struct prop *prop, struct coord *arg1, struct coord *arg2, bool *em
 	if (obj->type == OBJTYPE_WEAPON) {
 		struct weaponobj *weapon = (struct weaponobj *)obj;
 
-		if (weapon->weaponnum == WEAPON_ECMMINE
-				|| weapon->weaponnum == WEAPON_COMMSRIDER
-				|| weapon->weaponnum == WEAPON_TRACERBUG
-				|| weapon->weaponnum == WEAPON_TARGETAMPLIFIER) {
+		if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_HARDWHENLANDED)) {
 			obj->flags |= OBJFLAG_INVINCIBLE;
 			obj->flags |= OBJFLAG_FORCENOBOUNCE;
 			obj->flags2 |= OBJFLAG2_IMMUNETOGUNFIRE;
@@ -4171,7 +4164,7 @@ void objLand(struct prop *prop, struct coord *arg1, struct coord *arg2, bool *em
 
 			bgunPlayPropHitSound(&weapon->gset, g_EmbedProp, -1);
 
-			if (weapon->weaponnum == WEAPON_COMBATKNIFE
+			if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_POISONS)
 					&& (g_EmbedProp->type == PROPTYPE_CHR || g_EmbedProp->type == PROPTYPE_PLAYER)) {
 				chrSetPoisoned(g_EmbedProp->chr, ownerprop);
 			}
@@ -4515,10 +4508,7 @@ void weaponTick(struct prop *prop)
 				obj->hidden |= OBJHFLAG_DELETING;
 			}
 		}
-	} else if (weapon->weaponnum == WEAPON_PROXIMITYMINE
-			|| (weapon->weaponnum == WEAPON_DRAGON && weapon->gunfunc == FUNC_SECONDARY)
-			|| (weapon->weaponnum == WEAPON_GRENADE && weapon->gunfunc == FUNC_SECONDARY)
-			|| (weapon->weaponnum == WEAPON_NBOMB && weapon->gunfunc == FUNC_SECONDARY)) {
+	} else if (weaponIsProximityMine(weapon->weaponnum, weapon->gunfunc)) {
 		// Handle proximity items
 		if (weapon->timer240 >= 2) {
 			// The timer is still active, so the proxy isn't active yet
@@ -6931,18 +6921,12 @@ s32 projectileTick(struct defaultobj *obj, bool *embedded)
 						} else if (obj->type == OBJTYPE_WEAPON) {
 							weapon2 = (struct weaponobj *) obj;
 
-							if (weapon2->weaponnum == WEAPON_REMOTEMINE
-									|| weapon2->weaponnum == WEAPON_TIMEDMINE
-									|| weapon2->weaponnum == WEAPON_PROXIMITYMINE
-									|| weapon2->weaponnum == WEAPON_COMMSRIDER
-									|| weapon2->weaponnum == WEAPON_TRACERBUG
-									|| weapon2->weaponnum == WEAPON_TARGETAMPLIFIER
-									|| weapon2->weaponnum == WEAPON_BOLT
-									|| weapon2->weaponnum == WEAPON_COMBATKNIFE
-									|| weapon2->weaponnum == WEAPON_ECMMINE
+							if (weaponHasFlag2(weapon2->weaponnum, WEAPONFLAG2_STICKSTOWALL)
 									|| gsetHasFunctionFlags(&weapon2->gset, FUNCFLAG_STICKTOWALL)) {
 								stick = true;
 
+								// not a function flag: the wall hugger function is
+								// the Devastator's own, which sticks in its own right
 								if (weapon2->weaponnum == WEAPON_GRENADEROUND && weapon2->gunfunc == FUNC_SECONDARY) {
 									if (weapon2->timer240 == 1) {
 										stick = false;
@@ -11998,67 +11982,82 @@ u32 var8006aae4[] = {
 	tvcmd_restart(),
 };
 
+/**
+ * Which command list each screen program draws with.
+ *
+ * This was a switch of fifty-five cases, twelve of which are deliberate
+ * aliases - programs 09 to 0E all draw list 03, and 1E to 23 all draw list 08.
+ * As a table the aliases are visible, and a mod can point a program somewhere
+ * else; as a switch it was the single largest thing GE-X had to patch in this
+ * file.
+ */
+u32 *g_TvCmdlists[] = {
+	[TVCMDLIST_00  ] = g_TvCmdlist00,
+	[TVCMDLIST_01  ] = g_TvCmdlist01,
+	[TVCMDLIST_02  ] = g_TvCmdlist02,
+	[TVCMDLIST_03  ] = g_TvCmdlist03,
+	[TVCMDLIST_04  ] = g_TvCmdlist04,
+	[TVCMDLIST_05  ] = g_TvCmdlist05,
+	[TVCMDLIST_06  ] = g_TvCmdlist06,
+	[TVCMDLIST_07  ] = g_TvCmdlist07,
+	[TVCMDLIST_08  ] = g_TvCmdlist08,
+	[TVCMDLIST_09  ] = g_TvCmdlist03,
+	[TVCMDLIST_0A  ] = g_TvCmdlist03,
+	[TVCMDLIST_0B  ] = g_TvCmdlist03,
+	[TVCMDLIST_0C  ] = g_TvCmdlist03,
+	[TVCMDLIST_0D  ] = g_TvCmdlist03,
+	[TVCMDLIST_0E  ] = g_TvCmdlist03,
+	[TVCMDLIST_0F  ] = g_TvCmdlist0F,
+	[TVCMDLIST_10  ] = g_TvCmdlist10,
+	[TVCMDLIST_11  ] = g_TvCmdlist11,
+	[TVCMDLIST_12  ] = g_TvCmdlist12,
+	[TVCMDLIST_13  ] = g_TvCmdlist13,
+	[TVCMDLIST_14  ] = g_TvCmdlist14,
+	[TVCMDLIST_15  ] = g_TvCmdlist15,
+	[TVCMDLIST_16  ] = g_TvCmdlist16,
+	[TVCMDLIST_17  ] = g_TvCmdlist17,
+	[TVCMDLIST_18  ] = g_TvCmdlist18,
+	[TVCMDLIST_19  ] = g_TvCmdlist19,
+	[TVCMDLIST_1A  ] = g_TvCmdlist1A,
+	[TVCMDLIST_1B  ] = g_TvCmdlist1B,
+	[TVCMDLIST_1C  ] = g_TvCmdlist1C,
+	[TVCMDLIST_1D  ] = g_TvCmdlist1D,
+	[TVCMDLIST_1E  ] = g_TvCmdlist08,
+	[TVCMDLIST_1F  ] = g_TvCmdlist08,
+	[TVCMDLIST_20  ] = g_TvCmdlist08,
+	[TVCMDLIST_21  ] = g_TvCmdlist08,
+	[TVCMDLIST_22  ] = g_TvCmdlist08,
+	[TVCMDLIST_23  ] = g_TvCmdlist08,
+	[TVCMDLIST_24  ] = g_TvCmdlist24,
+	[TVCMDLIST_25  ] = g_TvCmdlist25,
+	[TVCMDLIST_26  ] = g_TvCmdlist26,
+	[TVCMDLIST_27  ] = g_TvCmdlist27,
+	[TVCMDLIST_28  ] = g_TvCmdlist28,
+	[TVCMDLIST_29  ] = g_TvCmdlist29,
+	[TVCMDLIST_2A  ] = g_TvCmdlist2A,
+	[TVCMDLIST_2B  ] = g_TvCmdlist2B,
+	[TVCMDLIST_2C  ] = g_TvCmdlist2C,
+	[TVCMDLIST_2D  ] = g_TvCmdlist2D,
+	[TVCMDLIST_2E  ] = g_TvCmdlist2E,
+	[TVCMDLIST_2F  ] = g_TvCmdlist2F,
+	[TVCMDLIST_30  ] = g_TvCmdlist30,
+	[TVCMDLIST_31  ] = g_TvCmdlist31,
+	[TVCMDLIST_32  ] = g_TvCmdlist32,
+	[TVCMDLIST_33  ] = g_TvCmdlist33,
+	[TVCMDLIST_34  ] = g_TvCmdlist34,
+	[TVCMDLIST_35  ] = g_TvCmdlist35,
+	[TVCMDLIST_36  ] = g_TvCmdlist36,
+};
+
+_Static_assert(ARRAYCOUNT(g_TvCmdlists) == TVCMDLIST_36 + 1,
+		"g_TvCmdlists must have an entry per screen program");
+
 void tvscreenSetImageByNum(struct tvscreen *screen, s32 imagenum)
 {
 	u32 *image = g_TvCmdlist00;
 
-	switch (imagenum) {
-	case TVCMDLIST_01: image = g_TvCmdlist01; break;
-	case TVCMDLIST_02: image = g_TvCmdlist02; break;
-	case TVCMDLIST_03: image = g_TvCmdlist03; break;
-	case TVCMDLIST_04: image = g_TvCmdlist04; break;
-	case TVCMDLIST_05: image = g_TvCmdlist05; break;
-	case TVCMDLIST_06: image = g_TvCmdlist06; break;
-	case TVCMDLIST_07: image = g_TvCmdlist07; break;
-	case TVCMDLIST_08: image = g_TvCmdlist08; break;
-	case TVCMDLIST_09: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0A: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0B: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0C: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0D: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0E: image = g_TvCmdlist03; break;
-	case TVCMDLIST_0F: image = g_TvCmdlist0F; break;
-	case TVCMDLIST_10: image = g_TvCmdlist10; break;
-	case TVCMDLIST_11: image = g_TvCmdlist11; break;
-	case TVCMDLIST_12: image = g_TvCmdlist12; break;
-	case TVCMDLIST_13: image = g_TvCmdlist13; break;
-	case TVCMDLIST_14: image = g_TvCmdlist14; break;
-	case TVCMDLIST_15: image = g_TvCmdlist15; break;
-	case TVCMDLIST_16: image = g_TvCmdlist16; break;
-	case TVCMDLIST_17: image = g_TvCmdlist17; break;
-	case TVCMDLIST_18: image = g_TvCmdlist18; break;
-	case TVCMDLIST_19: image = g_TvCmdlist19; break;
-	case TVCMDLIST_1A: image = g_TvCmdlist1A; break;
-	case TVCMDLIST_1B: image = g_TvCmdlist1B; break;
-	case TVCMDLIST_1C: image = g_TvCmdlist1C; break;
-	case TVCMDLIST_1D: image = g_TvCmdlist1D; break;
-	case TVCMDLIST_24: image = g_TvCmdlist24; break;
-	case TVCMDLIST_1E: image = g_TvCmdlist08; break;
-	case TVCMDLIST_1F: image = g_TvCmdlist08; break;
-	case TVCMDLIST_20: image = g_TvCmdlist08; break;
-	case TVCMDLIST_21: image = g_TvCmdlist08; break;
-	case TVCMDLIST_22: image = g_TvCmdlist08; break;
-	case TVCMDLIST_23: image = g_TvCmdlist08; break;
-	case TVCMDLIST_25: image = g_TvCmdlist25; break;
-	case TVCMDLIST_26: image = g_TvCmdlist26; break;
-	case TVCMDLIST_27: image = g_TvCmdlist27; break;
-	case TVCMDLIST_28: image = g_TvCmdlist28; break;
-	case TVCMDLIST_29: image = g_TvCmdlist29; break;
-	case TVCMDLIST_2A: image = g_TvCmdlist2A; break;
-	case TVCMDLIST_2B: image = g_TvCmdlist2B; break;
-	case TVCMDLIST_2C: image = g_TvCmdlist2C; break;
-	case TVCMDLIST_2D: image = g_TvCmdlist2D; break;
-	case TVCMDLIST_2E: image = g_TvCmdlist2E; break;
-	case TVCMDLIST_2F: image = g_TvCmdlist2F; break;
-	case TVCMDLIST_30: image = g_TvCmdlist30; break;
-	case TVCMDLIST_31: image = g_TvCmdlist31; break;
-	case TVCMDLIST_32: image = g_TvCmdlist32; break;
-	case TVCMDLIST_33: image = g_TvCmdlist33; break;
-	case TVCMDLIST_34: image = g_TvCmdlist34; break;
-	case TVCMDLIST_35: image = g_TvCmdlist35; break;
-	case TVCMDLIST_36: image = g_TvCmdlist36; break;
-	case TVCMDLIST_00:
-		break;
+	if (imagenum >= 0 && imagenum < ARRAYCOUNT(g_TvCmdlists) && g_TvCmdlists[imagenum]) {
+		image = g_TvCmdlists[imagenum];
 	}
 
 	tvscreenSetCmdlist(screen, image);
@@ -15428,13 +15427,11 @@ void objDamage(struct defaultobj *obj, f32 damage, struct coord *pos, s32 weapon
 			// zeroing its timer
 			weapon = (struct weaponobj *) obj;
 
-			if (weapon->weaponnum == WEAPON_GRENADE
-					|| weapon->weaponnum == WEAPON_TIMEDMINE
-					|| weapon->weaponnum == WEAPON_REMOTEMINE
-					|| weapon->weaponnum == WEAPON_PROXIMITYMINE
+			if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_EXPLODESWHENSHOT)
+					// the rocket shares its definition with the Skedar rocket,
+					// which is not on this list, so it cannot carry the flag
 					|| weapon->weaponnum == WEAPON_ROCKET
-					|| weapon->weaponnum == WEAPON_HOMINGROCKET
-					|| weapon->weaponnum == WEAPON_GRENADEROUND
+					// and the Dragon only counts in its mine mode
 					|| (weapon->weaponnum == WEAPON_DRAGON && weapon->gunfunc == FUNC_SECONDARY)) {
 				// Homing rockets are immune to remote mines? Or maybe they just
 				// don't explode because the mine is exploding anyway
@@ -15854,10 +15851,7 @@ void objHit(struct shotdata *shotdata, struct hit *hit)
 	// Create wall hit (bullet hole)
 	if (!ismeleefunc
 			&& hit->hitthing.texturenum != 10000
-			&& shotdata->gset.weaponnum != WEAPON_UNARMED
-			&& shotdata->gset.weaponnum != WEAPON_LASER
-			&& shotdata->gset.weaponnum != WEAPON_TRANQUILIZER
-			&& shotdata->gset.weaponnum != WEAPON_FARSIGHT) {
+			&& !weaponHasFlag2(shotdata->gset.weaponnum, WEAPONFLAG2_NOWALLHIT)) {
 		if (!hit->slowsbullet) {
 			struct prop *hitprop = hit->prop;
 			s8 iswindoweddoor = obj->model->definition->skel == &g_SkelWindowedDoor ? true : false;
@@ -16874,23 +16868,13 @@ s32 propPlayPickupSound(struct prop *prop, s32 weapon)
 {
 	s16 sound;
 
-	if (weapon == WEAPON_COMBATKNIFE || weapon == WEAPON_COMBATKNIFE) {
-		sound = SFX_PICKUP_KNIFE;
-	} else if (weapon == WEAPON_REMOTEMINE
-			|| weapon == WEAPON_PROXIMITYMINE
-			|| weapon == WEAPON_TIMEDMINE
-			|| weapon == WEAPON_COMMSRIDER
-			|| weapon == WEAPON_TRACERBUG
-			|| weapon == WEAPON_TARGETAMPLIFIER
-			|| weapon == WEAPON_ECMMINE) {
-		sound = SFX_PICKUP_MINE;
-	} else if (weapon == WEAPON_GRENADE
-			|| weapon == WEAPON_GRENADEROUND
-			|| weapon == WEAPON_ROCKET
-			|| weapon == WEAPON_HOMINGROCKET) {
+	const struct weapon *definition = bgunGetWeaponDefinition(weapon);
+
+	if (definition && definition->pickupsound) {
+		sound = definition->pickupsound;
+	} else if (weapon == WEAPON_ROCKET) {
+		// see weaponPlayPickupSound: shared with the Skedar rocket
 		sound = SFX_PICKUP_AMMO;
-	} else if (weapon == WEAPON_LASER) {
-		sound = SFX_PICKUP_LASER;
 	} else {
 		sound = SFX_PICKUP_GUN;
 	}
@@ -16903,23 +16887,14 @@ void weaponPlayPickupSound(s32 weaponnum)
 {
 	s32 sound;
 
-	if (weaponnum == WEAPON_COMBATKNIFE || weaponnum == WEAPON_COMBATKNIFE) {
-		sound = SFX_PICKUP_KNIFE;
-	} else if (weaponnum == WEAPON_REMOTEMINE
-			|| weaponnum == WEAPON_PROXIMITYMINE
-			|| weaponnum == WEAPON_TIMEDMINE
-			|| weaponnum == WEAPON_TRACERBUG
-			|| weaponnum == WEAPON_TARGETAMPLIFIER
-			|| weaponnum == WEAPON_COMMSRIDER
-			|| weaponnum == WEAPON_ECMMINE) {
-		sound = SFX_PICKUP_MINE;
-	} else if (weaponnum == WEAPON_GRENADE
-			|| weaponnum == WEAPON_GRENADEROUND
-			|| weaponnum == WEAPON_ROCKET
-			|| weaponnum == WEAPON_HOMINGROCKET) {
+	const struct weapon *definition = bgunGetWeaponDefinition(weaponnum);
+
+	if (definition && definition->pickupsound) {
+		sound = definition->pickupsound;
+	} else if (weaponnum == WEAPON_ROCKET) {
+		// the rocket and the Skedar rocket share one definition, so this one
+		// cannot move onto it: they take different sounds
 		sound = SFX_PICKUP_AMMO;
-	} else if (weaponnum == WEAPON_LASER) {
-		sound = SFX_PICKUP_LASER;
 	} else if (weaponnum == WEAPON_BOLT) {
 		sound = SFX_PICKUP_GUN;
 	} else if (weaponnum == WEAPON_EYESPY) {
@@ -16986,6 +16961,36 @@ void currentPlayerQueuePickupAmmoHudmsg(s32 ammotype, s32 pickupqty)
 	hudmsgCreateWithFlags(buffer, HUDMSGTYPE_DEFAULT, HUDMSGFLAG_ONLYIFALIVE);
 }
 
+/**
+ * The weapon an ammo type hands you when you pick it up, or -1.
+ *
+ * Ten of the thirty-two ammo types are really a whole weapon - you do not pick
+ * up grenades, you pick up a grenade. This was ten comparisons in a row inside
+ * ammoHandlePickup; as a table a mod can say which of its own weapons an ammo
+ * type gives. Zero means none, and no ammo type gives WEAPON_NONE.
+ */
+s16 g_AmmoTypeWeapons[AMMOTYPE_ECM_MINE + 1] = {
+	[AMMOTYPE_GRENADE]     = WEAPON_GRENADE,
+	[AMMOTYPE_REMOTE_MINE] = WEAPON_REMOTEMINE,
+	[AMMOTYPE_PROXY_MINE]  = WEAPON_PROXIMITYMINE,
+	[AMMOTYPE_TIMED_MINE]  = WEAPON_TIMEDMINE,
+	[AMMOTYPE_NBOMB]       = WEAPON_NBOMB,
+	[AMMOTYPE_KNIFE]       = WEAPON_COMBATKNIFE,
+	[AMMOTYPE_ECM_MINE]    = WEAPON_ECMMINE,
+	[AMMOTYPE_TOKEN]       = WEAPON_BRIEFCASE2,
+	[AMMOTYPE_CLOAK]       = WEAPON_CLOAKINGDEVICE,
+	[AMMOTYPE_BOOST]       = WEAPON_COMBATBOOST,
+};
+
+s32 ammotypeGetWeapon(s32 ammotype)
+{
+	if (ammotype >= 0 && ammotype < ARRAYCOUNT(g_AmmoTypeWeapons) && g_AmmoTypeWeapons[ammotype]) {
+		return g_AmmoTypeWeapons[ammotype];
+	}
+
+	return -1;
+}
+
 void ammoHandlePickup(s32 ammotype, s32 quantity, bool withsound, bool withhudmsg)
 {
 	s32 weapon;
@@ -17003,29 +17008,7 @@ void ammoHandlePickup(s32 ammotype, s32 quantity, bool withsound, bool withhudms
 			ammotypePlayPickupSound(ammotype);
 		}
 
-		if (ammotype == AMMOTYPE_GRENADE) {
-			weapon = WEAPON_GRENADE;
-		} else if (ammotype == AMMOTYPE_REMOTE_MINE) {
-			weapon = WEAPON_REMOTEMINE;
-		} else if (ammotype == AMMOTYPE_PROXY_MINE) {
-			weapon = WEAPON_PROXIMITYMINE;
-		} else if (ammotype == AMMOTYPE_TIMED_MINE) {
-			weapon = WEAPON_TIMEDMINE;
-		} else if (ammotype == AMMOTYPE_NBOMB) {
-			weapon = WEAPON_NBOMB;
-		} else if (ammotype == AMMOTYPE_KNIFE) {
-			weapon = WEAPON_COMBATKNIFE;
-		} else if (ammotype == AMMOTYPE_ECM_MINE) {
-			weapon = WEAPON_ECMMINE;
-		} else if (ammotype == AMMOTYPE_TOKEN) {
-			weapon = WEAPON_BRIEFCASE2;
-		} else if (ammotype == AMMOTYPE_CLOAK) {
-			weapon = WEAPON_CLOAKINGDEVICE;
-		} else if (ammotype == AMMOTYPE_BOOST) {
-			weapon = WEAPON_COMBATBOOST;
-		} else {
-			weapon = -1;
-		}
+		weapon = ammotypeGetWeapon(ammotype);
 
 		if (weapon >= 0) {
 			invGiveSingleWeapon(weapon);
@@ -17069,7 +17052,7 @@ s32 weaponGetPickupAmmoQty(struct weaponobj *weapon)
 
 	ammotype = bgunGetAmmoTypeForWeapon(weapon->weaponnum, 0);
 
-	if (weapon->weaponnum == WEAPON_COMBATKNIFE || weapon->weaponnum == WEAPON_BOLT) {
+	if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_PICKUPSINGLE)) {
 		return 1;
 	}
 
@@ -17553,32 +17536,21 @@ s32 objTestForPickup(struct prop *prop)
 		s32 leftweaponnum;
 		s32 rightweaponnum;
 
-		if (weapon->weaponnum == WEAPON_GRENADE
-				|| weapon->weaponnum == WEAPON_GRENADEROUND
-				|| weapon->weaponnum == WEAPON_NBOMB
-				|| weapon->weaponnum == WEAPON_SKROCKET) {
+		// two lists with the same body, so one test: thrown explosives and
+		// placed devices are both off limits while their timer runs
+		if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_NOPICKUPWHILEARMED)
+				// shares its definition with the rocket, which is not on this list
+				|| weapon->weaponnum == WEAPON_SKROCKET
+				|| (weapon->weaponnum == WEAPON_DRAGON && weapon->gunfunc == FUNC_SECONDARY)) {
 			if (weapon->timer240 >= 0 || (obj->hidden & OBJHFLAG_DELETING)) {
 				return TICKOP_NONE;
 			}
 		}
 
-		if (weapon->weaponnum == WEAPON_REMOTEMINE
-				|| weapon->weaponnum == WEAPON_PROXIMITYMINE
-				|| weapon->weaponnum == WEAPON_TIMEDMINE
-				|| (weapon->weaponnum == WEAPON_DRAGON && weapon->gunfunc == FUNC_SECONDARY)
-				|| weapon->weaponnum == WEAPON_TRACERBUG
-				|| weapon->weaponnum == WEAPON_TARGETAMPLIFIER
-				|| weapon->weaponnum == WEAPON_COMMSRIDER
-				|| weapon->weaponnum == WEAPON_ECMMINE) {
-			if (weapon->timer240 >= 0 || (obj->hidden & OBJHFLAG_DELETING)) {
-				return TICKOP_NONE;
-			}
-		}
-
-		if (weapon->weaponnum == WEAPON_ROCKET
-				|| weapon->weaponnum == WEAPON_HOMINGROCKET
-				|| weapon->weaponnum == WEAPON_BOLT
-				|| weapon->weaponnum == WEAPON_COMBATKNIFE) {
+		if (weaponHasFlag2(weapon->weaponnum, WEAPONFLAG2_NOPICKUPINFLIGHT)
+				// and here it is the rocket that is on the list and the Skedar
+				// one that is not
+				|| weapon->weaponnum == WEAPON_ROCKET) {
 			if (obj->hidden & OBJHFLAG_PROJECTILE) {
 				return TICKOP_NONE;
 			}
@@ -18648,6 +18620,22 @@ struct weaponobj *weaponCreateProjectileFromGset(s32 modelnum, struct gset *gset
 	struct prop *prop;
 	struct model *model;
 	struct weaponobj *weapon;
+
+	if (modelnum < 0 || modelnum >= NUM_MODELS) {
+		// A launcher whose function is not a launcher's - a mod's table
+		// behind a stock number - reads its model number out of whatever
+		// follows the function it has. No projectile, rather than a prop
+		// built on memory past g_ModelStates; every caller takes NULL.
+#ifndef PLATFORM_N64
+		static s32 warned = -1;
+
+		if (warned != gset->weaponnum) {
+			sysLogPrintf(LOG_WARNING, "weapon %d: projectile model %d is not a model; no projectile", gset->weaponnum, modelnum);
+			warned = gset->weaponnum;
+		}
+#endif
+		return NULL;
+	}
 
 	setupLoadModeldef(modelnum);
 

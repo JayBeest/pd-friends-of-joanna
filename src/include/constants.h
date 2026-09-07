@@ -1041,6 +1041,8 @@
 
 #define FUNCFLAG_00000001               0x00000001
 #define FUNCFLAG_BURST3                 0x00000002
+#define FUNCFLAG_PROXIMITYMINE          0x00000004 // What it leaves behind acts as a proximity mine
+#define FUNCFLAG_LEAVESSMOKE            0x00000008 // And leaves smoke to be cleared with it
 #define FUNCFLAG_BURST50                0x00000020 // automatics only
 #define FUNCFLAG_NOAUTOAIM              0x00000040
 #define FUNCFLAG_STICKTOWALL            0x00000100
@@ -4608,6 +4610,30 @@ enum weaponnum {
 #define WEAPONFLAG_DETERMINER_F_SOME 0x20000000 // "Picked up some ..." (full version)
 #define WEAPONFLAG_AIMTRACK          0x40000000 // Allow drawing red box around targets in aim mode
 #define WEAPONFLAG_FIRETOACTIVATE    0x80000000 // For devices/gadgets
+
+// A second flags word, because the first has all 32 bits spoken for. These are
+// behaviours the game used to decide by comparing the weapon number, which a
+// mod that renumbers the weapons cannot change. See modconfig's weapon block.
+#define WEAPONFLAG2_UNEQUIPPEDRELOAD 0x00000001 // Reloads while unequipped; the animation is unequippedreloadindex
+#define WEAPONFLAG2_PUMPACTION       0x00000002 // Keeps the gun moving while the reload animation plays
+#define WEAPONFLAG2_CHARGEABLE       0x00000004 // Holding the trigger winds the shot up
+#define WEAPONFLAG2_MISSIONCRITICAL  0x00000008 // Never dropped on disarm: the mission may need it
+#define WEAPONFLAG2_NOEJECT          0x00000010 // Throws the whole thing, so there is no casing to eject
+#define WEAPONFLAG2_LANDSONHIT       0x00000020 // A device that lands rather than strikes: mine sound, no ricochet
+#define WEAPONFLAG2_NOCARTEJECT      0x00000040 // No cartridge eject position on the model
+#define WEAPONFLAG2_HEAVYSMOKE       0x00000080 // Smokes harder per shot
+#define WEAPONFLAG2_DETONATORHAND    0x00000100 // The left hand holds a detonator for it, not a second one
+#define WEAPONFLAG2_NORELOADSOUND    0x00000200 // Makes no sound when reloaded
+#define WEAPONFLAG2_PICKUPSINGLE     0x00000400 // Picked up one at a time rather than by the magazine
+#define WEAPONFLAG2_EXPLODESWHENSHOT 0x00000800 // Lying on the ground, it goes off when damaged
+#define WEAPONFLAG2_NOPICKUPWHILEARMED 0x00001000 // Not picked up while its timer is running
+#define WEAPONFLAG2_NOPICKUPINFLIGHT 0x00002000 // Not picked up while it is still flying
+#define WEAPONFLAG2_NOWALLHIT        0x00004000 // Leaves no bullet hole
+#define WEAPONFLAG2_ISPROXIMITYMINE  0x00008000 // The weapon itself is a proximity mine, whichever function threw it
+#define WEAPONFLAG2_STICKSTOWALL     0x00010000 // Thrown, it stays where it lands
+#define WEAPONFLAG2_HARDWHENLANDED   0x00020000 // Once down it cannot be shot off again
+#define WEAPONFLAG2_POISONS          0x00040000 // Poisons whatever it embeds itself in
+#define WEAPONFLAG2_MINIGUN          0x00080000 // Fires like the Reaper: the trigger spins the barrel up, a shot lands every third burst tick, three muzzles take turns, its own eject parts and smoke
 
 #define WEAPONSET_RANDOMFIVE 0x0c
 #define WEAPONSET_RANDOM     0x0d

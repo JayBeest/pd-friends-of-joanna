@@ -1,0 +1,838 @@
+#!/usr/bin/env python3
+"""pdsym — turn a Windows pd.crash.log into a readable stack.
+
+The Windows builds are made by GCC/MinGW, so they ship DWARF and a COFF
+symbol table but no PDB.  dbghelp, which the in-game crash handler uses,
+reads only PDBs — which is why every frame in a report from a release build
+comes out as `[base]+offset` with no name.  The information is not missing,
+it is in the binary; nothing on the player's machine can read it.
+
+This reads it.  Give it a crash log and the exact .exe the player ran:
+
+    tools/pdsym pd.crash.log -b pd.x86_64.exe
+
+Pure standard library, no build step, no network, and no cross toolchain —
+it parses the PE headers, the COFF symbol table and the DWARF line program
+itself, so it runs anywhere python3 does, including on a machine whose
+binutils only knows its own architecture.
+
+Frame addresses in a report are absolute and the image is relocated by
+ASLR, so the only durable coordinate is the RVA: the offset from the module
+base, which the log prints on every line.  RVA + the binary's preferred
+image base is the address the debug info is keyed by.
+
+The binary must be the one that crashed.  A different build of the same
+source will resolve every frame and lie about all of them, fluently, so
+pdsym checks the pairing before it believes it.  A report from a build that
+prints an IMAGE: line is matched exactly against the PE header.  For an
+older report there is still a decisive test: every frame below the top is a
+return address, so the bytes just before it must encode a call, and a direct
+call must point at the function named in the frame below.  Wrong binary,
+and that falls apart at once.  See --check.
+"""
+
+import argparse
+import bisect
+import datetime
+import hashlib
+import re
+import struct
+import sys
+
+# ---------------------------------------------------------------- PE / COFF
+
+# Storage classes worth keeping: external, static, label, and MinGW's weak.
+_SC_KEEP = (2, 3, 6, 105)
+
+
+class PE:
+    def __init__(self, path):
+        self.path = path
+        with open(path, 'rb') as f:
+            self.buf = f.read()
+        b = self.buf
+        if b[:2] != b'MZ':
+            raise ValueError('%s: not a PE file (no MZ)' % path)
+        e_lfanew = struct.unpack_from('<I', b, 0x3c)[0]
+        if b[e_lfanew:e_lfanew + 4] != b'PE\0\0':
+            raise ValueError('%s: not a PE file (no PE signature)' % path)
+        coff = e_lfanew + 4
+        (self.machine, self.nsections, self.timestamp, self.ptr_symtab,
+         self.nsymbols, self.opt_size, self.characteristics) = \
+            struct.unpack_from('<HHIIIHH', b, coff)
+        opt = coff + 20
+        magic = struct.unpack_from('<H', b, opt)[0]
+        self.pe32plus = magic == 0x20b
+        self.addr_size = 8 if self.pe32plus else 4
+        self.image_base = (struct.unpack_from('<Q', b, opt + 24)[0] if self.pe32plus
+                           else struct.unpack_from('<I', b, opt + 28)[0])
+        self.entry = struct.unpack_from('<I', b, opt + 16)[0]
+        self.size_of_image = struct.unpack_from('<I', b, opt + 56)[0]
+
+        strtab_off = self.ptr_symtab + 18 * self.nsymbols if self.ptr_symtab else 0
+        self.sections = []
+        sec = opt + self.opt_size
+        for i in range(self.nsections):
+            o = sec + i * 40
+            name = b[o:o + 8].rstrip(b'\0').decode('latin1')
+            if name.startswith('/') and strtab_off:
+                # Long section names live in the COFF string table as "/NNN".
+                try:
+                    soff = strtab_off + int(name[1:])
+                    name = b[soff:b.index(b'\0', soff)].decode('latin1')
+                except ValueError:
+                    pass
+            vsize, vaddr, rawsize, rawptr = struct.unpack_from('<IIII', b, o + 8)
+            self.sections.append(dict(name=name, vaddr=vaddr, vsize=vsize,
+                                      rawsize=rawsize, rawptr=rawptr, index=i + 1))
+        self._syms = None
+        self._digest = None
+
+    # -- identity ---------------------------------------------------------
+
+    def sha256(self):
+        if self._digest is None:
+            self._digest = hashlib.sha256(self.buf).hexdigest()
+        return self._digest
+
+    def built(self):
+        try:
+            return datetime.datetime.fromtimestamp(
+                self.timestamp, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')
+        except (OverflowError, OSError, ValueError):
+            return '?'
+
+    # -- lookup -----------------------------------------------------------
+
+    def section_of_rva(self, rva):
+        for s in self.sections:
+            span = max(s['vsize'], s['rawsize'])
+            if s['vaddr'] <= rva < s['vaddr'] + span:
+                return s
+        return None
+
+    def section_data(self, name):
+        for s in self.sections:
+            if s['name'] == name:
+                if not s['rawptr']:
+                    return b''
+                return self.buf[s['rawptr']:s['rawptr'] + s['rawsize']]
+        return None
+
+    def symbols(self):
+        """[(rva, name)] for every named section-relative symbol, sorted."""
+        if self._syms is not None:
+            return self._syms
+        b = self.buf
+        out = []
+        if not self.ptr_symtab or not self.nsymbols:
+            self._syms = []
+            return self._syms
+        strtab_off = self.ptr_symtab + 18 * self.nsymbols
+        strtab_len = struct.unpack_from('<I', b, strtab_off)[0] \
+            if strtab_off + 4 <= len(b) else 4
+        strtab = b[strtab_off:strtab_off + max(strtab_len, 4)]
+        secmap = {s['index']: s for s in self.sections}
+        i = 0
+        while i < self.nsymbols:
+            o = self.ptr_symtab + i * 18
+            raw = b[o:o + 8]
+            value, secnum, _typ, sclass, naux = struct.unpack_from('<IhHBB', b, o + 8)
+            if raw[:4] == b'\0\0\0\0':
+                off = struct.unpack_from('<I', raw, 4)[0]
+                end = strtab.find(b'\0', off)
+                name = strtab[off:end].decode('latin1') if end >= 0 else ''
+            else:
+                name = raw.rstrip(b'\0').decode('latin1')
+            if (secnum > 0 and secnum in secmap and name
+                    and sclass in _SC_KEEP and not name.startswith('.')):
+                out.append((secmap[secnum]['vaddr'] + value, name))
+            i += 1 + naux
+        out.sort(key=lambda t: t[0])
+        self._syms = out
+        return out
+
+
+# ------------------------------------------------------------- DWARF lines
+
+_F = dict(ADDR=0x01, BLOCK2=0x03, BLOCK4=0x04, DATA2=0x05, DATA4=0x06,
+          DATA8=0x07, STRING=0x08, BLOCK=0x09, BLOCK1=0x0a, DATA1=0x0b,
+          FLAG=0x0c, SDATA=0x0d, STRP=0x0e, UDATA=0x0f, STRX=0x1a,
+          DATA16=0x1e, LINE_STRP=0x1f, STRX1=0x25, STRX2=0x26, STRX3=0x27,
+          STRX4=0x28)
+DW_LNCT_PATH = 1
+DW_LNCT_DIRECTORY_INDEX = 2
+
+
+class _R:
+    """A little-endian cursor over a bytes object."""
+    __slots__ = ('b', 'o')
+
+    def __init__(self, b, o=0):
+        self.b = b
+        self.o = o
+
+    def u8(self):
+        v = self.b[self.o]; self.o += 1; return v
+
+    def u16(self):
+        v = struct.unpack_from('<H', self.b, self.o)[0]; self.o += 2; return v
+
+    def u32(self):
+        v = struct.unpack_from('<I', self.b, self.o)[0]; self.o += 4; return v
+
+    def u64(self):
+        v = struct.unpack_from('<Q', self.b, self.o)[0]; self.o += 8; return v
+
+    def s8(self):
+        v = struct.unpack_from('<b', self.b, self.o)[0]; self.o += 1; return v
+
+    def uleb(self):
+        r = s = 0
+        while True:
+            c = self.b[self.o]; self.o += 1
+            r |= (c & 0x7f) << s
+            if not c & 0x80:
+                return r
+            s += 7
+
+    def sleb(self):
+        r = s = 0
+        while True:
+            c = self.b[self.o]; self.o += 1
+            r |= (c & 0x7f) << s
+            s += 7
+            if not c & 0x80:
+                return r - (1 << s) if c & 0x40 else r
+
+    def cstr(self):
+        e = self.b.index(b'\0', self.o)
+        v = self.b[self.o:e].decode('latin1', 'replace')
+        self.o = e + 1
+        return v
+
+
+def _str_at(buf, off):
+    if not buf or off >= len(buf):
+        return ''
+    e = buf.find(b'\0', off)
+    return buf[off:e if e >= 0 else len(buf)].decode('latin1', 'replace')
+
+
+def _form(r, form, addr_size, offset_size, line_str, dstr):
+    if form == _F['STRING']:
+        return r.cstr()
+    if form == _F['LINE_STRP']:
+        return _str_at(line_str, r.u32() if offset_size == 4 else r.u64())
+    if form == _F['STRP']:
+        return _str_at(dstr, r.u32() if offset_size == 4 else r.u64())
+    if form == _F['UDATA']:
+        return r.uleb()
+    if form == _F['SDATA']:
+        return r.sleb()
+    if form in (_F['DATA1'], _F['FLAG'], _F['STRX1']):
+        return r.u8()
+    if form in (_F['DATA2'], _F['STRX2']):
+        return r.u16()
+    if form in (_F['DATA4'], _F['STRX4']):
+        return r.u32()
+    if form == _F['DATA8']:
+        return r.u64()
+    if form == _F['STRX']:
+        return r.uleb()
+    if form == _F['STRX3']:
+        v = int.from_bytes(r.b[r.o:r.o + 3], 'little'); r.o += 3; return v
+    if form == _F['DATA16']:
+        r.o += 16; return None
+    if form == _F['ADDR']:
+        r.o += addr_size; return None
+    if form == _F['BLOCK1']:
+        r.o += r.u8(); return None
+    if form == _F['BLOCK2']:
+        r.o += r.u16(); return None
+    if form == _F['BLOCK4']:
+        r.o += r.u32(); return None
+    if form == _F['BLOCK']:
+        r.o += r.uleb(); return None
+    raise ValueError('unhandled DW_FORM 0x%x in a line header' % form)
+
+
+def _join(d, f):
+    if not d or f.startswith('/') or (len(f) > 1 and f[1] == ':'):
+        return f
+    return d.rstrip('/\\') + '/' + f
+
+
+def line_rows(debug_line, line_str=None, dstr=None, addr_size=8):
+    """Every row of the line number program, sorted by address.
+
+    A row is (address, file, line); file is None on an end-of-sequence
+    marker, which is how a lookup knows an address is past the last
+    instruction of a unit rather than inside it.
+    """
+    rows = []
+    d = debug_line or b''
+    pos, n = 0, len(d)
+    while pos + 4 <= n:
+        r = _R(d, pos)
+        unit_len = r.u32()
+        offset_size = 4
+        if unit_len == 0xffffffff:
+            unit_len = r.u64()
+            offset_size = 8
+        if unit_len == 0 or pos + 4 + unit_len > n:
+            break
+        unit_end = r.o + unit_len
+        version = r.u16()
+        if version >= 5:
+            r.u8()  # address_size
+            r.u8()  # segment_selector_size
+        header_len = r.u32() if offset_size == 4 else r.u64()
+        prog_start = r.o + header_len
+        min_inst = r.u8()
+        if version >= 4:
+            r.u8()  # maximum_operations_per_instruction
+        r.u8()      # default_is_stmt
+        line_base = r.s8()
+        line_range = r.u8()
+        opcode_base = r.u8()
+        std_lens = [r.u8() for _ in range(opcode_base - 1)]
+
+        files = []
+        if version >= 5:
+            dfmt = [(r.uleb(), r.uleb()) for _ in range(r.u8())]
+            dirs = []
+            for _ in range(r.uleb()):
+                path = ''
+                for ct, form in dfmt:
+                    v = _form(r, form, addr_size, offset_size, line_str, dstr)
+                    if ct == DW_LNCT_PATH:
+                        path = v
+                dirs.append(path)
+            ffmt = [(r.uleb(), r.uleb()) for _ in range(r.u8())]
+            for _ in range(r.uleb()):
+                path, di = '', 0
+                for ct, form in ffmt:
+                    v = _form(r, form, addr_size, offset_size, line_str, dstr)
+                    if ct == DW_LNCT_PATH:
+                        path = v
+                    elif ct == DW_LNCT_DIRECTORY_INDEX:
+                        di = v or 0
+                files.append(_join(dirs[di] if di < len(dirs) else '', path))
+        else:
+            dirs = ['']
+            while True:
+                s = r.cstr()
+                if not s:
+                    break
+                dirs.append(s)
+            files.append('')
+            while True:
+                s = r.cstr()
+                if not s:
+                    break
+                di = r.uleb(); r.uleb(); r.uleb()
+                files.append(_join(dirs[di] if di < len(dirs) else '', s))
+
+        r.o = prog_start
+        addr, file_i, line = 0, 1, 1
+        while r.o < unit_end:
+            op = r.u8()
+            if op >= opcode_base:
+                adj = op - opcode_base
+                addr += (adj // line_range) * min_inst
+                line += line_base + (adj % line_range)
+                rows.append((addr, files[file_i] if file_i < len(files) else '?', line))
+            elif op == 0:
+                oplen = r.uleb()
+                sub_end = r.o + oplen
+                sub = r.u8()
+                if sub == 0x01:                     # DW_LNE_end_sequence
+                    rows.append((addr, None, 0))
+                    addr, file_i, line = 0, 1, 1
+                elif sub == 0x02:                   # DW_LNE_set_address
+                    addr = r.u64() if addr_size == 8 else r.u32()
+                r.o = sub_end
+            elif op == 1:                           # DW_LNS_copy
+                rows.append((addr, files[file_i] if file_i < len(files) else '?', line))
+            elif op == 2:
+                addr += r.uleb() * min_inst
+            elif op == 3:
+                line += r.sleb()
+            elif op == 4:
+                file_i = r.uleb()
+            elif op == 5:
+                r.uleb()
+            elif op in (6, 7, 10, 11):
+                pass
+            elif op == 8:
+                addr += ((255 - opcode_base) // line_range) * min_inst
+            elif op == 9:
+                addr += r.u16()
+            elif op == 12:
+                r.uleb()
+            else:
+                for _ in range(std_lens[op - 1]):
+                    r.uleb()
+        pos = unit_end
+    rows.sort(key=lambda t: t[0])
+    return rows
+
+
+
+# --------------------------------------------------------- call detection
+
+# Enough of an x86-64 decoder to answer one question: does a call
+# instruction end exactly here? Every frame below the top of a stack is a
+# return address, so the answer must be yes for the binary to be the one
+# that crashed.
+
+_PREFIX = set([0x66, 0x67, 0x64, 0x65, 0xf2, 0xf3, 0x2e, 0x36, 0x3e, 0x26])
+_REX = set(range(0x40, 0x50))     # inc/dec in 32-bit mode, so x64 only
+
+
+def _decode_call(b, i, end, x64=True):
+    """(length, rel32 or None) if a call starts at i and ends at end."""
+    pfx = _PREFIX | _REX if x64 else _PREFIX
+    p, n = i, 0
+    while p < end and b[p] in pfx and n < 4:
+        p += 1
+        n += 1
+    if p >= end:
+        return None
+    op = b[p]
+    if op == 0xe8:                       # call rel32
+        if p + 5 != end:
+            return None
+        return (end - i, struct.unpack_from('<i', b, p + 1)[0])
+    if op == 0xff:                       # call r/m64, opcode extension /2
+        if p + 1 >= end:
+            return None
+        modrm = b[p + 1]
+        if ((modrm >> 3) & 7) != 2:
+            return None
+        mod, rm = modrm >> 6, modrm & 7
+        ln = 2
+        if mod != 3:
+            if rm == 4:
+                if p + 2 >= end:
+                    return None
+                ln += 1
+                if mod == 0 and (b[p + 2] & 7) == 5:
+                    ln += 4
+            if mod == 0 and rm == 5:
+                ln += 4
+            elif mod == 1:
+                ln += 1
+            elif mod == 2:
+                ln += 4
+        if p + ln != end:
+            return None
+        return (end - i, None)
+    return None
+
+
+# ------------------------------------------------------------- the log
+
+FRAME_RE = re.compile(
+    r'^#(?P<n>\d+):\s*(?P<addr>[0-9a-fA-F]+)\s*:?\s*(?P<rest>.*)$')
+MODBASE_RE = re.compile(r'^MAIN MODULE:\s*\[?(?P<addr>[0-9a-fA-F]+)\]?')
+PC_RE = re.compile(r'^PC:\s*(?P<addr>[0-9a-fA-F]+)')
+EXC_RE = re.compile(r'^EXCEPTION:\s*(?P<code>0x[0-9a-fA-F]+)')
+IMAGE_RE = re.compile(r'^IMAGE:\s*link=(?P<link>[0-9a-fA-F]+)\s+size=(?P<size>[0-9a-fA-F]+)'
+                      r'(?:\s+sum=(?P<sum>[0-9a-fA-F]+))?')
+OFFSET_RE = re.compile(r'\[(?P<base>[0-9a-fA-F]+)\]\+(?P<off>[0-9a-fA-F]+)')
+
+EXCEPTIONS = {
+    0xc0000005: 'ACCESS_VIOLATION — read or wrote an address it does not own',
+    0xc000001d: 'ILLEGAL_INSTRUCTION',
+    0xc0000025: 'NONCONTINUABLE_EXCEPTION',
+    0xc000008c: 'ARRAY_BOUNDS_EXCEEDED',
+    0xc0000094: 'INT_DIVIDE_BY_ZERO',
+    0xc0000096: 'PRIV_INSTRUCTION',
+    0xc00000fd: 'STACK_OVERFLOW',
+    0x80000003: 'BREAKPOINT',
+}
+
+
+class Report:
+    def __init__(self):
+        self.exception = None
+        self.pc = None
+        self.main_base = None
+        self.image_id = None      # (link timestamp, size of image) if the build printed one
+        self.frames = []          # [n, absolute_addr, rva_or_None, printed_base, rest]
+
+
+def parse_report(text):
+    rep = Report()
+    for raw in text.splitlines():
+        line = raw.strip()
+        m = EXC_RE.match(line)
+        if m:
+            rep.exception = int(m.group('code'), 16)
+            continue
+        m = MODBASE_RE.match(line)
+        if m:
+            rep.main_base = int(m.group('addr'), 16)
+            continue
+        m = PC_RE.match(line)
+        if m:
+            rep.pc = int(m.group('addr'), 16)
+            continue
+        m = IMAGE_RE.match(line)
+        if m:
+            rep.image_id = (int(m.group('link'), 16), int(m.group('size'), 16))
+            continue
+        m = FRAME_RE.match(line)
+        if m:
+            addr = int(m.group('addr'), 16)
+            rest = m.group('rest').strip()
+            rva = None
+            om = OFFSET_RE.search(rest)
+            base = int(om.group('base'), 16) if om else None
+            if om:
+                rva = int(om.group('off'), 16)
+            rep.frames.append([int(m.group('n')), addr, rva, base, rest])
+    # A frame is ours only if the handler printed it as an offset from the
+    # main module. Frames it could name (kernel32, ntdll) came from dbghelp,
+    # which can read those PDBs, and are already as resolved as they get.
+    for f in rep.frames:
+        if f[2] is not None and rep.main_base and f[3] != rep.main_base:
+            f[2] = None
+    return rep
+
+
+# ------------------------------------------------------------- resolving
+
+class Resolver:
+    def __init__(self, pe, strip_root=True):
+        self.pe = pe
+        self.syms = pe.symbols()
+        self.symkeys = [s[0] for s in self.syms]
+        self.rows = line_rows(pe.section_data('.debug_line'),
+                              pe.section_data('.debug_line_str'),
+                              pe.section_data('.debug_str'),
+                              pe.addr_size)
+        self.rowkeys = [r[0] for r in self.rows]
+        self.root = self._build_root() if strip_root else None
+
+    def _build_root(self):
+        """The compiler's build directory, so paths can be printed relative.
+
+        Taken from the deepest common prefix of the paths that look like the
+        project's own sources — CRT and toolchain paths are elsewhere and
+        drag the prefix up to nothing if included.
+        """
+        best = None
+        for _, f, _ in self.rows[:4000]:
+            if not f:
+                continue
+            f = f.replace('\\', '/')
+            for marker in ('/src/game/', '/port/src/', '/src/lib/'):
+                i = f.find(marker)
+                if i > 0:
+                    cand = f[:i + 1]
+                    if best is None or len(cand) < len(best):
+                        best = cand
+        return best
+
+    def rel(self, path):
+        if not path:
+            return path
+        p = path.replace('\\', '/')
+        if self.root and p.startswith(self.root):
+            return p[len(self.root):]
+        return p
+
+    def symbol(self, rva):
+        i = bisect.bisect_right(self.symkeys, rva) - 1
+        if i < 0:
+            return None, None
+        return self.syms[i][1], rva - self.syms[i][0]
+
+    def entry_of(self, rva):
+        """RVA of the start of the symbol covering rva."""
+        i = bisect.bisect_right(self.symkeys, rva) - 1
+        return self.symkeys[i] if i >= 0 else None
+
+    def _file_offset(self, rva):
+        s = self.pe.section_of_rva(rva)
+        if not s or not s['rawptr']:
+            return None
+        off = s['rawptr'] + (rva - s['vaddr'])
+        return off if off < len(self.pe.buf) else None
+
+    def call_before(self, rva, window=12):
+        """('direct', target_rva) | ('indirect', None) | (None, None).
+
+        rva is a return address; a call has to end where it points.
+        """
+        off = self._file_offset(rva)
+        if off is None:
+            return None, None
+        b = self.pe.buf
+        for back in range(2, window + 1):
+            if off - back < 0:
+                continue
+            r = _decode_call(b, off - back, off, self.pe.pe32plus)
+            if r:
+                if r[1] is None:
+                    return 'indirect', None
+                return 'direct', rva + r[1]
+        return None, None
+
+    def source(self, rva):
+        va = self.pe.image_base + rva
+        i = bisect.bisect_right(self.rowkeys, va) - 1
+        if i < 0 or self.rows[i][1] is None:
+            return None, None
+        return self.rows[i][1], self.rows[i][2]
+
+
+# ------------------------------------------------------------- output
+
+def render(rep, res, args, out):
+    pe = res.pe
+    p = lambda *a: print(*a, file=out)
+
+    name = pe.path.rsplit('/', 1)[-1].rsplit('\\', 1)[-1]
+    p('binary   %s' % name)
+    p('  sha256 %s' % pe.sha256())
+    p('  linked %s   link=%08x  image base 0x%x, %.1f MB mapped'
+      % (pe.built(), pe.timestamp, pe.image_base,
+         pe.size_of_image / (1024.0 * 1024.0)))
+    p('  debug  %d COFF symbols, %d line rows%s'
+      % (len(res.syms), len(res.rows),
+         '' if res.rows else '   -- NO DWARF: this binary was stripped'))
+    p('')
+
+    if rep.exception is not None:
+        p('report   0x%08x  %s'
+          % (rep.exception, EXCEPTIONS.get(rep.exception, 'unknown exception code')))
+    if rep.main_base:
+        p('         main module at 0x%x; ASLR moves that every run, so only'
+          % rep.main_base)
+        p('         the offsets below mean anything')
+    p('')
+
+    lines, marks, ok = audit(rep, res)
+    for ln in lines:
+        p('  ' + ln)
+    p('')
+    if not ok:
+        p('  MISMATCH. Every name below is this binary\'s answer to an address')
+        p('  that came out of a different one. Do not read it as a stack.')
+        p('')
+
+    for n, addr, rva, base, rest in rep.frames:
+        if rva is None:
+            p('#%02d  %-8s %s' % (n, '', rest or '0x%x' % addr))
+            continue
+        sec = pe.section_of_rva(rva)
+        flag = ' '
+        if rva >= pe.size_of_image or (sec and sec['name'] != '.text'):
+            flag = '!'
+        elif n > 0 and marks.get(n) is None:
+            flag = '?'
+        sym, off = res.symbol(rva)
+        f, ln = res.source(rva)
+        head = '#%02d%s 0x%06x' % (n, flag, rva)
+        p('%s  %s' % (head, ('%s +%d' % (sym, off)) if sym
+                      else '<no symbol covers this address>'))
+        if f:
+            p('%s%s:%d' % (' ' * (len(head) + 2), res.rel(f), ln))
+        elif sym is not None:
+            p('%s(no line info)' % (' ' * (len(head) + 2)))
+
+    if any(marks.get(n) is None for n, _, rva, _, _ in rep.frames if rva is not None and n > 0):
+        p('')
+        p('?  no call instruction ends at that return address')
+    return 0 if ok else 2
+
+
+def audit(rep, res):
+    """Does this binary actually explain this report?
+
+    Returns (lines, per-frame verdicts, ok). Nothing short of a build id can
+    prove a match, but the call-site test comes close: a wrong binary passes
+    it about once in sixty per frame, so a full stack passing it by accident
+    does not happen.
+    """
+    pe = res.pe
+    lines = []
+    marks = {}
+    ok = True
+
+    if rep.image_id:
+        want_link, want_size = rep.image_id
+        hit = (want_link == pe.timestamp and want_size == pe.size_of_image)
+        lines.append('image id  report says link=%08x size=%08x; binary is '
+                     'link=%08x size=%08x%s'
+                     % (want_link, want_size, pe.timestamp, pe.size_of_image,
+                        '' if hit else '   <-- FAIL, different build'))
+        ok = ok and hit
+    else:
+        lines.append('image id  report predates the IMAGE: line — falling back '
+                     'to the call-site test')
+
+    rvas = [f[2] for f in rep.frames if f[2] is not None]
+    over = [r for r in rvas if r >= pe.size_of_image]
+    lines.append('bounds    %d/%d main-module frames land inside the image%s'
+                 % (len(rvas) - len(over), len(rvas), '' if not over else '   <-- FAIL'))
+    ok = ok and not over
+
+    intext = [r for r in rvas if (pe.section_of_rva(r) or {}).get('name') == '.text']
+    lines.append('section   %d/%d land in .text%s'
+                 % (len(intext), len(rvas),
+                    '' if len(intext) == len(rvas) else '   <-- FAIL'))
+    ok = ok and len(intext) == len(rvas)
+
+    # Frame 0 is the faulting instruction, not a return address; exempt it.
+    rets = [f for f in rep.frames if f[2] is not None and f[0] > 0]
+    good = direct = agree = 0
+    prev_by_n = {f[0]: f for f in rep.frames}
+    for f in rets:
+        kind, target = res.call_before(f[2])
+        marks[f[0]] = kind
+        if kind:
+            good += 1
+        if kind == 'direct':
+            direct += 1
+            below = prev_by_n.get(f[0] - 1)
+            if below and below[2] is not None and target == res.entry_of(below[2]):
+                agree += 1
+    lines.append('call site %d/%d return addresses follow a call%s'
+                 % (good, len(rets), '' if good == len(rets) else '   <-- FAIL'))
+    ok = ok and good == len(rets)
+    if direct:
+        # Corroboration, not a gate: a direct call can land on an import
+        # thunk or a local entry the symbol table never named, so a correct
+        # binary disagrees here perhaps one time in eight. All of several
+        # disagreeing is a different matter.
+        hard = direct >= 3 and agree == 0
+        lines.append('call graph %d/%d direct calls point at the frame below%s'
+                     % (agree, direct, '   <-- FAIL' if hard else
+                        ('' if agree == direct else '   (a thunk or an unnamed '
+                         'local target explains the rest)')))
+        ok = ok and not hard
+
+    # Advisory only: a stack can be truncated (the handler walks 32 frames)
+    # or the walk can give up early, and then the deepest frame is whatever
+    # it stopped on rather than the CRT entry.
+    deepest = max((f for f in rep.frames if f[2] is not None),
+                  key=lambda f: f[0], default=None)
+    if deepest:
+        sym, _ = res.symbol(deepest[2])
+        crt = sym in ('__tmainCRTStartup', 'mainCRTStartup', 'WinMainCRTStartup')
+        lines.append('entry     deepest frame #%02d is %s%s'
+                     % (deepest[0], sym,
+                        '' if crt else '   (not a CRT entry point; stack may be cut short)'))
+
+    return lines, marks, ok
+
+
+def check(rep, res, out):
+    lines, _marks, ok = audit(rep, res)
+    for ln in lines:
+        print(ln, file=out)
+    print('', file=out)
+    print('verdict   %s' % ('this binary explains this report' if ok
+                            else 'MISMATCH — do not trust any name pdsym prints'),
+          file=out)
+    return 0 if ok else 2
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog='pdsym',
+        description='Resolve a Windows pd.crash.log against the exe that produced it.')
+    ap.add_argument('log', nargs='?', default='-',
+                    help='crash log, or - for stdin (default)')
+    ap.add_argument('-b', '--binary', required=True,
+                    help='the pd*.exe the player ran')
+    ap.add_argument('-a', '--addr', action='append', default=[],
+                    help='resolve a bare RVA instead of a log; repeatable')
+    ap.add_argument('--full-paths', action='store_true',
+                    help='keep the compiler\'s absolute source paths')
+    ap.add_argument('--check', action='store_true',
+                    help='only report whether binary and log are consistent')
+    ap.add_argument('--info', action='store_true',
+                    help='describe the binary and stop; no log needed')
+    ap.add_argument('--find', metavar='REGEX',
+                    help='list symbols whose name matches, with source file')
+    args = ap.parse_args(argv)
+
+    try:
+        pe = PE(args.binary)
+    except (OSError, ValueError) as e:
+        print('pdsym: %s' % e, file=sys.stderr)
+        return 1
+    res = Resolver(pe, strip_root=not args.full_paths)
+
+    if args.info:
+        p = print
+        p('%s' % pe.path)
+        p('  sha256        %s' % pe.sha256())
+        p('  linked        %s  (link=%08x)' % (pe.built(), pe.timestamp))
+        p('  image base    0x%x' % pe.image_base)
+        p('  size of image 0x%x (%.1f MB)'
+          % (pe.size_of_image, pe.size_of_image / (1024.0 * 1024.0)))
+        p('  entry point   0x%x  %s' % (pe.entry, res.symbol(pe.entry)[0]))
+        p('  symbols       %d' % len(res.syms))
+        p('  line rows     %d%s' % (len(res.rows),
+                                    '' if res.rows else '   (stripped: no DWARF)'))
+        if res.root:
+            p('  built in      %s' % res.root)
+        p('  sections')
+        for sec in pe.sections:
+            p('    %-16s rva 0x%08x  %9d bytes' % (sec['name'], sec['vaddr'],
+                                                   max(sec['vsize'], sec['rawsize'])))
+        return 0
+
+    if args.find:
+        pat = re.compile(args.find)
+        n = 0
+        for rva, name in res.syms:
+            if pat.search(name):
+                f, ln = res.source(rva)
+                print('0x%06x  %-52s %s' % (rva, name,
+                                            '%s:%d' % (res.rel(f), ln) if f else ''))
+                n += 1
+        if not n:
+            print('no symbol matches /%s/ in this binary' % args.find, file=sys.stderr)
+            return 1
+        return 0
+
+    if args.addr:
+        for a in args.addr:
+            rva = int(a, 16) if a.lower().startswith('0x') else int(a, 16)
+            if rva >= pe.image_base:
+                rva -= pe.image_base
+            sym, off = res.symbol(rva)
+            f, ln = res.source(rva)
+            print('0x%06x  %s +%s   %s' % (
+                rva, sym or '?', off if off is not None else '?',
+                '%s:%d' % (res.rel(f), ln) if f else '(no line info)'))
+        return 0
+
+    text = sys.stdin.read() if args.log == '-' else open(args.log).read()
+    rep = parse_report(text)
+    if not rep.frames:
+        print('pdsym: no BACKTRACE frames found in that log', file=sys.stderr)
+        return 1
+    if args.check:
+        return check(rep, res, sys.stdout)
+    return render(rep, res, args, sys.stdout)
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except BrokenPipeError:      # piped into head, and that is fine
+        try:
+            sys.stdout.close()
+        finally:
+            sys.exit(0)
+    except KeyboardInterrupt:
+        sys.exit(130)

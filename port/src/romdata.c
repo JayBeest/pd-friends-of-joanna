@@ -225,6 +225,9 @@ struct modTexMap {
 // texids that appear in JPN-sourced models). Cap fits the 12-bit texnum
 // field in G_NOOP (max 0xfff = 4095).
 #define MOD_TEX_PORT_BASE 3600u
+// The cap the comment above describes, now written down where it can be
+// checked: a texnum is 12 bits, so 0xfff is the last port that can be named.
+#define MOD_TEX_PORT_MAX  0xfffu
 static u32 g_NextGlobalTexPort = MOD_TEX_PORT_BASE;
 
 static struct modTexMap g_ModTexMap[MOD_TEX_MAP_MAX_MODS];
@@ -882,13 +885,38 @@ static s32 romdataParseFileTable(u8 *data, u32 size, s32 ownerModIdx)
 				             numTexMap, ownerModIdx);
 				return 1;
 			}
+			u32 maxSlot = 0;
 			for (u32 i = 0; i < numTexMap; ++i) {
 				u16 localId = PD_BE16(*(u16*)p); p += 2;
 				u16 slotIdx = PD_BE16(*(u16*)p); p += 2;
 				m->entries[i].localTexId = localId;
 				m->entries[i].portTexId  = (u16)(modBase + slotIdx);
+				if (slotIdx > maxSlot) {
+					maxSlot = slotIdx;
+				}
 			}
-			g_NextGlobalTexPort += numTexMap;
+
+			// The next mod has to start above the highest port this one
+			// actually used, which is not the same as the number of entries it
+			// carried. A fragment whose slots have holes maps above its own
+			// count, so advancing by the count hands the next mod ports this
+			// one is already answering to. mkfiletable emits dense slots; a
+			// fragment built by anything else may not.
+			g_NextGlobalTexPort = modBase + maxSlot + 1;
+
+			if (maxSlot + 1 > numTexMap) {
+				sysLogPrintf(LOG_WARNING,
+				             "PDFT v3 romTexMap: mod %d has %u entries but uses slots up to %u; "
+				             "%u port(s) are reserved and unused",
+				             ownerModIdx, numTexMap, maxSlot, maxSlot + 1 - numTexMap);
+			}
+
+			if (modBase + maxSlot > MOD_TEX_PORT_MAX) {
+				sysLogPrintf(LOG_ERROR,
+				             "PDFT v3 romTexMap: mod %d maps to port %u, past the %u a texnum can name; "
+				             "its textures above that will not draw",
+				             ownerModIdx, modBase + maxSlot, MOD_TEX_PORT_MAX);
+			}
 			m->count = numTexMap;
 			for (u32 i = 1; i < m->count; ++i) {
 				struct modTexMapEntry e = m->entries[i];

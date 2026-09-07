@@ -3412,6 +3412,29 @@ void chrGetBloodColour(s16 bodynum, u8 *colour1, u32 *colour2)
 	}
 }
 
+#ifndef PLATFORM_N64
+/**
+ * How far into the cloak's look this body has been taken because the camera is
+ * inside it.
+ *
+ * Only ever her own body, and only in her own view - chrRender() runs once per
+ * player per frame with g_Vars.currentplayer set to whoever is looking, so in
+ * splitscreen each view answers this for itself and nobody else's body ghosts.
+ *
+ * It reads cloakfadefrac's scale but never its flag. CHRHFLAG_CLOAKED is what
+ * bot.c decides whether a simulant can see her by; a camera backed into a wall
+ * must not make her invisible to the match.
+ */
+static u8 chrGetCameraFadeFrac(struct chrdata *chr)
+{
+	if (g_Vars.currentplayer == NULL || chr->prop != g_Vars.currentplayer->prop) {
+		return 0;
+	}
+
+	return g_Vars.currentplayer->bodyfadefrac;
+}
+#endif
+
 Gfx *chrRender(struct prop *prop, Gfx *gdl, bool xlupass)
 {
 	struct chrdata *chr = prop->chr;
@@ -3450,6 +3473,15 @@ Gfx *chrRender(struct prop *prop, Gfx *gdl, bool xlupass)
 	if (chr->aibot && chr->aibot->fadeintimer60 > 0) {
 		alpha = (f32)alpha * (TICKS(120) - chr->aibot->fadeintimer60) * (1.0f / TICKS(120));
 	}
+
+#ifndef PLATFORM_N64
+	// A third ramp beside the bot fade-in and the x-ray one below: the camera
+	// closing on her own body. Not all the way to nothing, because a shape
+	// that is entirely gone reads as a bug rather than as a cloak.
+	if (chrGetCameraFadeFrac(chr) > 0) {
+		alpha = (f32)alpha * (1.0f - chrGetCameraFadeFrac(chr) * (0.85f / THIRDPERSON_BODYFADE_MAX));
+	}
+#endif
 
 	chrGetBloodColour(chr->bodynum, spec, NULL);
 	chr0f0246e4(spec);
@@ -3510,7 +3542,12 @@ Gfx *chrRender(struct prop *prop, Gfx *gdl, bool xlupass)
 		s32 colour[4]; // rgba levels, but allowing > 256 temporarily
 		u32 stack;
 
-		if (xlupass && chr->cloakfadefrac > 0 && !chr->cloakfadefinished) {
+		if (xlupass
+				&& ((chr->cloakfadefrac > 0 && !chr->cloakfadefinished)
+#ifndef PLATFORM_N64
+					|| chrGetCameraFadeFrac(chr) > 0
+#endif
+				)) {
 			gdl = chrRenderCloak(gdl, chr->prop, chr->prop);
 		}
 
@@ -5600,6 +5637,12 @@ Gfx *chrRenderShieldComponent(Gfx *gdl, struct shieldhit *hit, struct prop *prop
 		shieldamount = chrGetShield(chr);
 		cloakfade = chr->cloakfadefrac;
 		cmcount = chr->cmcount;
+
+#ifndef PLATFORM_N64
+		if (chrGetCameraFadeFrac(chr) > cloakfade) {
+			cloakfade = chrGetCameraFadeFrac(chr);
+		}
+#endif
 	} else {
 		struct defaultobj *obj = prop->obj;
 		gap = 0.0f;
@@ -6591,6 +6634,9 @@ Gfx *chrRenderShield(Gfx *gdl, struct chrdata *chr, u32 alpha)
 
 	if ((chr->hidden2 & CHRH2FLAG_SHIELDHIT)
 			|| (chrGetShield(chr) > 0 && chr->cmcount < 10)
+#ifndef PLATFORM_N64
+			|| chrGetCameraFadeFrac(chr) > 0
+#endif
 			|| (chr->cloakfadefrac > 0 && !chr->cloakfadefinished)) {
 		if (chrGetShield(chr) > 0 && g_Vars.lvupdate240 > 0) {
 			s32 numiterations = (rngRandom() % 4) + 1;
@@ -6656,7 +6702,11 @@ Gfx *chrRenderShield(Gfx *gdl, struct chrdata *chr, u32 alpha)
 		gSPSetGeometryMode(gdl++, G_CULL_BACK);
 
 		gdl = shieldhitRender(gdl, chr->prop, chr->prop, alpha,
-				chr->cloakfadefrac > 0 && !chr->cloakfadefinished,
+				(chr->cloakfadefrac > 0 && !chr->cloakfadefinished)
+#ifndef PLATFORM_N64
+					|| chrGetCameraFadeFrac(chr) > 0
+#endif
+				,
 				chr->cmnum, chr->cmnum2, chr->cmnum3, chr->cmnum4);
 
 		gSPSetGeometryMode(gdl++, G_CULL_BACK);

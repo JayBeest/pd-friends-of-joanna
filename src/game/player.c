@@ -3800,6 +3800,7 @@ static void playerPullBackCamera(struct coord *campos)
 	g_Vars.currentplayer->thirdpersondist = 0;
 
 	if (!playerIsThirdPerson(g_Vars.currentplayer)) {
+		g_Vars.currentplayer->bodyfadefrac = 0;
 		return;
 	}
 
@@ -3817,10 +3818,26 @@ static void playerPullBackCamera(struct coord *campos)
 				+ (hit.z - campos->z) * (hit.z - campos->z)) - THIRDPERSON_CAMCLEARANCE;
 
 		// Nothing between here and THIRDPERSON_CAMMINDIST is a view: leave the
-		// camera on the eye and let the HUD put the gun back.
+		// camera on the eye. The body is not put away with it - it is drawn
+		// wherever the camera ends up - so this is the frame it has to be
+		// possible to see through, and the fade below has already run most of
+		// its length getting here.
 		if (dist < THIRDPERSON_CAMMINDIST) {
+			g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
 			return;
 		}
+	}
+
+	// The body goes translucent as the camera closes on it rather than at the
+	// moment it ends up inside. The trace shortens smoothly as she backs into
+	// a corner, so the fade is smooth all the way to the clamp above, and the
+	// cut to the eye happens with the body already almost gone.
+	if (dist >= THIRDPERSON_BODYFADE_START) {
+		g_Vars.currentplayer->bodyfadefrac = 0;
+	} else {
+		g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
+			* (THIRDPERSON_BODYFADE_START - dist)
+			/ (THIRDPERSON_BODYFADE_START - THIRDPERSON_CAMMINDIST);
 	}
 
 	g_Vars.currentplayer->thirdpersondist = dist;

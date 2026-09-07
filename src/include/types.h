@@ -2956,6 +2956,12 @@ struct player {
   // how one player is looking at the arena rather than a rule of it, so it
   // lives here and not in mpsetup.options, and is not saved.
   /*ext*/ bool thirdperson;
+  // How far into the cloak's own look her body has been taken because the
+  // camera is close enough to be inside it, 0 to 127 on the same scale as a
+  // chr's cloakfadefrac. It is a fade of the PICTURE and never of the cloak:
+  // CHRHFLAG_CLOAKED is what a simulant decides whether it can see her by, so
+  // a wall behind her must not touch it.
+  /*ext*/ u8 bodyfadefrac;
   // How far back the camera actually got this frame after walls were taken
   // into account, or 0 when it could not get far enough to be worth it. Read
   // by the HUD, which draws the first person gun whenever the camera is on

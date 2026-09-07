@@ -433,6 +433,12 @@
  */
 #define THIRDPERSON_CAMMINDIST 60.0f
 
+// Where the body starts going translucent as the camera closes on it, and how
+// far the fade goes. The maximum is the same 127 a chr's cloakfadefrac counts
+// to, because it drives the same two render sites.
+#define THIRDPERSON_BODYFADE_START 130.0f
+#define THIRDPERSON_BODYFADE_MAX   127
+
 #define CASING_NONE     -1
 #define CASING_STANDARD 0
 #define CASING_REAPER   1

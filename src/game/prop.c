@@ -1240,22 +1240,110 @@ void hitCreate(struct shotdata *shotdata, struct prop *prop, f32 hitdistance, s3
 	}
 }
 
+#ifndef PLATFORM_N64
+/**
+ * How far a swing reaches past the weapon's own range, and how far off the
+ * direction she is looking a target can stand and still be hit.
+ *
+ * The stock test measures both from the CAMERA. func0f0679ac() walks the
+ * target model's bboxes in its render matrix - camera space - against a box
+ * centred on the crosshair, and the depth limit it is given is the weapon's
+ * weaponfunc_melee.range, 60 for a bare hand. In first person the camera sits
+ * on the eye and 60 units from the eye is roughly a fist, so it reads as a
+ * punch. In third person the camera is THIRDPERSON_CAMDIST behind her, so the
+ * window it tests sits 140 units BEHIND her fist and a swing lands on nothing.
+ *
+ * So the reach is measured from her instead, and the weapon's range is what it
+ * adds rather than what it is: MELEE_BODY_REACH + 60 is 120, which is exactly
+ * the reach chrTryPunch() gives a human guard's punch (chraction.c), and a
+ * weapon with a longer melee range reaches further than a fist the way it
+ * always did.
+ *
+ * The cone is against the horizontal look direction rather than the full look
+ * vector, so looking at the floor does not stop her hitting what is in front
+ * of her - the same choice chrIsTargetInFov() makes for a guard.
+ */
+#define MELEE_BODY_REACH 60.0f
+#define MELEE_CONE_COS   0.7071f
+
+static bool handMeleeIsInReach(struct prop *prop, f32 reach)
+{
+	struct prop *playerprop = g_Vars.currentplayer->prop;
+	struct coord *look = &g_Vars.currentplayer->bond2.unk1c;
+	f32 dx = prop->pos.x - playerprop->pos.x;
+	f32 dy = prop->pos.y - playerprop->pos.y;
+	f32 dz = prop->pos.z - playerprop->pos.z;
+	f32 dist;
+	f32 lookdist;
+
+	if (dy > reach || dy < -reach) {
+		return false;
+	}
+
+	dist = sqrtf(dx * dx + dz * dz);
+
+	if (dist > reach) {
+		return false;
+	}
+
+	// Standing on top of her, with no direction to be in front of.
+	if (dist < 1.0f) {
+		return true;
+	}
+
+	lookdist = sqrtf(look->x * look->x + look->z * look->z);
+
+	if (lookdist < 0.0001f) {
+		// Straight up or straight down: everything within reach is in front.
+		return true;
+	}
+
+	return (dx * look->x + dz * look->z) / (dist * lookdist) >= MELEE_CONE_COS;
+}
+#endif
+
 void handInflictMeleeDamage(s32 handnum, struct gset *gset, bool arg2)
 {
 	s32 cdtypes;
-	struct prop **ptr;
 	struct prop *playerprop;
 	bool skipthething;
+#ifdef PLATFORM_N64
+	struct prop **ptr;
+#else
+	s16 propnums[256];
+	struct weaponfunc *reachfunc = gsetGetWeaponFunction(gset);
+	f32 reach = MELEE_BODY_REACH;
+	s32 i;
+#endif
 
 	playerprop = g_Vars.currentplayer->prop;
-	ptr = g_Vars.endonscreenprops - 1;
 	skipthething = false;
+
+#ifdef PLATFORM_N64
+	ptr = g_Vars.endonscreenprops - 1;
 
 	// Iterate onscreen props near to far
 	while (ptr >= g_Vars.onscreenprops) {
 		struct prop *prop = *ptr;
 
 		if (prop && prop->z < 500) {
+#else
+	if (reachfunc && (reachfunc->type & 0xff) == INVENTORYFUNCTYPE_MELEE) {
+		reach += ((struct weaponfunc_melee *)reachfunc)->range;
+	}
+
+	// The props in the rooms she is standing in, rather than the ones being
+	// drawn. Onscreen is the wrong list for a punch even in first person - it
+	// is the list of things the renderer got to - and in third person it is
+	// wrong in a way she can see, because the body has a whole shoulder of
+	// world beside it that the camera is not looking at.
+	roomGetProps(playerprop->rooms, propnums, 256);
+
+	for (i = 0; propnums[i] >= 0; i++) {
+		struct prop *prop = &g_Vars.props[propnums[i]];
+
+		if (prop && prop != playerprop) {
+#endif
 			/**
 			 * @bug: There is no check to make sure the prop's type is obj
 			 * before accessing the obj properties. prop->obj is a void *
@@ -1300,10 +1388,11 @@ void handInflictMeleeDamage(s32 handnum, struct gset *gset, bool arg2)
 			if (prop->type == PROPTYPE_CHR
 					|| (prop->type == PROPTYPE_PLAYER && prop->chr && playermgrGetPlayerNumByProp(prop) != g_Vars.currentplayernum)
 					|| isglass) {
+				struct chrdata *chr = prop->chr;
+#ifdef PLATFORM_N64
 				f32 rangelimit = 60;
 				f32 distance;
 				f32 sp110;
-				struct chrdata *chr = prop->chr;
 				f32 x;
 				f32 y;
 				f32 spfc[2];
@@ -1336,6 +1425,9 @@ void handInflictMeleeDamage(s32 handnum, struct gset *gset, bool arg2)
 				if (func0f0679ac(model, &distance, &sp110, spfc, spf4)
 						&& sp110 <= 0
 						&& distance >= -rangelimit) {
+#else
+				if (handMeleeIsInReach(prop, reach)) {
+#endif
 					cdtypes = CDTYPE_OBJS | CDTYPE_DOORS | CDTYPE_PATHBLOCKER | CDTYPE_BG;
 
 					if (isglass) {
@@ -1395,7 +1487,9 @@ void handInflictMeleeDamage(s32 handnum, struct gset *gset, bool arg2)
 			}
 		}
 
+#ifdef PLATFORM_N64
 		ptr--;
+#endif
 	}
 
 	if (!skipthething && !arg2) {

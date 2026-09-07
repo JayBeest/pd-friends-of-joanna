@@ -1158,6 +1158,10 @@ void chrInit(struct prop *prop, u8 *ailist)
 	chr->punchstep = 0;
 	chr->punchtime60 = 0;
 	chr->oneshotanim = 0;
+	chr->punchhitframe = 0;
+	chr->punchhitdamage = 0;
+	chr->punchhitrange = 0;
+	chr->punchhithand = -1;
 #endif
 	chr->aishootingatmelist = -1;
 	chr->aidarkroomlist = -1;

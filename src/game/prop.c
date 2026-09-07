@@ -1455,15 +1455,32 @@ void handTickAttack(s32 handnum)
 			break;
 		case HANDATTACKTYPE_MELEE:
 			chrUncloakTemporarily(g_Vars.currentplayer->prop->chr);
-			handInflictMeleeDamage(handnum, &gset, false);
 
-			// The blow landing, and the one report a swing always makes: the
-			// other melee type below is the arm coming up, which only weapons
-			// with a first person melee animation report at all. Taking the
-			// landing gives the body one swing per attack whatever is being
-			// swung, which is what the combo counts.
+			// The one report a swing always makes: the other melee type below
+			// is the arm coming up, which only weapons with a first person
+			// melee animation report at all. Taking the landing gives the body
+			// one swing per attack whatever is being swung, which is what the
+			// combo counts.
+			//
+			// This is the gunscript's idea of when the blow lands, and it is
+			// ten frames earlier than the body's. Where there is a body, its
+			// animation is what connects and the damage waits for it, the way
+			// a guard's always has; where there is not - first person with no
+			// third person body to swing - there is nothing to wait for and the
+			// gunscript keeps the timing it has always had.
 #ifndef PLATFORM_N64
-			chrPlayPunchAnimation(g_Vars.currentplayer->prop->chr);
+			{
+				struct chrdata *bodychr = g_Vars.currentplayer->prop->chr;
+				s32 hitframe = chrPlayPunchAnimation(bodychr);
+
+				if (hitframe > 0) {
+					chrArmPunchHit(bodychr, hitframe, handnum, 0, 0);
+				} else {
+					handInflictMeleeDamage(handnum, &gset, false);
+				}
+			}
+#else
+			handInflictMeleeDamage(handnum, &gset, false);
 #endif
 			break;
 		case HANDATTACKTYPE_MELEENOUNCLOAK:

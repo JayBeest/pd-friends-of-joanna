@@ -6276,6 +6276,15 @@ s32 playerTickThirdPerson(struct prop *prop)
 		chr->hidden &= ~CHRHFLAG_00000800;
 	}
 
+#ifndef PLATFORM_N64
+	// A swing thrown on an earlier tick, landing on the frame of the animation
+	// that throws it. This is the body's own tick, which is the only tick that
+	// knows how far through the swing it is.
+	if (player->haschrbody) {
+		chrTickPunchHit(chr);
+	}
+#endif
+
 	/**
 	 * This branch is the one where the body drives the player rather than the
 	 * other way round: chrTick() below moves prop->pos to wherever the body's

@@ -8467,11 +8467,16 @@ static struct punchanim *chrGetPunchAnims(struct chrdata *chr, s32 *count, f32 *
  * always been in the ROM; a player has never thrown one because the third
  * person body only ever had a walk and an aim, and a bot has never thrown one
  * for the same reason.
+ *
+ * Returns the frame of the animation the blow lands on, or 0 if no animation
+ * was started. The caller owes its own damage either way: with a frame, by
+ * arming it through chrArmPunchHit() so the body decides when it lands; with 0,
+ * on the spot, because there is no body to wait for.
  */
 // Melee combos: the punch and kick chain solo has always thrown, in MP too.
 s32 g_MeleeCombosEnabled = true;
 
-void chrPlayPunchAnimation(struct chrdata *chr)
+s32 chrPlayPunchAnimation(struct chrdata *chr)
 {
 	struct punchanim *anims;
 	bool flip = (rngRandom() % 256) > 128;
@@ -8482,13 +8487,13 @@ void chrPlayPunchAnimation(struct chrdata *chr)
 	s32 step;
 
 	if (!g_MeleeCombosEnabled || !chrCanPlayOneShotAnim(chr)) {
-		return;
+		return 0;
 	}
 
 	anims = chrGetPunchAnims(chr, &count, &startframe);
 
 	if (anims == NULL) {
-		return;
+		return 0;
 	}
 
 	// A swing already under way is interrupted rather than left to finish. That
@@ -8498,7 +8503,7 @@ void chrPlayPunchAnimation(struct chrdata *chr)
 	elapsed = g_Vars.lvframe60 - chr->punchtime60;
 
 	if (elapsed >= 0 && elapsed < PUNCHCOMBO_DEBOUNCE) {
-		return;
+		return 0;
 	}
 
 	if (elapsed < 0 || elapsed > PUNCHCOMBO_WINDOW) {
@@ -8538,6 +8543,82 @@ void chrPlayPunchAnimation(struct chrdata *chr)
 	modelSetAnimEndFrame(chr->model, anims[index].endframe);
 
 	chr->oneshotanim = anims[index].animnum;
+
+	return anims[index].hitframe;
+}
+
+/**
+ * Hold a blow back until the body that is throwing it gets there.
+ *
+ * A guard's punch has always landed on a frame of its animation: chrTryPunch()
+ * writes the hit frame, radius and damage into ACT_ANIM and chrTickAnim()
+ * reads them back when the model reaches that frame, so the damage and the
+ * picture are the same event. A player's and a bot's landed at the moment the
+ * swing was ordered instead - the gunscript keyframe for one, botTickUnpaused()
+ * for the other - and the body then started its animation from frame 10, which
+ * put the blow ten frames ahead of the arm that was supposed to throw it.
+ *
+ * handnum is HAND_RIGHT or HAND_LEFT for a player's swing, which is dealt
+ * through the weapon it is holding, or -1 for a bot's, which is dealt the way
+ * a guard's is. damage and range are the bot's; a player's come from the gset
+ * at the moment the blow lands rather than from here.
+ */
+void chrArmPunchHit(struct chrdata *chr, s32 hitframe, s32 handnum, s32 damage, s32 range)
+{
+	if (chr == NULL || hitframe <= 0) {
+		return;
+	}
+
+	chr->punchhitframe = hitframe;
+	chr->punchhithand = handnum;
+	chr->punchhitdamage = damage;
+	chr->punchhitrange = range;
+}
+
+/**
+ * Land the blow the body owes, if it has reached the frame that throws it.
+ *
+ * Called every frame a body with a swing in it is ticked. A swing that is no
+ * longer playing has been replaced by the next one in the combo, or has run
+ * out - chrIsOneShotAnimPlaying() answers both and clears oneshotanim itself -
+ * and the blow goes with it, exactly as a guard's does when chrTryPunch()
+ * overwrites ACT_ANIM with the next punch.
+ */
+void chrTickPunchHit(struct chrdata *chr)
+{
+	struct gset gset;
+
+	if (chr == NULL || chr->punchhitframe <= 0) {
+		return;
+	}
+
+	if (!chrIsOneShotAnimPlaying(chr)) {
+		chr->punchhitframe = 0;
+		return;
+	}
+
+	if (modelGetCurAnimFrame(chr->model) < (f32)chr->punchhitframe) {
+		return;
+	}
+
+	chr->punchhitframe = 0;
+
+	if (chr->punchhithand < 0) {
+		chrPunchInflictDamage(chr, chr->punchhitdamage, chr->punchhitrange, false);
+		return;
+	}
+
+	// A player's, and only ever the one whose tick this is: the melee sweep
+	// reads g_Vars.currentplayer's own onscreen prop list.
+	if (g_Vars.currentplayer == NULL || g_Vars.currentplayer->prop == NULL
+			|| g_Vars.currentplayer->prop->chr != chr) {
+		return;
+	}
+
+	// Repopulated here rather than kept from the swing, so a gun put away
+	// mid swing does not land its damage after it is gone.
+	gsetPopulateFromCurrentPlayer(chr->punchhithand, &gset);
+	handInflictMeleeDamage(chr->punchhithand, &gset, false);
 }
 #endif
 

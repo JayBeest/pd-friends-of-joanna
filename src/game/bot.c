@@ -2599,6 +2599,12 @@ void botTickUnpaused(struct chrdata *chr)
 		struct aibot *aibot = chr->aibot;
 		s32 i;
 
+#ifndef PLATFORM_N64
+		// A swing thrown on an earlier tick, landing on the frame of the
+		// animation that throws it.
+		chrTickPunchHit(chr);
+#endif
+
 		// Consider updating random values
 		aibot->random2ttl60 -= g_Vars.lvupdate60;
 
@@ -3605,9 +3611,22 @@ void botTickUnpaused(struct chrdata *chr)
 								// If the punch was not cancelled, execute it
 								if (aibot->punchtimer60[i] < 0) {
 									chrUncloakTemporarily(chr);
-									chrPunchInflictDamage(chr, 2, range, false);
 #ifndef PLATFORM_N64
-									chrPlayPunchAnimation(chr);
+									// The body's animation decides when it
+									// connects, the same as a guard's. With no
+									// animation to wait for, the blow is struck
+									// here as it always was.
+									{
+										s32 hitframe = chrPlayPunchAnimation(chr);
+
+										if (hitframe > 0) {
+											chrArmPunchHit(chr, hitframe, -1, 2, range);
+										} else {
+											chrPunchInflictDamage(chr, 2, range, false);
+										}
+									}
+#else
+									chrPunchInflictDamage(chr, 2, range, false);
 #endif
 
 									if (i == HAND_RIGHT) {

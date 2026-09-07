@@ -1412,6 +1412,17 @@ struct chrdata {
   // still running, and the walk it would otherwise have chosen is never one
   // of these, so a stale value cannot hold the body hostage either.
   /*ext*/ s16 oneshotanim;
+  // The blow a swing has started but not yet landed, and the frame of the
+  // animation it lands on. A guard's punch already worked this way - ACT_ANIM
+  // holds the same three values and chrTickAnim() reads them - but a player and
+  // a bot are not in ACT_ANIM, so they carry theirs out here beside the
+  // animation that decides the timing. punchhitframe of 0 means nothing is
+  // owed. punchhithand is the hand for a player's swing, or -1 for a bot's,
+  // which is the only thing that differs between the two blows.
+  /*ext*/ s16 punchhitframe;
+  /*ext*/ s16 punchhitdamage;
+  /*ext*/ s16 punchhitrange;
+  /*ext*/ s8 punchhithand;
   // The death animation the body was given for where the fatal shot landed,
   // or 0 if it was not given one. Not a one shot: a death is never handed
   // back, because its last frame is the corpse, so this is held for as long

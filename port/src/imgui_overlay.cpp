@@ -15,12 +15,16 @@
 #undef false
 #include "ext_tex.h"
 #include "fs.h"
+// These are C headers with no __cplusplus guard of their own, so anything
+// they declare would otherwise get C++ linkage here and fail to link against
+// the C objects that define it.
+extern "C" {
 #include "game/camera.h"
 #include "game/chr.h"
 #include "game/modeldef.h"
 #include "game/player.h"
-#include "game/prop.h"
 #include "lib/model.h"
+}
 #include "imgui_overlay.h"
 #include "input.h"
 #include "mod.h"

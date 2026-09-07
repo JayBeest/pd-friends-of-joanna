@@ -5419,9 +5419,16 @@ Gfx *playerRenderHud(Gfx *gdl)
 		// crosshair below is still correct, the camera having moved only along
 		// the axis it aims down.
 		//
-		// The distance rather than the toggle, because a wall can hold the
-		// camera on the eye, and that frame wants its gun.
-		if (g_Vars.currentplayer->thirdpersondist <= 0) {
+		// The toggle rather than the distance. A wall can hold the camera on
+		// the eye with third person still on, and the view model used to come
+		// back for those frames; it should not. The body is drawn either way,
+		// so the gun is already in Joanna's hands on screen, and the view model
+		// arriving on top of it for the frames she is backed into a corner is
+		// two guns and a flicker. playerIsThirdPerson() is the same test the
+		// body is drawn on, so the two can never disagree - and it is already
+		// false while aiming, which is the case that genuinely wants the gun
+		// back.
+		if (!playerIsThirdPerson(g_Vars.currentplayer)) {
 			bgunRender(&gdl);
 		}
 

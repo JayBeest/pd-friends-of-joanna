@@ -111,6 +111,140 @@ static int cmpTexSlot(const void *a, const void *b)
 	return x->slotIdx < y->slotIdx ? -1 : x->slotIdx > y->slotIdx ? 1 : 0;
 }
 
+
+/* -- the vanilla name -> id map -------------------------------------------
+ *
+ * What `replaces:` resolves against: a snapshot of one ROM's own file names,
+ * taken by `pdt snapshot-vanilla-names` and checked in under
+ * docker-caroll/share/pd-<romid>/files.json. It is a plain {name: id} object.
+ */
+struct vanillaMap {
+	JSON_Value *val;
+	JSON_Object *files;
+};
+
+static bool vanillaLoad(struct vanillaMap *vm, const char *path)
+{
+	JSON_Object *root;
+
+	vm->val = json_parse_file(path);
+
+	if (!vm->val) {
+		return false;
+	}
+
+	root = json_value_get_object(vm->val);
+	vm->files = root ? json_object_get_object(root, "files") : NULL;
+
+	return vm->files != NULL;
+}
+
+static long vanillaLookup(const struct vanillaMap *vm, const char *name)
+{
+	JSON_Value *v;
+
+	if (!vm->files) {
+		return -1;
+	}
+
+	v = json_object_get_value(vm->files, name);
+
+	if (!v || json_value_get_type(v) != JSONNumber) {
+		return -1;
+	}
+
+	return (long)json_value_get_number(v);
+}
+
+/* -- alt ROMs -------------------------------------------------------------
+ *
+ * A romSource is another ROM this mod pulls bytes out of. The manifest says
+ * which file and, for textures, where that ROM's texture list lives; the
+ * entries say what to take. `byOffset` says it outright. `byId` names a
+ * texture and we work the offset out from the ROM's own tlist. `byName` names
+ * a file, which needs that ROM's file table and is not done yet.
+ */
+struct altRom {
+	char id[PDFT_ROMSOURCE_ID];
+	char filename[PDFT_ROMSOURCE_FILE];
+	uint32_t expectedSize;
+	bool required;
+	bool strict;
+	uint8_t fallback;
+	uint32_t tlistOffset;
+	uint32_t tlistCount;
+	uint32_t texdataOffset;
+	FILE *fp;          /* opened lazily, only when something needs bytes */
+	bool tried;
+	char path[PATHMAX];
+};
+
+static bool altOpen(struct altRom *rom, const char *const *dirs, int numDirs)
+{
+	int i;
+
+	if (rom->tried) {
+		return rom->fp != NULL;
+	}
+
+	rom->tried = true;
+
+	for (i = 0; i < numDirs; ++i) {
+		char candidate[PATHMAX];
+
+		if (!dirs[i]) {
+			continue;
+		}
+
+		if (snprintf(candidate, sizeof(candidate), "%s/%s", dirs[i], rom->filename) >= (int)sizeof(candidate)) {
+			continue;
+		}
+
+		rom->fp = fopen(candidate, "rb");
+
+		if (rom->fp) {
+			snprintf(rom->path, sizeof(rom->path), "%s", candidate);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * One record of a ROM's texture list is eight bytes, of which bytes 1..3 are
+ * the big endian offset of that texture's data from texdataOffset. A texture
+ * runs to wherever the next one starts.
+ */
+static bool altTextureExtent(struct altRom *rom, uint32_t texId, uint32_t *outOfs, uint32_t *outSize)
+{
+	uint8_t rec[16];
+	uint32_t cur, next;
+
+	if (!rom->fp || texId + 1 >= rom->tlistCount) {
+		return false;
+	}
+
+	if (fseek(rom->fp, (long)(rom->tlistOffset + texId * 8), SEEK_SET) != 0) {
+		return false;
+	}
+
+	if (fread(rec, 1, sizeof(rec), rom->fp) != sizeof(rec)) {
+		return false;
+	}
+
+	cur = ((uint32_t)rec[1] << 16) | ((uint32_t)rec[2] << 8) | rec[3];
+	next = ((uint32_t)rec[9] << 16) | ((uint32_t)rec[10] << 8) | rec[11];
+
+	if (next <= cur || next - cur > 0x10000) {
+		return false;
+	}
+
+	*outOfs = rom->texdataOffset + cur;
+	*outSize = next - cur;
+	return true;
+}
+
 /**
  * Non-textures before textures; replacers before the rest; then by name, and
  * textures among themselves by texture id. Ids are handed out in this order,
@@ -119,7 +253,8 @@ static int cmpTexSlot(const void *a, const void *b)
 static int cmpEntry(const void *a, const void *b)
 {
 	const struct entry { JSON_Object *obj; const char *name; const char *path;
-			long texId; bool isTexture; bool replaces; } *x = a, *y = b;
+			long texId; bool isTexture; bool replaces; long fixedId;
+			int altRom; uint32_t altOfs, altSize; bool drop; } *x = a, *y = b;
 
 	if (x->isTexture != y->isTexture) {
 		return x->isTexture ? 1 : -1;
@@ -138,7 +273,14 @@ static int cmpEntry(const void *a, const void *b)
 
 int main(int argc, char **argv)
 {
-	const char *modName = NULL, *workspace = ".", *output = NULL;
+	const char *modName = NULL, *workspace = ".", *output = NULL, *vanillaPath = NULL;
+	const char *romDirs[8] = { 0 };
+	bool allowOrphans = false;
+	int numRomDirs = 0;
+	struct vanillaMap vanilla = { NULL, NULL };
+	struct altRom *roms = NULL;
+	struct pdftRomSource *sources = NULL;
+	uint32_t numRoms = 0;
 	char manifestPath[PATHMAX], texmapPath[PATHMAX], outPath[PATHMAX];
 	char outTexmapPath[PATHMAX];
 	JSON_Value *manifestVal, *texmapVal = NULL;
@@ -161,6 +303,16 @@ int main(int argc, char **argv)
 			workspace = argv[++arg];
 		} else if (!strcmp(argv[arg], "--output") && arg + 1 < argc) {
 			output = argv[++arg];
+		} else if (!strcmp(argv[arg], "--allow-orphans")) {
+			allowOrphans = true;
+		} else if (!strcmp(argv[arg], "--vanilla") && arg + 1 < argc) {
+			vanillaPath = argv[++arg];
+		} else if (!strcmp(argv[arg], "--rom-dir") && arg + 1 < argc) {
+			if (numRomDirs < (int)(sizeof(romDirs) / sizeof(romDirs[0])) - 2) {
+				romDirs[numRomDirs++] = argv[++arg];
+			} else {
+				die("too many --rom-dir");
+			}
 		} else if (argv[arg][0] == '-') {
 			die("unknown argument %s", argv[arg]);
 		} else if (!modName) {
@@ -171,7 +323,8 @@ int main(int argc, char **argv)
 	}
 
 	if (!modName) {
-		fprintf(stderr, "usage: mkfiletable <mod-name> [--workspace <dir>] [--output <dir>]\n");
+		fprintf(stderr, "usage: mkfiletable <mod-name> [--workspace <dir>] [--output <dir>]\n"
+				"                   [--vanilla <files.json>] [--rom-dir <dir>]... [--allow-orphans]\n");
 		return 2;
 	}
 
@@ -199,10 +352,64 @@ int main(int argc, char **argv)
 		die("%s: top level is not an object", manifestPath);
 	}
 
-	if (json_object_get_array(manifest, "romSources")
-			&& json_array_get_count(json_object_get_array(manifest, "romSources"))) {
-		die("%s declares romSources; alt-ROM resolution is not implemented yet "
-				"(see filetable-writer-plan.md)", manifestPath);
+	{
+		JSON_Array *rs = json_object_get_array(manifest, "romSources");
+		size_t count = rs ? json_array_get_count(rs) : 0;
+
+		if (count > PDFT_MAX_ROMSOURCES) {
+			die("%s declares %zu romSources; the reader keeps %d",
+					manifestPath, count, PDFT_MAX_ROMSOURCES);
+		}
+
+		roms = calloc(count ? count : 1, sizeof(*roms));
+		sources = calloc(count ? count : 1, sizeof(*sources));
+
+		for (i = 0; i < count; ++i) {
+			JSON_Object *o = json_array_get_object(rs, i);
+			const char *id = o ? json_object_get_string(o, "id") : NULL;
+			const char *fn = o ? json_object_get_string(o, "filename") : NULL;
+			const char *fb = o ? json_object_get_string(o, "fallbackBehavior") : NULL;
+			JSON_Object *tx = o ? json_object_get_object(o, "textures") : NULL;
+			long v = 0;
+
+			if (!id || !fn) {
+				die("%s: romSource %zu needs an id and a filename", manifestPath, i);
+			}
+
+			snprintf(roms[i].id, sizeof(roms[i].id), "%s", id);
+			snprintf(roms[i].filename, sizeof(roms[i].filename), "%s", fn);
+
+			if (strcmp(roms[i].id, id) || strcmp(roms[i].filename, fn)) {
+				die("%s: romSource '%s': id or filename is longer than the reader's buffer", manifestPath, id);
+			}
+
+			roms[i].expectedSize = numberOf(json_object_get_value(o, "expectedSize"), &v) ? (uint32_t)v : 0;
+			roms[i].required = json_object_get_boolean(o, "required") == 1;
+			roms[i].strict = json_object_get_boolean(o, "strict") == 1;
+			roms[i].fallback = fb && !strcmp(fb, "vanilla") ? PDFT_FALLBACK_VANILLA
+					: fb && !strcmp(fb, "error") ? PDFT_FALLBACK_ERROR : PDFT_FALLBACK_SKIP;
+
+			if (tx) {
+				roms[i].tlistOffset = numberOf(json_object_get_value(tx, "tlistOffset"), &v) ? (uint32_t)v : 0;
+				roms[i].tlistCount = numberOf(json_object_get_value(tx, "tlistCount"), &v) ? (uint32_t)v : 0;
+				roms[i].texdataOffset = numberOf(json_object_get_value(tx, "texdataOffset"), &v) ? (uint32_t)v : 0;
+			}
+
+			sources[i].id = roms[i].id;
+			sources[i].filename = roms[i].filename;
+			sources[i].expectedSize = roms[i].expectedSize;
+			sources[i].required = roms[i].required;
+			sources[i].strict = roms[i].strict;
+			sources[i].fallback = roms[i].fallback;
+			++numRoms;
+		}
+
+		romDirs[numRomDirs++] = output;
+		romDirs[numRomDirs++] = workspace;
+	}
+
+	if (vanillaPath && !vanillaLoad(&vanilla, vanillaPath)) {
+		die("could not read the vanilla name map at %s", vanillaPath);
 	}
 
 	files = json_object_get_array(manifest, "files");
@@ -252,6 +459,10 @@ int main(int argc, char **argv)
 			long texId;
 			bool isTexture;
 			bool replaces;
+			long fixedId;      /* from the vanilla map, for a replacer */
+			int altRom;        /* index into roms[], or -1 */
+			uint32_t altOfs, altSize;
+			bool drop;         /* an orphan, kept out of the output */
 		};
 		struct entry *ents = calloc(n, sizeof(*ents));
 		size_t numPlain = 0, numTexEnt = 0;
@@ -265,20 +476,99 @@ int main(int argc, char **argv)
 				die("%s: file entry %zu has no name", manifestPath, i);
 			}
 
-			if (json_object_get_string(e, "replaces")) {
-				die("%s: '%s' has a replaces target; resolving those needs the vanilla "
-						"name map, which is not implemented yet", manifestPath, name);
-			}
-
-			if (json_object_get_object(e, "source")) {
-				die("%s: '%s' has an alt-ROM source; not implemented yet", manifestPath, name);
-			}
+			const char *replaces = json_object_get_string(e, "replaces");
+			JSON_Object *src = json_object_get_object(e, "source");
 
 			ents[i].obj = e;
 			ents[i].name = name;
 			ents[i].path = json_object_get_string(e, "path");
 			ents[i].isTexture = type && !strcmp(type, "texture");
-			ents[i].replaces = false;
+			ents[i].replaces = replaces != NULL;
+			ents[i].fixedId = -1;
+			ents[i].altRom = -1;
+
+			if (replaces) {
+				if (!vanilla.files) {
+					die("%s: '%s' replaces '%s', but no vanilla name map was given "
+							"(pass --vanilla <share/pd-<romid>/files.json>)", manifestPath, name, replaces);
+				}
+
+				ents[i].fixedId = vanillaLookup(&vanilla, replaces);
+
+				if (ents[i].fixedId < 0) {
+					if (!allowOrphans) {
+						die("%s: '%s' replaces '%s', which is not in the vanilla name map. "
+								"Fix the manifest, or pass --allow-orphans to drop the entry",
+								manifestPath, name, replaces);
+					}
+
+					/* The Python dropped these silently under the same flag, which
+					 * is how a manifest row can do nothing for a year without
+					 * anyone noticing. Dropped here too, but said out loud. */
+					fprintf(stderr, "mkfiletable: dropping '%s': it replaces '%s', which no "
+							"vanilla name map has\n", name, replaces);
+					ents[i].drop = true;
+				}
+			}
+
+			if (src) {
+				const char *romId = json_object_get_string(src, "rom");
+				const char *lookup = json_object_get_string(src, "lookup");
+				uint32_t k;
+				long v = 0;
+
+				if (!romId || !lookup) {
+					die("%s: '%s' has a source with no rom or no lookup", manifestPath, name);
+				}
+
+				for (k = 0; k < numRoms; ++k) {
+					if (!strcmp(roms[k].id, romId)) {
+						ents[i].altRom = (int)k;
+						break;
+					}
+				}
+
+				if (ents[i].altRom < 0) {
+					die("%s: '%s' names romSource '%s', which the manifest does not declare",
+							manifestPath, name, romId);
+				}
+
+				if (!strcmp(lookup, "byOffset")) {
+					if (!numberOf(json_object_get_value(src, "offset"), &v)) {
+						die("%s: '%s' is byOffset with no usable offset", manifestPath, name);
+					}
+
+					ents[i].altOfs = (uint32_t)v;
+
+					if (!numberOf(json_object_get_value(src, "size"), &v)) {
+						die("%s: '%s' is byOffset with no usable size", manifestPath, name);
+					}
+
+					ents[i].altSize = (uint32_t)v;
+				} else if (!strcmp(lookup, "byId")) {
+					struct altRom *rom = &roms[ents[i].altRom];
+
+					if (!numberOf(json_object_get_value(src, "id"), &v)) {
+						die("%s: '%s' is byId with no usable id", manifestPath, name);
+					}
+
+					if (!altOpen(rom, romDirs, numRomDirs)) {
+						die("could not find '%s' for romSource '%s'; pass --rom-dir",
+								rom->filename, rom->id);
+					}
+
+					if (!altTextureExtent(rom, (uint32_t)v, &ents[i].altOfs, &ents[i].altSize)) {
+						die("%s: '%s': texture 0x%lx is not readable from %s",
+								manifestPath, name, v, rom->path);
+					}
+				} else if (!strcmp(lookup, "byName")) {
+					die("%s: '%s' is byName; resolving a name against a ROM's own file "
+							"table is not implemented yet", manifestPath, name);
+				} else {
+					die("%s: '%s' has lookup '%s', which is not one of byOffset, byId, byName",
+							manifestPath, name, lookup);
+				}
+			}
 
 			if (ents[i].isTexture) {
 				if (!numberOf(json_object_get_value(e, "textureId"), &ents[i].texId)) {
@@ -296,10 +586,17 @@ int main(int argc, char **argv)
 		qsort(ents, n, sizeof(*ents), cmpEntry);
 
 		for (i = 0; i < n; ++i) {
-			out[numOut].id = nextLocalId++;
+			if (ents[i].drop) {
+				continue;
+			}
+
+			out[numOut].id = ents[i].fixedId >= 0 ? (uint32_t)ents[i].fixedId : nextLocalId++;
 			out[numOut].name = ents[i].name;
 			out[numOut].path = ents[i].path;
-			out[numOut].alt.romIdx = -1;
+			out[numOut].alt.romIdx = ents[i].altRom;
+			out[numOut].alt.offset = ents[i].altOfs;
+			out[numOut].alt.size = ents[i].altSize;
+			out[numOut].alt.compression = 0;
 			++numOut;
 
 			if (ents[i].isTexture) {
@@ -388,8 +685,8 @@ int main(int argc, char **argv)
 
 		in.files = out;
 		in.numFiles = numOut;
-		in.sources = NULL;
-		in.numSources = 0;
+		in.sources = sources;
+		in.numSources = numRoms;
 		in.texmap = texmap;
 		in.numTexMap = numTex;
 
@@ -407,8 +704,8 @@ int main(int argc, char **argv)
 
 		fwrite(blob, 1, blobLen, f);
 		fclose(f);
-		printf("wrote %s: v%u, %u files, %u textures, %u bytes\n",
-				outPath, pdftVersionFor(&in), numOut, numTex, blobLen);
+		printf("wrote %s: v%u, %u files, %u romSources, %u textures, %u bytes\n",
+				outPath, pdftVersionFor(&in), numOut, numRoms, numTex, blobLen);
 	}
 
 	/* Write the texmap back so the next build keeps these ports. */

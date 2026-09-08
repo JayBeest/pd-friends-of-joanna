@@ -475,6 +475,17 @@
 
 #define AIMSTANCE_SPEED 0.6f
 
+// How her build changes her walk. The reference body is the one that walks at
+// exactly 1: everything is a delta from it, in the same height units the body
+// table uses, times the slope. The slope is vanilla's own -- botCalculateMaxSpeed
+// already multiplies by it -- so a player and a simulant sharing a body agree by
+// construction rather than by coincidence. BUILD_CROUCH_MIX is how much of the
+// crouch discount applies: 0 leaves the flat vanilla multipliers alone, 1 gives
+// the full drop-fraction rule.
+#define BUILD_SPEED_REF   159.0f
+#define BUILD_SPEED_SLOPE 0.002830188954249f
+#define BUILD_CROUCH_MIX  1.0f
+
 #define THIRDPERSON_BODYFADE_START 130.0f
 #define THIRDPERSON_BODYFADE_MAX   127
 // How much of her alpha the fade takes at its deepest. 1 would remove her.

@@ -1502,14 +1502,119 @@ void bwalkApplyAimSpeed(void)
 }
 #endif
 
+#ifndef PLATFORM_N64
+/**
+ * How her build changes her walk, exactly 1 at the reference body.
+ *
+ * The same expression botCalculateMaxSpeed uses for a simulant, on the same
+ * constant, so a player and a simulant wearing the same body walk at the same
+ * speed rather than at two numbers that happen to land near each other.
+ *
+ * Shorter is slower, and stride length is the honest reason. The reference body
+ * sits near the top of the table -- most of the roster is at or below it -- so
+ * in practice this reads as a penalty for being small rather than a bonus for
+ * being tall, which is the direction it was asked for.
+ */
+static f32 bwalkGetBuildSpeedScale(void)
+{
+	f32 scale;
+
+	if (!g_BuildSpeedEnabled) {
+		return 1.0f;
+	}
+
+	scale = (g_Vars.currentplayer->vv_eyeheight - g_BuildSpeedRef) * BUILD_SPEED_SLOPE + 1.0f;
+
+	// A reference moved far enough could otherwise stop her outright.
+	if (scale < 0.1f) {
+		scale = 0.1f;
+	}
+
+	return scale;
+}
+
+void bwalkApplyBuildSpeed(void)
+{
+	f32 scale = bwalkGetBuildSpeedScale();
+
+	if (scale != 1.0f) {
+		g_Vars.currentplayer->speedforwards *= scale;
+		g_Vars.currentplayer->speedsideways *= scale;
+	}
+}
+
+/**
+ * What fraction of herself a full crouch costs her, normalised so the reference
+ * body gives exactly 1.
+ *
+ * The literals mirror bwalkUpdateCrouchOffsetReal below on purpose, because
+ * that function is where the asymmetry comes from: the crouch bottoms out at an
+ * ABSOLUTE eye height of 69 rather than at a fraction of her own. A tall
+ * character folds through more than half of herself to get low; a short one
+ * gives up barely a third. That geometry has been here since vanilla and
+ * nothing ever charged for it - the crouch multipliers are flat.
+ */
+static f32 bwalkGetCrouchDropFrac(void)
+{
+	f32 eyeheight = g_Vars.currentplayer->vv_eyeheight;
+	f32 drop;
+
+	if (eyeheight < 1.0f) {
+		return 1.0f;
+	}
+
+	if (eyeheight + -90.0f * eyeheight * (1.0f / 159.0f) < 69.0f) {
+		drop = eyeheight - 69.0f;
+	} else {
+		drop = 90.0f * eyeheight * (1.0f / 159.0f);
+	}
+
+	if (drop < 0.0f) {
+		drop = 0.0f;
+	}
+
+	return (drop / eyeheight) * (159.0f / 90.0f);
+}
+
+#endif
+
+/**
+ * Charge her for the crouch.
+ *
+ * Vanilla's multipliers are flat: half ducked, roughly a third squatting,
+ * whoever you are. With the build rule on, the price is instead the fraction of
+ * her own height she gave up to get down there, so the tall pay full and the
+ * small pay less. The reference body cancels to exactly the vanilla number, so
+ * a stock roster is untouched by arithmetic rather than by tuning.
+ */
+static void bwalkApplyCrouchMult(f32 vanillamult)
+{
+	f32 mult = vanillamult;
+
+#ifndef PLATFORM_N64
+	if (g_BuildSpeedEnabled && g_BuildCrouchMix > 0.0f) {
+		f32 frac = bwalkGetCrouchDropFrac();
+
+		if (frac > 1.0f) {
+			frac = 1.0f;
+		}
+
+		frac = 1.0f + (frac - 1.0f) * g_BuildCrouchMix;
+
+		mult = 1.0f - (1.0f - vanillamult) * frac;
+	}
+#endif
+
+	g_Vars.currentplayer->speedforwards *= mult;
+	g_Vars.currentplayer->speedsideways *= mult;
+}
+
 void bwalkApplyCrouchSpeed(void)
 {
 	if (bmoveGetCrouchPos() == CROUCHPOS_DUCK) {
-		g_Vars.currentplayer->speedforwards *= 0.5f;
-		g_Vars.currentplayer->speedsideways *= 0.5f;
+		bwalkApplyCrouchMult(0.5f);
 	} else if (bmoveGetCrouchPos() == CROUCHPOS_SQUAT) {
-		g_Vars.currentplayer->speedforwards *= 0.35f;
-		g_Vars.currentplayer->speedsideways *= 0.35f;
+		bwalkApplyCrouchMult(0.35f);
 	}
 }
 
@@ -1874,6 +1979,7 @@ void bwalk0f0c69b8(void)
 	} else {
 		bwalkApplyCrouchSpeed();
 #ifndef PLATFORM_N64
+		bwalkApplyBuildSpeed();
 		bwalkApplyAimSpeed();
 		bwalkApplyFlinchSpeed();
 #endif

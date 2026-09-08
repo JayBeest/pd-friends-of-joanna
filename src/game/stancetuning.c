@@ -27,6 +27,10 @@ f32 g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 
 f32 g_RollImpulse = ROLL_IMPULSE;
 
+s32 g_BuildSpeedEnabled = true;
+f32 g_BuildSpeedRef = BUILD_SPEED_REF;
+f32 g_BuildCrouchMix = BUILD_CROUCH_MIX;
+
 /**
  * Put every knob back where it shipped.
  *
@@ -53,6 +57,10 @@ void stanceTuningReset(void)
 
 	g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 	g_RollImpulse = ROLL_IMPULSE;
+
+	g_BuildSpeedEnabled = true;
+	g_BuildSpeedRef = BUILD_SPEED_REF;
+	g_BuildCrouchMix = BUILD_CROUCH_MIX;
 }
 
 #endif

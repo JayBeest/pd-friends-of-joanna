@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include <vector>
 #include <zlib.h>
@@ -40,6 +41,7 @@ static bool g_ImGuiOverlayShowProfiler = false;
 static bool g_ImGuiOverlayShowTextures = false;
 static bool g_ImGuiOverlayShowLookingAt = false;
 static bool g_ImGuiOverlayShowProportions = false;
+static bool g_ImGuiOverlayShowStance = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
@@ -152,6 +154,23 @@ extern "C" s32 texGetSizeInBytes(struct tex *tex, s32 lod);
 extern "C" void modelSetScale(struct model *model, f32 scale);
 extern "C" void playerSetHeight(s32 eyeheight, s32 headnum);
 
+// The stance knobs, defined in src/game/stancetuning.c. Declared by hand for
+// the same reason as everything above: the game headers are not extern "C"
+// wrapped. stance-tuning.md says what each one does.
+extern "C" f32 g_AimStanceSpeed;
+extern "C" f32 g_FlinchSpeed;
+extern "C" s32 g_FlinchBusy;
+extern "C" s32 g_FlinchBusyMax;
+extern "C" f32 g_MeleeBodyReach;
+extern "C" f32 g_MeleeConeCos;
+extern "C" f32 g_ThirdPersonCamDist;
+extern "C" f32 g_ThirdPersonCamClearance;
+extern "C" f32 g_ThirdPersonCamMinDist;
+extern "C" f32 g_BodyFadeStart;
+extern "C" f32 g_BodyFadeFloor;
+extern "C" f32 g_RollImpulse;
+extern "C" void stanceTuningReset(void);
+
 // Proportion editor overrides, defined in src/game/chr.c. Declared by hand
 // rather than included, for the same reason as everything above: the game
 // headers are not extern "C"-wrapped.
@@ -185,7 +204,8 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Memory=%d", &value) == 1) { g_ImGuiOverlayShowMemory = value != 0; return; }
 	if (sscanf(line, "Profiler=%d", &value) == 1) { g_ImGuiOverlayShowProfiler = value != 0; return; }
 	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; return; }
-	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; }
+	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; return; }
+	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; }
 }
 
 static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *handler, ImGuiTextBuffer *buffer)
@@ -199,7 +219,8 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Memory=%d\n", g_ImGuiOverlayShowMemory);
 	buffer->appendf("Profiler=%d\n", g_ImGuiOverlayShowProfiler);
 	buffer->appendf("LookingAt=%d\n", g_ImGuiOverlayShowLookingAt);
-	buffer->appendf("Proportions=%d\n\n", g_ImGuiOverlayShowProportions);
+	buffer->appendf("Proportions=%d\n", g_ImGuiOverlayShowProportions);
+	buffer->appendf("Stance=%d\n\n", g_ImGuiOverlayShowStance);
 }
 
 static u32 imguiOverlayGetWindowState(void)
@@ -212,7 +233,8 @@ static u32 imguiOverlayGetWindowState(void)
 		| (g_ImGuiOverlayShowMemory ? 1u << 5 : 0)
 		| (g_ImGuiOverlayShowProfiler ? 1u << 6 : 0)
 		| (g_ImGuiOverlayShowLookingAt ? 1u << 7 : 0)
-		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0);
+		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0)
+		| (g_ImGuiOverlayShowStance ? 1u << 9 : 0);
 }
 
 static void imguiOverlaySaveWindowState(void)
@@ -3032,6 +3054,113 @@ static void imguiPropApplyLive(struct chrdata *chr)
 	}
 }
 
+// ----------------------------------------------------------------------------
+// Stance panel
+//
+// The numbers behind the stance system, live. Every one of them started as a
+// guess that only play could settle, so the point of this panel is to settle
+// them without a rebuild - move a slider, walk into a room, decide. What sticks
+// goes into pd.ini under [Stance]; stance-tuning.md says what each one does and
+// what it interacts with.
+//
+// Everything here is read every frame by the thing it governs, so a change
+// takes effect on the next one. Nothing here is saved by the panel itself.
+// ----------------------------------------------------------------------------
+
+static void imguiOverlayStanceKnob(const char *label, f32 *value, f32 min, f32 max,
+		const char *fmt, const char *help)
+{
+	ImGui::SliderFloat(label, value, min, max, fmt);
+
+	if (help && ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("%s", help);
+	}
+}
+
+static void imguiOverlayDrawStancePanel(void)
+{
+	f32 degrees;
+
+	ImGui::TextDisabled("Defaults live in constants.h. pd.ini [Stance] sets where these start.");
+	ImGui::Separator();
+
+	if (ImGui::CollapsingHeader("Stances", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Low ready speed", &g_AimStanceSpeed, 0.1f, 1.0f, "%.2f",
+				"What fraction of her walk she keeps while aiming.\n"
+				"Stacks with the crouch multipliers: 0.5 ducked, 0.35 squatting.");
+	}
+
+	if (ImGui::CollapsingHeader("Flinch", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Flinch speed", &g_FlinchSpeed, 0.1f, 1.0f, "%.2f",
+				"What she is cut to at the moment a shot lands.\n"
+				"Recovers linearly to full across the flinch.");
+
+		ImGui::SliderInt("Flinch ticks", &g_FlinchBusy, 0, 240);
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("The window used when a flinch starts no animation -\n"
+					"no body to play one, or a body already busy with a roll.\n"
+					"When an animation does play, its own length is used instead.");
+		}
+
+		ImGui::SliderInt("Flinch ticks max", &g_FlinchBusyMax, 0, 600);
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("The ceiling no reel may exceed, whatever its animation says.\n"
+					"This is what stops a frozen animation pinning her.");
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Melee", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Body reach", &g_MeleeBodyReach, 0.0f, 400.0f, "%.0f",
+				"How far a swing reaches past the weapon's own melee range,\n"
+				"measured from her rather than from the camera.\n"
+				"60 plus a bare hand's own 60 is 120 - a human guard's punch.");
+
+		degrees = acosf(g_MeleeConeCos) * 180.0f / 3.14159265f;
+
+		if (ImGui::SliderFloat("Cone (deg either side)", &degrees, 5.0f, 90.0f, "%.0f")) {
+			g_MeleeConeCos = cosf(degrees * 3.14159265f / 180.0f);
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("How far off the direction she is looking a target may stand.\n"
+					"Horizontal only, so looking at the floor does not stop a punch.\n"
+					"Stored as a cosine; the sweep compares against that directly.");
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Camera distance", &g_ThirdPersonCamDist, 0.0f, 1000.0f, "%.0f",
+				"How far behind her the camera wants to be.");
+		imguiOverlayStanceKnob("Wall clearance", &g_ThirdPersonCamClearance, 0.0f, 200.0f, "%.0f",
+				"How far short of a wall the camera stops.");
+		imguiOverlayStanceKnob("Give up under", &g_ThirdPersonCamMinDist, 0.0f, 500.0f, "%.0f",
+				"Below this the camera sits on the eye instead.\n"
+				"The body is still drawn, which is what the fade is for.");
+	}
+
+	if (ImGui::CollapsingHeader("Body fade", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Fade starts at", &g_BodyFadeStart, 0.0f, 1000.0f, "%.0f",
+				"The camera distance the body starts going translucent at.\n"
+				"Fully faded by the give-up distance above.");
+		imguiOverlayStanceKnob("Fade depth", &g_BodyFadeFloor, 0.0f, 1.0f, "%.2f",
+				"How much of her alpha the fade takes at its deepest.\n"
+				"1.0 would remove her outright, which reads as a bug.");
+	}
+
+	if (ImGui::CollapsingHeader("Roll", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Roll impulse", &g_RollImpulse, 0.0f, 200.0f, "%.1f",
+				"The push a combat roll gets, for players and simulants alike.");
+	}
+
+	ImGui::Separator();
+
+	if (ImGui::Button("Reset to defaults")) {
+		stanceTuningReset();
+	}
+}
+
 static void imguiOverlayDrawProportionsPanel(void)
 {
 	// Switching stages, or anything else that takes the chr out of memory, is
@@ -3284,6 +3413,7 @@ static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 	ImGui::MenuItem("Profiler", NULL, &g_ImGuiOverlayShowProfiler);
 	ImGui::MenuItem("Looking At", NULL, &g_ImGuiOverlayShowLookingAt, canOpenLookingAt);
 	ImGui::MenuItem("Proportions", NULL, &g_ImGuiOverlayShowProportions);
+	ImGui::MenuItem("Stance", NULL, &g_ImGuiOverlayShowStance);
 	ImGui::EndPopup();
 }
 
@@ -3433,6 +3563,16 @@ void imguiOverlayRender(void)
 			if (ImGui::Begin("Fojo Looking At", &g_ImGuiOverlayShowLookingAt)) {
 				imguiOverlayDrawLookingAtPanel();
 			}
+			ImGui::End();
+		}
+
+		if (g_ImGuiOverlayShowStance) {
+			ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_FirstUseEver);
+
+			if (ImGui::Begin("Fojo Stance", &g_ImGuiOverlayShowStance)) {
+				imguiOverlayDrawStancePanel();
+			}
+
 			ImGui::End();
 		}
 

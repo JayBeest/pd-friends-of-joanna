@@ -15,6 +15,7 @@
 #include "game/mplayer/scenarios.h"
 #include "game/radar.h"
 #include "game/bot.h"
+#include "game/stancetuning.h"
 #include "game/botcmd.h"
 #include "game/botact.h"
 #include "game/botinv.h"
@@ -351,8 +352,8 @@ void botTryRoll(struct chrdata *chr, bool toleft)
 	// animation - which chrAttackRoll() picks from the same flag - agree.
 	chrGetSideVector(chr, toleft, &side);
 
-	chr->fallspeed.x = side.x * ROLL_IMPULSE;
-	chr->fallspeed.z = side.z * ROLL_IMPULSE;
+	chr->fallspeed.x = side.x * g_RollImpulse;
+	chr->fallspeed.z = side.z * g_RollImpulse;
 	chr->aibot->rolltime60 = g_Vars.lvframe60;
 
 	chrPlayRollAnimation(chr, toleft);

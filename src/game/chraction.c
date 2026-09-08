@@ -12,6 +12,7 @@
 #include "game/camera.h"
 #include "game/chr.h"
 #include "game/chraction.h"
+#include "game/stancetuning.h"
 #include "game/chrai.h"
 #include "game/debug.h"
 #include "game/dlights.h"
@@ -5295,7 +5296,7 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 						// bwalkIsFlinching(); see FLINCH_BUSY for why it is not
 						// read off flinchcnt.
 						g_Vars.currentplayer->flinchtime60 = g_Vars.lvframe60;
-						g_Vars.currentplayer->flinchbusy60 = FLINCH_BUSY;
+						g_Vars.currentplayer->flinchbusy60 = g_FlinchBusy;
 #endif
 #ifndef PLATFORM_N64
 						// playerDieByShooter() has already run above if this was
@@ -5323,8 +5324,8 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 								if (speed > 0.0f && left > 0.0f) {
 									s32 ticks = (s32)(left / speed);
 
-									if (ticks > FLINCH_BUSY_MAX) {
-										ticks = FLINCH_BUSY_MAX;
+									if (ticks > g_FlinchBusyMax) {
+										ticks = g_FlinchBusyMax;
 									}
 
 									if (ticks > g_Vars.currentplayer->flinchbusy60) {

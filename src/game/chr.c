@@ -6,6 +6,7 @@
 #include "game/chraction.h"
 #include "game/debug.h"
 #include "game/chr.h"
+#include "game/stancetuning.h"
 #include "game/env.h"
 #include "game/prop.h"
 #include "game/propsnd.h"
@@ -3489,7 +3490,7 @@ Gfx *chrRender(struct prop *prop, Gfx *gdl, bool xlupass)
 	// closing on her own body. Not all the way to nothing, because a shape
 	// that is entirely gone reads as a bug rather than as a cloak.
 	if (chrGetCameraFadeFrac(chr) > 0) {
-		alpha = (f32)alpha * (1.0f - chrGetCameraFadeFrac(chr) * (0.85f / THIRDPERSON_BODYFADE_MAX));
+		alpha = (f32)alpha * (1.0f - chrGetCameraFadeFrac(chr) * (g_BodyFadeFloor / THIRDPERSON_BODYFADE_MAX));
 	}
 #endif
 

@@ -7,6 +7,7 @@
 #include "game/dlights.h"
 #include "game/chr.h"
 #include "game/prop.h"
+#include "game/stancetuning.h"
 #include "game/propsnd.h"
 #include "game/objectives.h"
 #include "game/floor.h"
@@ -1263,9 +1264,6 @@ void hitCreate(struct shotdata *shotdata, struct prop *prop, f32 hitdistance, s3
  * vector, so looking at the floor does not stop her hitting what is in front
  * of her - the same choice chrIsTargetInFov() makes for a guard.
  */
-#define MELEE_BODY_REACH 60.0f
-#define MELEE_CONE_COS   0.7071f
-
 static bool handMeleeIsInReach(struct prop *prop, f32 reach)
 {
 	struct prop *playerprop = g_Vars.currentplayer->prop;
@@ -1298,7 +1296,7 @@ static bool handMeleeIsInReach(struct prop *prop, f32 reach)
 		return true;
 	}
 
-	return (dx * look->x + dz * look->z) / (dist * lookdist) >= MELEE_CONE_COS;
+	return (dx * look->x + dz * look->z) / (dist * lookdist) >= g_MeleeConeCos;
 }
 #endif
 
@@ -1312,7 +1310,7 @@ void handInflictMeleeDamage(s32 handnum, struct gset *gset, bool arg2)
 #else
 	s16 propnums[256];
 	struct weaponfunc *reachfunc = gsetGetWeaponFunction(gset);
-	f32 reach = MELEE_BODY_REACH;
+	f32 reach = g_MeleeBodyReach;
 	s32 i;
 #endif
 

@@ -18,6 +18,7 @@
 #include "romdata.h"
 #include "config.h"
 #include "mod.h"
+#include "game/stancetuning.h"
 #include "system.h"
 #include "utils.h"
 #include "game/mplayer/setup.h"
@@ -220,6 +221,24 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
+
+	// The stance knobs. Every one of these was a guess that only play could
+	// settle, so they are settable: here for where they start, and the Fojo
+	// Stance panel in the overlay for moving them while the game is running.
+	// stance-tuning.md says what each one does; constants.h holds the defaults
+	// these fall back to.
+	configRegisterFloat("Stance.AimSpeed", &g_AimStanceSpeed, 0.1f, 1.f);
+	configRegisterFloat("Stance.FlinchSpeed", &g_FlinchSpeed, 0.1f, 1.f);
+	configRegisterInt("Stance.FlinchTicks", &g_FlinchBusy, 0, 600);
+	configRegisterInt("Stance.FlinchTicksMax", &g_FlinchBusyMax, 0, 600);
+	configRegisterFloat("Stance.MeleeReach", &g_MeleeBodyReach, 0.f, 400.f);
+	configRegisterFloat("Stance.MeleeConeCos", &g_MeleeConeCos, -1.f, 1.f);
+	configRegisterFloat("Stance.CamDist", &g_ThirdPersonCamDist, 0.f, 1000.f);
+	configRegisterFloat("Stance.CamClearance", &g_ThirdPersonCamClearance, 0.f, 200.f);
+	configRegisterFloat("Stance.CamMinDist", &g_ThirdPersonCamMinDist, 0.f, 500.f);
+	configRegisterFloat("Stance.FadeStart", &g_BodyFadeStart, 0.f, 1000.f);
+	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
+	configRegisterFloat("Stance.RollImpulse", &g_RollImpulse, 0.f, 200.f);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);
 	for (s32 j = 0; j < MAX_PLAYERS; ++j) {

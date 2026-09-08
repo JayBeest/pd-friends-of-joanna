@@ -457,6 +457,13 @@
 // with a roll - and FLINCH_BUSY_MAX is the ceiling no reel may exceed, because
 // the animation's length is read from a model that is not ticked in every
 // stance and a penalty that cannot end is worse than no penalty.
+// How far a melee swing reaches past the weapon's own range, measured from her
+// rather than from the camera, and the cosine of the half angle either side of
+// where she is looking that a target may stand in. 60 plus a bare hand's own 60
+// is 120, which is the reach chrTryPunch() gives a human guard's punch.
+#define MELEE_BODY_REACH 60.0f
+#define MELEE_CONE_COS   0.7071f
+
 #define FLINCH_BUSY     TICKS(30)
 #define FLINCH_BUSY_MAX TICKS(150)
 #define FLINCH_SPEED    0.5f
@@ -465,6 +472,8 @@
 
 #define THIRDPERSON_BODYFADE_START 130.0f
 #define THIRDPERSON_BODYFADE_MAX   127
+// How much of her alpha the fade takes at its deepest. 1 would remove her.
+#define THIRDPERSON_BODYFADE_FLOOR 0.85f
 
 #define CASING_NONE     -1
 #define CASING_STANDARD 0

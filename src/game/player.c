@@ -25,6 +25,7 @@
 #include "game/tex.h"
 #include "game/camera.h"
 #include "game/player.h"
+#include "game/stancetuning.h"
 #include "game/modeldef.h"
 #include "game/healthbar.h"
 #include "game/hudmsg.h"
@@ -3799,7 +3800,7 @@ static void playerPullBackCamera(struct coord *campos)
 {
 	struct coord back;
 	struct coord hit;
-	f32 dist = THIRDPERSON_CAMDIST;
+	f32 dist = g_ThirdPersonCamDist;
 
 	g_Vars.currentplayer->thirdpersondist = 0;
 
@@ -3819,14 +3820,14 @@ static void playerPullBackCamera(struct coord *campos)
 
 		dist = sqrtf((hit.x - campos->x) * (hit.x - campos->x)
 				+ (hit.y - campos->y) * (hit.y - campos->y)
-				+ (hit.z - campos->z) * (hit.z - campos->z)) - THIRDPERSON_CAMCLEARANCE;
+				+ (hit.z - campos->z) * (hit.z - campos->z)) - g_ThirdPersonCamClearance;
 
 		// Nothing between here and THIRDPERSON_CAMMINDIST is a view: leave the
 		// camera on the eye. The body is not put away with it - it is drawn
 		// wherever the camera ends up - so this is the frame it has to be
 		// possible to see through, and the fade below has already run most of
 		// its length getting here.
-		if (dist < THIRDPERSON_CAMMINDIST) {
+		if (dist < g_ThirdPersonCamMinDist) {
 			g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
 			return;
 		}
@@ -3836,12 +3837,12 @@ static void playerPullBackCamera(struct coord *campos)
 	// moment it ends up inside. The trace shortens smoothly as she backs into
 	// a corner, so the fade is smooth all the way to the clamp above, and the
 	// cut to the eye happens with the body already almost gone.
-	if (dist >= THIRDPERSON_BODYFADE_START) {
+	if (dist >= g_BodyFadeStart) {
 		g_Vars.currentplayer->bodyfadefrac = 0;
 	} else {
 		g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
-			* (THIRDPERSON_BODYFADE_START - dist)
-			/ (THIRDPERSON_BODYFADE_START - THIRDPERSON_CAMMINDIST);
+			* (g_BodyFadeStart - dist)
+			/ (g_BodyFadeStart - g_ThirdPersonCamMinDist);
 	}
 
 	g_Vars.currentplayer->thirdpersondist = dist;

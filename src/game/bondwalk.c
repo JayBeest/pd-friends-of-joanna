@@ -2,6 +2,7 @@
 #include "constants.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/stancetuning.h"
 #include "game/mplayer/mplayer.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
@@ -477,9 +478,9 @@ void bwalkTryRoll(void)
 
 	offset = toleft ? offsetleft : offsetright;
 
-	g_Vars.currentplayer->rollspeed.x = dir.x * ROLL_IMPULSE;
+	g_Vars.currentplayer->rollspeed.x = dir.x * g_RollImpulse;
 	g_Vars.currentplayer->rollspeed.y = 0;
-	g_Vars.currentplayer->rollspeed.z = dir.z * ROLL_IMPULSE;
+	g_Vars.currentplayer->rollspeed.z = dir.z * g_RollImpulse;
 	g_Vars.currentplayer->rolltime60 = g_Vars.lvframe60;
 
 	if (chrPlayRollAnimation(chr, toleft)) {
@@ -1440,7 +1441,7 @@ static f32 bwalkGetFlinchFrac(void)
 	busy = g_Vars.currentplayer->flinchbusy60;
 
 	if (busy <= 0) {
-		busy = FLINCH_BUSY;
+		busy = g_FlinchBusy;
 	}
 
 	elapsed = g_Vars.lvframe60 - g_Vars.currentplayer->flinchtime60;
@@ -1474,7 +1475,7 @@ void bwalkApplyFlinchSpeed(void)
 	f32 frac = bwalkGetFlinchFrac();
 
 	if (frac < 1.0f) {
-		f32 scale = FLINCH_SPEED + (1.0f - FLINCH_SPEED) * frac;
+		f32 scale = g_FlinchSpeed + (1.0f - g_FlinchSpeed) * frac;
 
 		g_Vars.currentplayer->speedforwards *= scale;
 		g_Vars.currentplayer->speedsideways *= scale;
@@ -1495,8 +1496,8 @@ void bwalkApplyFlinchSpeed(void)
 void bwalkApplyAimSpeed(void)
 {
 	if (g_Vars.currentplayer->insightaimmode) {
-		g_Vars.currentplayer->speedforwards *= AIMSTANCE_SPEED;
-		g_Vars.currentplayer->speedsideways *= AIMSTANCE_SPEED;
+		g_Vars.currentplayer->speedforwards *= g_AimStanceSpeed;
+		g_Vars.currentplayer->speedsideways *= g_AimStanceSpeed;
 	}
 }
 #endif

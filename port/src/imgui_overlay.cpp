@@ -3316,10 +3316,7 @@ static void imguiOverlayDrawProportionsPanel(void)
 				"same person.");
 	}
 
-	if (!isplayer) {
-		ImGui::TextDisabled("AI use a flat chr->height and ignore the body row.");
-		ImGui::TextDisabled("Latch yourself to edit height.");
-	} else if (!bodyok) {
+	if (!bodyok) {
 		ImGui::TextDisabled("body row out of range");
 	} else {
 		f32 h = g_ImGuiPropHeight;
@@ -3327,6 +3324,15 @@ static void imguiOverlayDrawProportionsPanel(void)
 		s32 cap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
 		s32 crown;
 		bool changed = false;
+
+		if (!isplayer) {
+			// An AI's camera does not exist and its collision volume comes from
+			// a flat chr->height, so the body row's height is inert for one.
+			// The controls still earn their place: model scale is the only
+			// lever an AI has on how big it looks, and these drive it.
+			ImGui::TextDisabled("AI ignore the body row, so this drives model scale only.");
+			ImGui::TextDisabled("Latch yourself to move a camera and a collision volume.");
+		}
 
 		// Three ways in to one field. The slider is what the engine stores, and
 		// the other two are what a person thinks in -- centimetres because a
@@ -3390,7 +3396,10 @@ static void imguiOverlayDrawProportionsPanel(void)
 			// Off the SHIPPED row rather than off the last value, so dragging
 			// back and forth lands exactly where it started instead of walking
 			// away on accumulated rounding.
-			if (g_ImGuiPropLinkScale && basecrown > 0) {
+			//
+			// Forced for an AI: unlinked, these controls would move a field
+			// nothing reads and appear to do nothing at all.
+			if ((g_ImGuiPropLinkScale || !isplayer) && basecrown > 0) {
 				g_ImGuiPropScale = g_ImGuiPropBaseScale
 					* ((g_ImGuiPropHeight + (f32)headadd) / (f32)basecrown);
 			}
@@ -3403,11 +3412,15 @@ static void imguiOverlayDrawProportionsPanel(void)
 				(s32)(g_ImGuiPropHeight + 0.5f),
 				(s32)(g_ImGuiPropHeight + 0.5f) - g_ImGuiPropBaseHeight);
 
-		if (crown > cap) {
+		// The cap is a clamp on the PLAYER's vv_headheight. An AI never goes
+		// through playerSetHeight, so saying it clamps would be a lie.
+		if (isplayer && crown > cap) {
 			ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f),
 					"crown %d clamps to %d (collision top)", crown, cap);
-		} else {
+		} else if (isplayer) {
 			ImGui::TextDisabled("crown %d, cap %d", crown, cap);
+		} else {
+			ImGui::TextDisabled("crown %d. The cap of %d is a player clamp.", crown, cap);
 		}
 
 		{
@@ -3425,7 +3438,71 @@ static void imguiOverlayDrawProportionsPanel(void)
 					g_ImGuiPropBaseHeight + headadd, baseus);
 		}
 
-		ImGui::TextDisabled("also changes movement speed, weapon sway and crouch depth.");
+		if (isplayer) {
+			ImGui::TextDisabled("also changes movement speed, weapon sway and crouch depth.");
+		}
+	}
+
+	// --- scale reference -------------------------------------------------
+	//
+	// The arithmetic nobody should have to redo mid-drag. It is built from the
+	// LATCHED character's own head row rather than from a constant, so the body
+	// row column is the number to type for this character specifically -- a
+	// Maian head adds 27 where a human one adds 13, and a table that assumed 13
+	// would be silently wrong by half a foot on half the roster.
+	if (ImGui::CollapsingHeader("Scale reference")) {
+		s32 refcap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
+		s32 nowcrown = bodyok ? (s32)(g_ImGuiPropHeight + 0.5f) + headadd : -1;
+		s32 totalinches;
+
+		ImGui::TextDisabled("1 unit is about 1 cm. The body row is eye level; the head");
+		ImGui::TextDisabled("row stacks on it (%d for this one) to make the crown.", headadd);
+
+		if (ImGui::BeginTable("pd stature reference", 3, ImGuiTableFlags_SizingFixedFit
+				| ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
+			ImGui::TableSetupColumn("stands");
+			ImGui::TableSetupColumn("crown");
+			ImGui::TableSetupColumn("body row");
+			ImGui::TableHeadersRow();
+
+			for (totalinches = 58; totalinches <= 74; totalinches += 2) {
+				f32 cm = (f32)totalinches * 2.54f;
+				s32 crownunits = (s32)(cm + 0.5f);
+				s32 bodyunits = crownunits - headadd;
+				bool over = crownunits > refcap;
+				// The row the latched character currently sits in.
+				bool here = nowcrown >= 0 && nowcrown >= crownunits - 1 && nowcrown <= crownunits + 1;
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+
+				if (here) {
+					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%d'%d\"",
+							totalinches / 12, totalinches % 12);
+				} else if (over) {
+					ImGui::TextDisabled("%d'%d\"", totalinches / 12, totalinches % 12);
+				} else {
+					ImGui::Text("%d'%d\"", totalinches / 12, totalinches % 12);
+				}
+
+				ImGui::TableSetColumnIndex(1);
+
+				if (over) {
+					ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d", crownunits);
+				} else {
+					ImGui::Text("%d", crownunits);
+				}
+
+				ImGui::TableSetColumnIndex(2);
+				ImGui::Text("%d", bodyunits);
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::TextDisabled("Red is past the collision cap of %d, which is %d'%d\" --",
+				refcap, (s32)(refcap / 2.54f) / 12, (s32)(refcap / 2.54f) % 12);
+		ImGui::TextDisabled("the tallest body plus the tallest head. Six feet is already over it.");
 	}
 
 	// --- model scale -----------------------------------------------------

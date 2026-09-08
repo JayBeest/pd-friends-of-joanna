@@ -3260,6 +3260,10 @@ static const char *imguiPropHitPartName(s32 hitpart)
 struct imguiPropPartRow {
 	s32 hitpart;
 	s32 joint;
+	f32 ymin;
+	f32 ymax;
+	f32 xmin;
+	f32 xmax;
 };
 
 /**
@@ -3296,8 +3300,16 @@ static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *o
 			s32 joint = modelFindNodeMtxIndex(node, 0);
 
 			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
+				// The box itself, kept so a row can be checked against what it
+				// claims to be. A pelvis and an arm do not occupy the same
+				// space, so if two rows resolve to one joint the extents say
+				// whether that is the model or a mistake in here.
 				out[count].hitpart = node->rodata->bbox.hitpart;
 				out[count].joint = joint;
+				out[count].ymin = node->rodata->bbox.ymin;
+				out[count].ymax = node->rodata->bbox.ymax;
+				out[count].xmin = node->rodata->bbox.xmin;
+				out[count].xmax = node->rodata->bbox.xmax;
 				count++;
 			}
 		}
@@ -3831,11 +3843,14 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 		if (partcount <= 0) {
 			ImGui::TextDisabled("no named parts on this model");
-		} else if (ImGui::BeginTable("fojoproportionparts", 5,
+		} else if (ImGui::BeginTable("fojoproportionparts", 8,
 				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-				ImVec2(0.0f, 220.0f))) {
+				ImVec2(0.0f, 240.0f))) {
 			ImGui::TableSetupColumn("part");
 			ImGui::TableSetupColumn("joint");
+			ImGui::TableSetupColumn("box y");
+			ImGui::TableSetupColumn("box x");
+			ImGui::TableSetupColumn("mark");
 			ImGui::TableSetupColumn("x");
 			ImGui::TableSetupColumn("y");
 			ImGui::TableSetupColumn("z");
@@ -3860,8 +3875,40 @@ static void imguiOverlayDrawProportionsPanel(void)
 					ImGui::TextDisabled("part %d", parts[p].hitpart);
 				}
 
+				// A joint claimed by more than one part is the thing to look at
+				// first when a row moves the wrong limb.
+				bool shared = false;
+
+				for (s32 q = 0; q < partcount; q++) {
+					if (q != p && parts[q].joint == joint) {
+						shared = true;
+						break;
+					}
+				}
+
 				ImGui::TableNextColumn();
-				ImGui::Text("%d", joint);
+
+				if (shared) {
+					ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%d", joint);
+				} else {
+					ImGui::Text("%d", joint);
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::TextDisabled("%.0f..%.0f", parts[p].ymin, parts[p].ymax);
+
+				ImGui::TableNextColumn();
+				ImGui::TextDisabled("%.0f..%.0f", parts[p].xmin, parts[p].xmax);
+
+				ImGui::TableNextColumn();
+
+				{
+					bool partmarked = g_ImGuiPropMarkJoint == joint;
+
+					if (ImGui::RadioButton("##pmark", partmarked)) {
+						g_ImGuiPropMarkJoint = partmarked ? -1 : joint;
+					}
+				}
 
 				for (s32 axis = 0; axis < 3; axis++) {
 					ImGui::TableNextColumn();
@@ -3903,7 +3950,8 @@ static void imguiOverlayDrawProportionsPanel(void)
 			ImGui::EndTable();
 		}
 
-		ImGui::TextDisabled("Read off this model's bbox and chrinfo nodes, not a fixed table.");
+		ImGui::TextDisabled("Read off this model's own nodes, not a fixed table. Amber joints are");
+		ImGui::TextDisabled("claimed by more than one part; mark one and watch where the dot lands.");
 	}
 
 	// --- joints ----------------------------------------------------------

@@ -187,6 +187,10 @@ extern "C" void stanceTuningReset(void);
 // Proportion editor overrides, defined in src/game/chr.c. Declared by hand
 // rather than included, for the same reason as everything above: the game
 // headers are not extern "C"-wrapped.
+// The engine's own node-to-matrix resolver. Declared by hand for the same
+// reason as everything above: the game headers are not extern "C" wrapped.
+extern "C" s32 modelFindNodeMtxIndex(struct modelnode *node, s32 arg1);
+
 extern "C" struct chrdata *g_JointScaleChr;
 extern "C" f32 g_JointScaleOverride[][3];
 
@@ -3273,17 +3277,14 @@ static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *o
 
 	while (node && count < max) {
 		if ((node->type & 0xff) == MODELNODETYPE_BBOX && node->rodata) {
-			struct modelnode *up = node->parent;
-			s32 joint = -1;
-
-			while (up) {
-				if ((up->type & 0xff) == MODELNODETYPE_CHRINFO && up->rodata) {
-					joint = (s32)up->rodata->chrinfo.mtxindex;
-					break;
-				}
-
-				up = up->parent;
-			}
+			// modelFindNodeMtxIndex rather than a walk of our own. The first
+			// version here looked only for CHRINFO, and on a chr model CHRINFO
+			// is the ROOT node -- so every part in the body resolved to the same
+			// joint and editing any of them moved one limb. The engine's own
+			// resolver also accepts POSITION and POSITIONHELD, and POSITION is
+			// what actually carries the per-part matrix. Calling it means this
+			// cannot drift from what the renderer believes.
+			s32 joint = modelFindNodeMtxIndex(node, 0);
 
 			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
 				out[count].hitpart = node->rodata->bbox.hitpart;
@@ -3589,48 +3590,81 @@ static void imguiOverlayDrawProportionsPanel(void)
 		ImGui::TextDisabled("the cap of %d is lore %s -- nothing above that fits.",
 				refcap2, capus);
 
-		if (ImGui::DragFloat("ratio", &ratio, 0.0005f, 0.2f, 3.0f, "%.4f")) {
+		if (ImGui::DragFloat("chart shrink", &ratio, 0.0005f, 0.2f, 3.0f, "%.4f")) {
 			if (ratio > 0.0001f) {
 				g_ImGuiPropLoreScale = ratio;
 			}
 		}
 
 		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Engine centimetres per chart centimetre.\n"
-					"Below 1 the chart is bigger than the engine, which it\n"
-					"usually is. Set it from an anchor rather than by eye.");
+			ImGui::SetTooltip("How much the whole chart shrinks to fit the engine: engine\n"
+					"centimetres per chart centimetre. Below 1 means the chart is\n"
+					"drawn bigger than the game can hold, which it usually is.\n\n"
+					"Set it ONCE, from whoever is tallest in the chart: pick the\n"
+					"value that puts them on the cap above. Everyone else then\n"
+					"reads off the same ruler.");
 		}
 
-		// The anchor. Type what the LATCHED character is in the chart and the
-		// ratio falls out of what it currently is in the engine -- which is the
-		// only way to set this that does not require doing the division first.
+		// A lore height behaves like the stature fields above: type what the
+		// character is in the chart and she becomes that, through the ratio.
+		// This is the daily operation. The ratio itself is set once.
 		{
-			static s32 anchorfeet = 6;
-			static s32 anchorinches = 0;
+			f32 lorecmedit = lorecm;
+			f32 loretotalinches = lorecmedit / 2.54f;
+			s32 lorefeet = (s32)(loretotalinches / 12.0f);
+			s32 loreinches = (s32)(loretotalinches - (f32)lorefeet * 12.0f + 0.5f);
+			bool lorechanged = false;
+
+			if (loreinches >= 12) {
+				lorefeet += 1;
+				loreinches = 0;
+			}
+
+			if (ImGui::DragFloat("lore (cm)", &lorecmedit, 0.25f, 60.0f, 280.0f, "%.0f")) {
+				lorechanged = true;
+			}
 
 			ImGui::PushItemWidth(ImGui::GetFontSize() * 3.5f);
-			ImGui::DragInt("##loreanchorfeet", &anchorfeet, 0.03f, 2, 9, "%d'");
-			ImGui::SameLine(0.0f, 4.0f);
-			ImGui::DragInt("##loreanchorinches", &anchorinches, 0.08f, 0, 11, "%d\"");
-			ImGui::PopItemWidth();
-			ImGui::SameLine();
 
-			if (ImGui::Button("anchor to this chr")) {
-				f32 anchorcm = (f32)(anchorfeet * 12 + anchorinches) * 2.54f;
-
-				if (anchorcm > 1.0f) {
-					g_ImGuiPropLoreScale = crowncm / anchorcm;
-				}
+			if (ImGui::DragInt("##lorefeet", &lorefeet, 0.03f, 2, 9, "%d'")) {
+				lorecmedit = (f32)(lorefeet * 12 + loreinches) * 2.54f;
+				lorechanged = true;
 			}
 
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("This character is that tall in the chart. Sets the ratio so\n"
-						"chart space and engine space agree on it, and every other\n"
-						"character reads off the same ruler afterwards.");
+			ImGui::SameLine(0.0f, 4.0f);
+
+			if (ImGui::DragInt("lore", &loreinches, 0.08f, 0, 11, "%d\"")) {
+				lorecmedit = (f32)(lorefeet * 12 + loreinches) * 2.54f;
+				lorechanged = true;
+			}
+
+			ImGui::PopItemWidth();
+
+			if (lorechanged) {
+				f32 wanted = lorecmedit * g_ImGuiPropLoreScale - (f32)headadd;
+
+				if (wanted < 40.0f) {
+					wanted = 40.0f;
+				}
+
+				if (wanted > 255.0f) {
+					wanted = 255.0f;
+				}
+
+				g_ImGuiPropHeight = wanted;
+
+				if (g_ImGuiPropLinkScale || !isplayer) {
+					s32 bc = g_ImGuiPropBaseHeight + headadd;
+
+					if (bc > 0) {
+						g_ImGuiPropScale = g_ImGuiPropBaseScale
+							* ((g_ImGuiPropHeight + (f32)headadd) / (f32)bc);
+					}
+				}
 			}
 		}
 
-		if (ImGui::Button("reset to 1.0")) {
+		if (ImGui::Button("chart is engine scale (1.0)")) {
 			g_ImGuiPropLoreScale = 1.0f;
 		}
 	} else {

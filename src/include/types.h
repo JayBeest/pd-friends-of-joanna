@@ -4045,6 +4045,12 @@ struct menumodel {
   /*0x002*/ s16 headnum;
   /*0x004*/ u8 *allocstart;
   /*0x008*/ u32 alloclen;
+  // Whether allocstart is this model's own allocation rather than a loan of
+  // gunmem. A borrowed buffer has to be given back and the pointer dropped
+  // when the gun wants it; an owned one is held for the life of the stage and
+  // must not be, or menuTick() drops it every tick and it is allocated again
+  // every frame.
+  /*ext*/ bool ownsalloc;
   /*0x00c*/ u32 newparams;
   /*0x010*/ u32 curparams;
   /*0x014*/ Mtxf mtx;

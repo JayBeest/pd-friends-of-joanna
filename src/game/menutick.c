@@ -741,7 +741,12 @@ void menuTick(void)
 		if (g_Vars.currentplayer->gunctrl.gunmemowner == GUNMEMOWNER_INVMENU && g_Vars.stagenum != STAGE_CITRAINING) {
 			g_MenuData.unk5d5_01 = true;
 
-			if (g_Menus[0].menumodel.allocstart) {
+			// Only a borrowed buffer is given back. A model holding its own
+			// allocation is not the reason the gun cannot have gunmem, and
+			// dropping its pointer here would have it allocate another one
+			// next frame - memp has no free, so that is a leak per tick as
+			// well as the flicker this was fixing.
+			if (g_Menus[0].menumodel.allocstart && !g_Menus[0].menumodel.ownsalloc) {
 				bgunFreeGunMem();
 				g_Menus[0].menumodel.allocstart = NULL;
 			}

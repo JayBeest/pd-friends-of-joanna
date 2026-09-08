@@ -1944,12 +1944,43 @@ Gfx *menuRenderModel(Gfx *gdl, struct menumodel *menumodel, s32 modeltype)
 		}
 
 		if (menumodel->allocstart == NULL) {
+#ifndef PLATFORM_N64
+			// Its own memory rather than a loan of the first person gun's.
+			//
+			// Borrowing gunmem works while nothing else wants it, which was
+			// true when a menu was the only thing on screen. It is not true
+			// now: the gun asks for gunmem back every tick it is alive
+			// (bondgun.c, GUNMEMOWNER_BONDGUN), menuTick() hands it back every
+			// tick the menu holds it, and bgunChangeGunMem() takes about three
+			// frames to complete a handover. Between them the model gets the
+			// memory, draws for a frame or two, loses it, and starts asking
+			// again - which is the flicker.
+			//
+			// MEMPOOL_STAGE because that is where menuResetModel() already
+			// takes menu model memory from, and because it is cleared on stage
+			// load, which is exactly the lifetime wanted: allocated once when
+			// something first needs to be drawn, held for the rest of the
+			// stage, gone with it. memp has no free.
+			menumodel->alloclen = bgunCalculateGunMemCapacity();
+			menumodel->allocstart = mempAlloc(menumodel->alloclen, MEMPOOL_STAGE);
+
+			if (menumodel->allocstart == NULL) {
+				// Nothing to draw in, so draw nothing. Falling back to gunmem
+				// here is what the flicker is made of, and a missing model is
+				// a better answer than a blinking one.
+				menumodel->alloclen = 0;
+				return gdl;
+			}
+
+			menumodel->ownsalloc = true;
+#else
 			if (bgunChangeGunMem(GUNMEMOWNER_INVMENU)) {
 				menumodel->allocstart = bgunGetGunMem();
 				menumodel->alloclen = bgunCalculateGunMemCapacity();
 			} else {
 				return gdl;
 			}
+#endif
 		}
 	}
 
@@ -4021,6 +4052,7 @@ void menuResetModel(struct menumodel *menumodel, u32 allocationlen, bool allocat
 {
 	menumodel->alloclen = allocationlen;
 	menumodel->allocstart = allocate ? mempAlloc(allocationlen, MEMPOOL_STAGE) : NULL;
+	menumodel->ownsalloc = menumodel->allocstart != NULL;
 	menumodel->loaddelay = 0;
 	menumodel->newparams = MENUMODELPARAMS_SET_FILENUM(0xffff);
 	menumodel->bodymodeldef = NULL;
@@ -4088,9 +4120,11 @@ void menuReset(void)
 
 	for (i = 0; i < ARRAYCOUNT(g_Menus); i++) {
 		g_Menus[i].menumodel.allocstart = NULL;
+		g_Menus[i].menumodel.ownsalloc = false;
 	}
 
 	g_MenuData.hudpiece.allocstart = NULL;
+	g_MenuData.hudpiece.ownsalloc = false;
 
 	if (g_Vars.stagenum == STAGE_CITRAINING) {
 		g_MissionConfig.iscoop = false;

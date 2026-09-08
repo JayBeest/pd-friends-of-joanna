@@ -2579,6 +2579,11 @@ void snddebugSetVoiceCap(s32 slot, s32 cap)
 	}
 }
 
+u16 snddebugGetSfxVolume(void)
+{
+	return g_SfxVolume;
+}
+
 s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced)
 {
 	s16 free = 0;

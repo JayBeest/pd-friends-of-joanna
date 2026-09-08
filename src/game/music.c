@@ -113,7 +113,7 @@ u16 musicGetVolume(void)
  */
 s32 g_MusicMenuVolumeDivisor = 5;
 
-u16 musicGetMenuVolume(void)
+u16 musicApplyMenuDivisor(u16 volume)
 {
 	s32 divisor = g_MusicMenuVolumeDivisor;
 
@@ -121,7 +121,12 @@ u16 musicGetMenuVolume(void)
 		divisor = 1;
 	}
 
-	return musicGetVolume() / divisor;
+	return (u16)(volume / divisor);
+}
+
+u16 musicGetMenuVolume(void)
+{
+	return musicApplyMenuDivisor(musicGetVolume());
 }
 
 void musicSetVolume(u16 volume)
@@ -140,7 +145,10 @@ void musicSetVolume(u16 volume)
 			// lives inside the pause menu, so this path runs while the menu
 			// track is playing and would otherwise snap it to full.
 			if (g_SeqChannels[i].tracktype == TRACKTYPE_MENU) {
-				seqSetVolume(&g_SeqInstances[i], musicGetMenuVolume());
+				// scale the incoming value, not musicGetMenuVolume(): g_MusicVolume
+				// is not assigned until after this loop, so the getter would still
+				// be reading the previous setting.
+				seqSetVolume(&g_SeqInstances[i], musicApplyMenuDivisor(volume));
 			} else {
 				seqSetVolume(&g_SeqInstances[i], volume);
 			}

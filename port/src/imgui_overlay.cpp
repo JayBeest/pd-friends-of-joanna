@@ -157,6 +157,7 @@ extern "C" void snddebugSetWetScale(s32 slot, f32 scale);
 extern "C" bool snddebugSetFxParam(s32 bus, s32 section, s32 param, s32 value);
 extern "C" void snddebugSetVoiceCap(s32 slot, s32 cap);
 extern "C" s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced);
+extern "C" u16 snddebugGetSfxVolume(void);
 extern "C" void sndSetSfxVolume(u16 volume);
 extern "C" void musicSetVolume(u16 volume);
 extern "C" u16 musicGetVolume(void);
@@ -2838,7 +2839,7 @@ static void imguiOverlayDrawAudioPanel(void)
 	static int fxparam = 2;
 	static int fxvalue = 0;
 	static int chanrate = 255;
-	static int sfxvol = 0x5000;
+	static int sfxvol = -1;
 	static int voicecap[4] = { 0, 0, 0, 0 };
 	static bool fxsent = false;
 	static bool fxok = false;
@@ -2862,6 +2863,10 @@ static void imguiOverlayDrawAudioPanel(void)
 
 		if (ImGui::SliderInt("Music", &musicvol, 0, 0x5000)) {
 			musicSetVolume((u16)musicvol);
+		}
+
+		if (sfxvol < 0) {
+			sfxvol = (int)snddebugGetSfxVolume();
 		}
 
 		if (ImGui::SliderInt("SFX", &sfxvol, 0, 0x5000)) {
@@ -3001,7 +3006,16 @@ static void imguiOverlayDrawAudioPanel(void)
 				"readback, and the values do not reflect what is currently set.");
 
 		ImGui::SliderInt("bus", &fxbus, 0, 1);
-		ImGui::SliderInt("section", &fxsection, 0, fxbus == 0 ? 7 : 0);
+
+		int maxsection = (fxbus == 0) ? 7 : 0;
+
+		// bus 1 has one section. n_alFxParamHdl refuses s >= section_count
+		// silently, so clamp here rather than let Send look like it worked.
+		if (fxsection > maxsection) {
+			fxsection = maxsection;
+		}
+
+		ImGui::SliderInt("section", &fxsection, 0, maxsection);
 		ImGui::Combo("param", &fxparam, fxparamnames, 8);
 		ImGui::InputInt("value", &fxvalue);
 

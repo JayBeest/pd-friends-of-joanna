@@ -46,6 +46,15 @@ static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
 static bool g_ImGuiPropLinkScale = true;
+
+// Concept art is drawn at its own scale, and it is never the engine's: a chart
+// where the lead is 6'4" has to land somewhere in a game whose tallest body is
+// 5'11.7". This is the ratio between the two -- engine centimetres per chart
+// centimetre -- so a height can be read in the units it was designed in and
+// typed in the units the engine wants. 1.0 means the chart is already engine
+// scale. It persists, because it is a property of a project rather than a view.
+static f32 g_ImGuiPropLoreScale = 1.0f;
+static bool g_ImGuiPropTypeValues = false;
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -210,7 +219,15 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Profiler=%d", &value) == 1) { g_ImGuiOverlayShowProfiler = value != 0; return; }
 	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; return; }
 	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; return; }
-	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; }
+	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; return; }
+
+	{
+		float fvalue;
+
+		if (sscanf(line, "LoreScale=%f", &fvalue) == 1 && fvalue > 0.05f && fvalue < 20.0f) {
+			g_ImGuiPropLoreScale = fvalue;
+		}
+	}
 }
 
 static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *handler, ImGuiTextBuffer *buffer)
@@ -225,7 +242,8 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Profiler=%d\n", g_ImGuiOverlayShowProfiler);
 	buffer->appendf("LookingAt=%d\n", g_ImGuiOverlayShowLookingAt);
 	buffer->appendf("Proportions=%d\n", g_ImGuiOverlayShowProportions);
-	buffer->appendf("Stance=%d\n\n", g_ImGuiOverlayShowStance);
+	buffer->appendf("Stance=%d\n", g_ImGuiOverlayShowStance);
+	buffer->appendf("LoreScale=%.5f\n\n", g_ImGuiPropLoreScale);
 }
 
 static u32 imguiOverlayGetWindowState(void)
@@ -3203,6 +3221,103 @@ static void imguiOverlayDrawStancePanel(void)
 // reason a feet-and-inches readout means anything. Nothing in the engine works
 // in these units. This is here so a number can be recognised as a person: 159
 // is a value, 5'2.6" is somebody.
+// The sixteen body parts the engine already has names for. They come off the
+// bbox nodes, which is where damage location is decided, so these are not
+// labels invented for this panel -- they are what the game itself calls the
+// pieces of a body when it works out where a bullet landed.
+static const char *imguiPropHitPartName(s32 hitpart)
+{
+	switch (hitpart) {
+	case HITPART_LFOOT:       return "foot L";
+	case HITPART_LSHIN:       return "shin L";
+	case HITPART_LTHIGH:      return "thigh L";
+	case HITPART_RFOOT:       return "foot R";
+	case HITPART_RSHIN:       return "shin R";
+	case HITPART_RTHIGH:      return "thigh R";
+	case HITPART_PELVIS:      return "pelvis";
+	case HITPART_HEAD:        return "head";
+	case HITPART_LHAND:       return "hand L";
+	case HITPART_LFOREARM:    return "forearm L";
+	case HITPART_LBICEP:      return "bicep L";
+	case HITPART_RHAND:       return "hand R";
+	case HITPART_RFOREARM:    return "forearm R";
+	case HITPART_RBICEP:      return "bicep R";
+	case HITPART_TORSO:       return "torso";
+	case HITPART_TAIL:        return "tail";
+	case HITPART_GUN:         return "gun";
+	case HITPART_HAT:         return "hat";
+	case HITPART_GENERAL:     return "general";
+	case HITPART_GENERALHALF: return "general half";
+	}
+
+	return NULL;
+}
+
+struct imguiPropPartRow {
+	s32 hitpart;
+	s32 joint;
+};
+
+/**
+ * Pair every named body part with the joint that carries it.
+ *
+ * A bbox node knows what part of a body it is -- that is how damage location
+ * works -- and a chrinfo node knows which matrix a subtree follows. Neither
+ * knows the other, but the tree does: a bbox's nearest chrinfo ANCESTOR names
+ * the joint that part rides on. Walking that relation is the whole bridge from
+ * a part with a name to a matrix the scale hook can reach, and it is read off
+ * the model rather than guessed, so it is right for whatever body is latched
+ * instead of right for the one that was measured.
+ */
+static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *out, s32 max)
+{
+	struct modelnode *node;
+	s32 count = 0;
+
+	if (chr == NULL || chr->model == NULL || chr->model->definition == NULL) {
+		return 0;
+	}
+
+	node = chr->model->definition->rootnode;
+
+	while (node && count < max) {
+		if ((node->type & 0xff) == MODELNODETYPE_BBOX && node->rodata) {
+			struct modelnode *up = node->parent;
+			s32 joint = -1;
+
+			while (up) {
+				if ((up->type & 0xff) == MODELNODETYPE_CHRINFO && up->rodata) {
+					joint = (s32)up->rodata->chrinfo.mtxindex;
+					break;
+				}
+
+				up = up->parent;
+			}
+
+			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
+				out[count].hitpart = node->rodata->bbox.hitpart;
+				out[count].joint = joint;
+				count++;
+			}
+		}
+
+		if (node->child) {
+			node = node->child;
+		} else {
+			while (node) {
+				if (node->next) {
+					node = node->next;
+					break;
+				}
+
+				node = node->parent;
+			}
+		}
+	}
+
+	return count;
+}
+
 static void imguiOverlayFormatUsHeight(f32 units, char *buf, size_t len)
 {
 	f32 inches = units / 2.54f;
@@ -3452,6 +3567,85 @@ static void imguiOverlayDrawProportionsPanel(void)
 		}
 	}
 
+	// --- lore scale ------------------------------------------------------
+	//
+	// Two spaces, one ratio. Concept art is drawn to whatever scale the drawing
+	// wanted; the engine has a hard ceiling at the tallest body plus the tallest
+	// head. Nothing reconciles them automatically, and doing it by hand once per
+	// character is how a roster ends up inconsistent. Set the ratio once from a
+	// character whose height in both spaces is known, and every other reading
+	// here follows.
+	ImGui::SeparatorText("Lore scale");
+
+	if (bodyok) {
+		s32 refcap2 = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
+		f32 crowncm = g_ImGuiPropHeight + (f32)headadd;
+		f32 lorecm = g_ImGuiPropLoreScale > 0.0001f ? crowncm / g_ImGuiPropLoreScale : crowncm;
+		f32 capcm = g_ImGuiPropLoreScale > 0.0001f ? (f32)refcap2 / g_ImGuiPropLoreScale : (f32)refcap2;
+		char loreus[24];
+		char capus[24];
+		f32 ratio = g_ImGuiPropLoreScale;
+
+		imguiOverlayFormatUsHeight(lorecm, loreus, sizeof(loreus));
+		imguiOverlayFormatUsHeight(capcm, capus, sizeof(capus));
+
+		ImGui::Text("lore %s / %d cm", loreus, (s32)(lorecm + 0.5f));
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("What this character stands in chart space, at the ratio below.");
+		}
+
+		ImGui::TextDisabled("the cap of %d is lore %s -- nothing above that fits.",
+				refcap2, capus);
+
+		if (ImGui::DragFloat("ratio", &ratio, 0.0005f, 0.2f, 3.0f, "%.4f")) {
+			if (ratio > 0.0001f) {
+				g_ImGuiPropLoreScale = ratio;
+			}
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Engine centimetres per chart centimetre.\n"
+					"Below 1 the chart is bigger than the engine, which it\n"
+					"usually is. Set it from an anchor rather than by eye.");
+		}
+
+		// The anchor. Type what the LATCHED character is in the chart and the
+		// ratio falls out of what it currently is in the engine -- which is the
+		// only way to set this that does not require doing the division first.
+		{
+			static s32 anchorfeet = 6;
+			static s32 anchorinches = 0;
+
+			ImGui::PushItemWidth(ImGui::GetFontSize() * 3.5f);
+			ImGui::DragInt("##loreanchorfeet", &anchorfeet, 0.03f, 2, 9, "%d'");
+			ImGui::SameLine(0.0f, 4.0f);
+			ImGui::DragInt("##loreanchorinches", &anchorinches, 0.08f, 0, 11, "%d\"");
+			ImGui::PopItemWidth();
+			ImGui::SameLine();
+
+			if (ImGui::Button("anchor to this chr")) {
+				f32 anchorcm = (f32)(anchorfeet * 12 + anchorinches) * 2.54f;
+
+				if (anchorcm > 1.0f) {
+					g_ImGuiPropLoreScale = crowncm / anchorcm;
+				}
+			}
+
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("This character is that tall in the chart. Sets the ratio so\n"
+						"chart space and engine space agree on it, and every other\n"
+						"character reads off the same ruler afterwards.");
+			}
+		}
+
+		if (ImGui::Button("reset to 1.0")) {
+			g_ImGuiPropLoreScale = 1.0f;
+		}
+	} else {
+		ImGui::TextDisabled("body row out of range");
+	}
+
 	// --- scale reference -------------------------------------------------
 	//
 	// The arithmetic nobody should have to redo mid-drag. It is built from the
@@ -3467,11 +3661,12 @@ static void imguiOverlayDrawProportionsPanel(void)
 		ImGui::TextDisabled("1 unit is about 1 cm. The body row is eye level; the head");
 		ImGui::TextDisabled("row stacks on it (%d for this one) to make the crown.", headadd);
 
-		if (ImGui::BeginTable("pd stature reference", 3, ImGuiTableFlags_SizingFixedFit
+		if (ImGui::BeginTable("pd stature reference", 4, ImGuiTableFlags_SizingFixedFit
 				| ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
 			ImGui::TableSetupColumn("stands");
 			ImGui::TableSetupColumn("crown");
 			ImGui::TableSetupColumn("body row");
+			ImGui::TableSetupColumn("lore");
 			ImGui::TableHeadersRow();
 
 			for (totalinches = 58; totalinches <= 74; totalinches += 2) {
@@ -3504,6 +3699,23 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 				ImGui::TableSetColumnIndex(2);
 				ImGui::Text("%d", bodyunits);
+
+				// The same row read in chart space. Scan this column for the
+				// height as drawn, then type the body row beside it.
+				ImGui::TableSetColumnIndex(3);
+
+				{
+					char rowlore[24];
+
+					imguiOverlayFormatUsHeight(g_ImGuiPropLoreScale > 0.0001f
+							? cm / g_ImGuiPropLoreScale : cm, rowlore, sizeof(rowlore));
+
+					if (over) {
+						ImGui::TextDisabled("%s", rowlore);
+					} else {
+						ImGui::Text("%s", rowlore);
+					}
+				}
 			}
 
 			ImGui::EndTable();
@@ -3571,11 +3783,108 @@ static void imguiOverlayDrawProportionsPanel(void)
 		}
 	}
 
+	// --- parts -----------------------------------------------------------
+	//
+	// The joints table addresses a body by matrix index, which is honest and
+	// unreadable. This one addresses it by the names the engine already uses
+	// for the pieces of a body when it decides where a shot landed, and both
+	// write the same overrides -- a part IS a joint, seen from the other end.
+	ImGui::SeparatorText("Parts");
+
+	{
+		struct imguiPropPartRow parts[48];
+		s32 partcount = imguiPropCollectParts(chr, parts, 48);
+
+		if (partcount <= 0) {
+			ImGui::TextDisabled("no named parts on this model");
+		} else if (ImGui::BeginTable("fojoproportionparts", 5,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+				ImVec2(0.0f, 220.0f))) {
+			ImGui::TableSetupColumn("part");
+			ImGui::TableSetupColumn("joint");
+			ImGui::TableSetupColumn("x");
+			ImGui::TableSetupColumn("y");
+			ImGui::TableSetupColumn("z");
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableHeadersRow();
+
+			for (s32 p = 0; p < partcount; p++) {
+				s32 joint = parts[p].joint;
+				const char *name = imguiPropHitPartName(parts[p].hitpart);
+				s32 mirror = imguiPropJointMirror(chr, joint);
+
+				ImGui::TableNextRow();
+				ImGui::PushID(1000 + p);
+
+				ImGui::TableNextColumn();
+
+				if (name) {
+					ImGui::Text("%s", name);
+				} else {
+					// An unnamed hitpart is still worth listing -- it is a real
+					// piece of the body, just one vanilla never had to name.
+					ImGui::TextDisabled("part %d", parts[p].hitpart);
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%d", joint);
+
+				for (s32 axis = 0; axis < 3; axis++) {
+					ImGui::TableNextColumn();
+					ImGui::PushID(axis);
+					ImGui::SetNextItemWidth(72.0f);
+
+					f32 v = g_JointScaleOverride[joint][axis];
+					bool edited;
+
+					if (g_ImGuiPropTypeValues) {
+						edited = ImGui::InputFloat("##pv", &v, 0.0f, 0.0f, "%.3f");
+					} else {
+						edited = ImGui::DragFloat("##pv", &v, 0.002f, 0.05f, 4.0f, "%.3f");
+					}
+
+					if (edited) {
+						if (v < 0.05f) {
+							v = 0.05f;
+						}
+
+						if (v > 4.0f) {
+							v = 4.0f;
+						}
+
+						g_JointScaleOverride[joint][axis] = v;
+
+						if (g_ImGuiPropMirror && mirror != joint
+								&& mirror >= 0 && mirror < kFojoMaxJointOverrides) {
+							g_JointScaleOverride[mirror][axis] = v;
+						}
+					}
+
+					ImGui::PopID();
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::TextDisabled("Read off this model's bbox and chrinfo nodes, not a fixed table.");
+	}
+
 	// --- joints ----------------------------------------------------------
 	ImGui::SeparatorText("Joints");
 	ImGui::Checkbox("mirror", &g_ImGuiPropMirror);
 	ImGui::SameLine();
 	ImGui::Checkbox("draw marker", &g_ImGuiPropDrawBox);
+	ImGui::SameLine();
+	ImGui::Checkbox("type values", &g_ImGuiPropTypeValues);
+
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Swaps the drags for fields you type into, here and in Parts.\n"
+				"A drag is for finding a number; a field is for repeating one\n"
+				"you already found, which is what baking a row needs.");
+	}
 
 	if (jointcount <= 0) {
 		ImGui::TextDisabled("no skeleton");
@@ -3614,8 +3923,23 @@ static void imguiOverlayDrawProportionsPanel(void)
 				ImGui::SetNextItemWidth(72.0f);
 
 				f32 v = g_JointScaleOverride[j][axis];
+				bool edited;
 
-				if (ImGui::DragFloat("##v", &v, 0.002f, 0.05f, 4.0f, "%.3f")) {
+				if (g_ImGuiPropTypeValues) {
+					edited = ImGui::InputFloat("##v", &v, 0.0f, 0.0f, "%.3f");
+				} else {
+					edited = ImGui::DragFloat("##v", &v, 0.002f, 0.05f, 4.0f, "%.3f");
+				}
+
+				if (edited) {
+					if (v < 0.05f) {
+						v = 0.05f;
+					}
+
+					if (v > 4.0f) {
+						v = 4.0f;
+					}
+
 					g_JointScaleOverride[j][axis] = v;
 
 					if (g_ImGuiPropMirror && mirror != j

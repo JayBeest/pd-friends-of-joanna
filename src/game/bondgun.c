@@ -3743,6 +3743,25 @@ bool bgunChangeGunMem(s32 newowner)
 				unlock = true;
 			}
 
+#ifndef PLATFORM_N64
+			// A body that is not living in gunmem has no business holding it.
+			// gunmem starts out owned by GUNMEMOWNER_CHRBODY (playermgr.c) and
+			// in solo the only thing that ever released it was the body going
+			// away - which was safe while a solo body only existed for a
+			// cutscene, an eyespy or a rocket, all of which are built inside
+			// gunmem and all of which end. A third person body is built out of
+			// the heap and never ends, so it held the lock for the whole
+			// mission and the first person gun could never take it: no model,
+			// no magazine, nothing to fire and no gset for a punch.
+			//
+			// gunmem2 is the allocation, and it is set in exactly one place -
+			// the branch playerBodyUsesGunMem() sends a gunmem body down - so
+			// it is the honest test for whether this body is the one in there.
+			if (!player->gunmem2) {
+				unlock = true;
+			}
+#endif
+
 			if (newowner == GUNMEMOWNER_INVMENU && g_IsModalMenuMode != 0) {
 				unlock = true;
 				playerRemoveChrBody();

@@ -45,6 +45,7 @@ static bool g_ImGuiOverlayShowStance = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
+static bool g_ImGuiPropLinkScale = true;
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -3312,6 +3313,18 @@ static void imguiOverlayDrawProportionsPanel(void)
 	// --- height ----------------------------------------------------------
 	ImGui::SeparatorText("Height");
 
+	ImGui::Checkbox("link model scale to height", &g_ImGuiPropLinkScale);
+
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Height moves the camera and the collision volume; model scale\n"
+				"moves what is drawn. They are independent fields, and setting\n"
+				"one alone is how a character ends up with her eyes in one\n"
+				"place and her body drawn at another size.\n\n"
+				"Linked, either one drives the other off the shipped row, so\n"
+				"the body you see and the body the game collides with stay the\n"
+				"same person.");
+	}
+
 	if (!isplayer) {
 		ImGui::TextDisabled("AI use a flat chr->height and ignore the body row.");
 		ImGui::TextDisabled("Latch yourself to edit height.");
@@ -3319,13 +3332,80 @@ static void imguiOverlayDrawProportionsPanel(void)
 		ImGui::TextDisabled("body row out of range");
 	} else {
 		f32 h = g_ImGuiPropHeight;
+		s32 basecrown = g_ImGuiPropBaseHeight + headadd;
+		s32 cap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
+		s32 crown;
+		bool changed = false;
 
-		if (ImGui::DragFloat("eye", &h, 0.25f, 40.0f, 255.0f, "%.0f")) {
+		// Three ways in to one field. The slider is what the engine stores, and
+		// the other two are what a person thinks in -- centimetres because a
+		// unit is one, feet and inches because that is how the heights arrive.
+		// All of them write g_ImGuiPropHeight, and all of them are read back
+		// from it every frame, so they cannot drift apart.
+		if (ImGui::DragFloat("eye (units)", &h, 0.25f, 40.0f, 255.0f, "%.0f")) {
 			g_ImGuiPropHeight = h;
+			changed = true;
 		}
 
-		s32 cap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
-		s32 crown = (s32)(g_ImGuiPropHeight + 0.5f) + headadd;
+		{
+			// The body row is EYE LEVEL. The head row's own height comes off
+			// the top before a stature is stored, and goes back on before one
+			// is shown; forgetting it makes everybody a head too tall.
+			f32 cm = g_ImGuiPropHeight + (f32)headadd;
+			f32 totalinches = cm / 2.54f;
+			s32 feet = (s32)(totalinches / 12.0f);
+			s32 inches = (s32)(totalinches - (f32)feet * 12.0f + 0.5f);
+			bool fromfi = false;
+
+			if (inches >= 12) {
+				feet += 1;
+				inches = 0;
+			}
+
+			if (ImGui::DragFloat("stands (cm)", &cm, 0.25f, 60.0f, 280.0f, "%.0f")) {
+				g_ImGuiPropHeight = cm - (f32)headadd;
+				changed = true;
+			}
+
+			ImGui::PushItemWidth(ImGui::GetFontSize() * 3.5f);
+
+			if (ImGui::DragInt("##propfeet", &feet, 0.03f, 2, 9, "%d'")) {
+				fromfi = true;
+			}
+
+			ImGui::SameLine(0.0f, 4.0f);
+
+			if (ImGui::DragInt("stands", &inches, 0.08f, 0, 11, "%d\"")) {
+				fromfi = true;
+			}
+
+			ImGui::PopItemWidth();
+
+			if (fromfi) {
+				g_ImGuiPropHeight = (f32)(feet * 12 + inches) * 2.54f - (f32)headadd;
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			if (g_ImGuiPropHeight < 40.0f) {
+				g_ImGuiPropHeight = 40.0f;
+			}
+
+			if (g_ImGuiPropHeight > 255.0f) {
+				g_ImGuiPropHeight = 255.0f;
+			}
+
+			// Off the SHIPPED row rather than off the last value, so dragging
+			// back and forth lands exactly where it started instead of walking
+			// away on accumulated rounding.
+			if (g_ImGuiPropLinkScale && basecrown > 0) {
+				g_ImGuiPropScale = g_ImGuiPropBaseScale
+					* ((g_ImGuiPropHeight + (f32)headadd) / (f32)basecrown);
+			}
+		}
+
+		crown = (s32)(g_ImGuiPropHeight + 0.5f) + headadd;
 
 		ImGui::Text("shipped %d  ->  %d   %+d",
 				g_ImGuiPropBaseHeight,
@@ -3348,8 +3428,10 @@ static void imguiOverlayDrawProportionsPanel(void)
 			imguiOverlayFormatUsHeight((f32)crown, crownus, sizeof(crownus));
 			imguiOverlayFormatUsHeight((f32)(g_ImGuiPropBaseHeight + headadd), baseus, sizeof(baseus));
 
-			ImGui::Text("stands %s   (eye %s)", crownus, eyeus);
-			ImGui::TextDisabled("shipped %s. 1 unit is about 1 cm.", baseus);
+			ImGui::Text("stands %d cm / %s   (eye %d cm / %s)",
+					crown, crownus, (s32)(g_ImGuiPropHeight + 0.5f), eyeus);
+			ImGui::TextDisabled("shipped %d cm / %s. 1 unit is about 1 cm.",
+					g_ImGuiPropBaseHeight + headadd, baseus);
 		}
 
 		ImGui::TextDisabled("also changes movement speed, weapon sway and crouch depth.");
@@ -3365,6 +3447,26 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 		if (ImGui::DragFloat("scale", &s, 0.0005f, 0.05f, 4.0f, "%.5f")) {
 			g_ImGuiPropScale = s;
+
+			// The same relation as the height section uses, run backwards, so
+			// the link reads the same whichever end of it is dragged. Only the
+			// player has a height field worth moving -- an AI ignores the body
+			// row and carries a flat chr->height instead.
+			if (g_ImGuiPropLinkScale && isplayer && g_ImGuiPropBaseScale != 0.0f) {
+				f32 basecrown = (f32)(g_ImGuiPropBaseHeight + headadd);
+				f32 wanted = basecrown * (g_ImGuiPropScale / g_ImGuiPropBaseScale)
+					- (f32)headadd;
+
+				if (wanted < 40.0f) {
+					wanted = 40.0f;
+				}
+
+				if (wanted > 255.0f) {
+					wanted = 255.0f;
+				}
+
+				g_ImGuiPropHeight = wanted;
+			}
 		}
 
 		f32 ratio = g_ImGuiPropBaseScale != 0.0f ? g_ImGuiPropScale / g_ImGuiPropBaseScale : 1.0f;

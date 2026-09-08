@@ -54,6 +54,7 @@ static bool g_ImGuiPropLinkScale = true;
 // typed in the units the engine wants. 1.0 means the chart is already engine
 // scale. It persists, because it is a property of a project rather than a view.
 static f32 g_ImGuiPropLoreScale = 1.0f;
+static bool g_ImGuiPropTypeValues = false;
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -3211,6 +3212,103 @@ static void imguiOverlayDrawStancePanel(void)
 // reason a feet-and-inches readout means anything. Nothing in the engine works
 // in these units. This is here so a number can be recognised as a person: 159
 // is a value, 5'2.6" is somebody.
+// The sixteen body parts the engine already has names for. They come off the
+// bbox nodes, which is where damage location is decided, so these are not
+// labels invented for this panel -- they are what the game itself calls the
+// pieces of a body when it works out where a bullet landed.
+static const char *imguiPropHitPartName(s32 hitpart)
+{
+	switch (hitpart) {
+	case HITPART_LFOOT:       return "foot L";
+	case HITPART_LSHIN:       return "shin L";
+	case HITPART_LTHIGH:      return "thigh L";
+	case HITPART_RFOOT:       return "foot R";
+	case HITPART_RSHIN:       return "shin R";
+	case HITPART_RTHIGH:      return "thigh R";
+	case HITPART_PELVIS:      return "pelvis";
+	case HITPART_HEAD:        return "head";
+	case HITPART_LHAND:       return "hand L";
+	case HITPART_LFOREARM:    return "forearm L";
+	case HITPART_LBICEP:      return "bicep L";
+	case HITPART_RHAND:       return "hand R";
+	case HITPART_RFOREARM:    return "forearm R";
+	case HITPART_RBICEP:      return "bicep R";
+	case HITPART_TORSO:       return "torso";
+	case HITPART_TAIL:        return "tail";
+	case HITPART_GUN:         return "gun";
+	case HITPART_HAT:         return "hat";
+	case HITPART_GENERAL:     return "general";
+	case HITPART_GENERALHALF: return "general half";
+	}
+
+	return NULL;
+}
+
+struct imguiPropPartRow {
+	s32 hitpart;
+	s32 joint;
+};
+
+/**
+ * Pair every named body part with the joint that carries it.
+ *
+ * A bbox node knows what part of a body it is -- that is how damage location
+ * works -- and a chrinfo node knows which matrix a subtree follows. Neither
+ * knows the other, but the tree does: a bbox's nearest chrinfo ANCESTOR names
+ * the joint that part rides on. Walking that relation is the whole bridge from
+ * a part with a name to a matrix the scale hook can reach, and it is read off
+ * the model rather than guessed, so it is right for whatever body is latched
+ * instead of right for the one that was measured.
+ */
+static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *out, s32 max)
+{
+	struct modelnode *node;
+	s32 count = 0;
+
+	if (chr == NULL || chr->model == NULL || chr->model->definition == NULL) {
+		return 0;
+	}
+
+	node = chr->model->definition->rootnode;
+
+	while (node && count < max) {
+		if ((node->type & 0xff) == MODELNODETYPE_BBOX && node->rodata) {
+			struct modelnode *up = node->parent;
+			s32 joint = -1;
+
+			while (up) {
+				if ((up->type & 0xff) == MODELNODETYPE_CHRINFO && up->rodata) {
+					joint = (s32)up->rodata->chrinfo.mtxindex;
+					break;
+				}
+
+				up = up->parent;
+			}
+
+			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
+				out[count].hitpart = node->rodata->bbox.hitpart;
+				out[count].joint = joint;
+				count++;
+			}
+		}
+
+		if (node->child) {
+			node = node->child;
+		} else {
+			while (node) {
+				if (node->next) {
+					node = node->next;
+					break;
+				}
+
+				node = node->parent;
+			}
+		}
+	}
+
+	return count;
+}
+
 static void imguiOverlayFormatUsHeight(f32 units, char *buf, size_t len)
 {
 	f32 inches = units / 2.54f;
@@ -3676,11 +3774,108 @@ static void imguiOverlayDrawProportionsPanel(void)
 		}
 	}
 
+	// --- parts -----------------------------------------------------------
+	//
+	// The joints table addresses a body by matrix index, which is honest and
+	// unreadable. This one addresses it by the names the engine already uses
+	// for the pieces of a body when it decides where a shot landed, and both
+	// write the same overrides -- a part IS a joint, seen from the other end.
+	ImGui::SeparatorText("Parts");
+
+	{
+		struct imguiPropPartRow parts[48];
+		s32 partcount = imguiPropCollectParts(chr, parts, 48);
+
+		if (partcount <= 0) {
+			ImGui::TextDisabled("no named parts on this model");
+		} else if (ImGui::BeginTable("fojoproportionparts", 5,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+				ImVec2(0.0f, 220.0f))) {
+			ImGui::TableSetupColumn("part");
+			ImGui::TableSetupColumn("joint");
+			ImGui::TableSetupColumn("x");
+			ImGui::TableSetupColumn("y");
+			ImGui::TableSetupColumn("z");
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableHeadersRow();
+
+			for (s32 p = 0; p < partcount; p++) {
+				s32 joint = parts[p].joint;
+				const char *name = imguiPropHitPartName(parts[p].hitpart);
+				s32 mirror = imguiPropJointMirror(chr, joint);
+
+				ImGui::TableNextRow();
+				ImGui::PushID(1000 + p);
+
+				ImGui::TableNextColumn();
+
+				if (name) {
+					ImGui::Text("%s", name);
+				} else {
+					// An unnamed hitpart is still worth listing -- it is a real
+					// piece of the body, just one vanilla never had to name.
+					ImGui::TextDisabled("part %d", parts[p].hitpart);
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%d", joint);
+
+				for (s32 axis = 0; axis < 3; axis++) {
+					ImGui::TableNextColumn();
+					ImGui::PushID(axis);
+					ImGui::SetNextItemWidth(72.0f);
+
+					f32 v = g_JointScaleOverride[joint][axis];
+					bool edited;
+
+					if (g_ImGuiPropTypeValues) {
+						edited = ImGui::InputFloat("##pv", &v, 0.0f, 0.0f, "%.3f");
+					} else {
+						edited = ImGui::DragFloat("##pv", &v, 0.002f, 0.05f, 4.0f, "%.3f");
+					}
+
+					if (edited) {
+						if (v < 0.05f) {
+							v = 0.05f;
+						}
+
+						if (v > 4.0f) {
+							v = 4.0f;
+						}
+
+						g_JointScaleOverride[joint][axis] = v;
+
+						if (g_ImGuiPropMirror && mirror != joint
+								&& mirror >= 0 && mirror < kFojoMaxJointOverrides) {
+							g_JointScaleOverride[mirror][axis] = v;
+						}
+					}
+
+					ImGui::PopID();
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::TextDisabled("Read off this model's bbox and chrinfo nodes, not a fixed table.");
+	}
+
 	// --- joints ----------------------------------------------------------
 	ImGui::SeparatorText("Joints");
 	ImGui::Checkbox("mirror", &g_ImGuiPropMirror);
 	ImGui::SameLine();
 	ImGui::Checkbox("draw marker", &g_ImGuiPropDrawBox);
+	ImGui::SameLine();
+	ImGui::Checkbox("type values", &g_ImGuiPropTypeValues);
+
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Swaps the drags for fields you type into, here and in Parts.\n"
+				"A drag is for finding a number; a field is for repeating one\n"
+				"you already found, which is what baking a row needs.");
+	}
 
 	if (jointcount <= 0) {
 		ImGui::TextDisabled("no skeleton");
@@ -3719,8 +3914,23 @@ static void imguiOverlayDrawProportionsPanel(void)
 				ImGui::SetNextItemWidth(72.0f);
 
 				f32 v = g_JointScaleOverride[j][axis];
+				bool edited;
 
-				if (ImGui::DragFloat("##v", &v, 0.002f, 0.05f, 4.0f, "%.3f")) {
+				if (g_ImGuiPropTypeValues) {
+					edited = ImGui::InputFloat("##v", &v, 0.0f, 0.0f, "%.3f");
+				} else {
+					edited = ImGui::DragFloat("##v", &v, 0.002f, 0.05f, 4.0f, "%.3f");
+				}
+
+				if (edited) {
+					if (v < 0.05f) {
+						v = 0.05f;
+					}
+
+					if (v > 4.0f) {
+						v = 4.0f;
+					}
+
 					g_JointScaleOverride[j][axis] = v;
 
 					if (g_ImGuiPropMirror && mirror != j

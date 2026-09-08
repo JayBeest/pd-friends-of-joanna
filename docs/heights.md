@@ -79,6 +79,57 @@ The practical consequence is that a chr spawned on an unusually tall or short bo
 
 ## Setting height per body
 
+## Reading a height as a height
+
+One game unit is about one centimetre, so a body row can be read as a person
+without much arithmetic. Two things have to happen first, and both are easy to
+forget.
+
+The body row's `height` is **eye level**, not stature. The head row's own
+`height` stacks on top of it to make the crown, and that is the number worth
+comparing to a real person: 13 for every human head in the table, 27 for every
+Maian one.
+
+The crown is then capped. `playerSetHeight` clamps `vv_headheight` to the
+tallest body plus the tallest head, which is **182** on NTSC final and later.
+That is 5'11.7". Anything taller does not fail loudly -- it silently stops
+getting taller, and the model keeps growing while the camera and the collision
+volume do not.
+
+| Stature | cm | Crown units | Body row `height` (human head) |
+|---|---|---|---|
+| 4'10" | 147.3 | 147 | 134 |
+| 5'0" | 152.4 | 152 | 139 |
+| 5'2" | 157.5 | 157 | 144 |
+| 5'4" | 162.6 | 163 | 150 |
+| 5'6" | 167.6 | 168 | 155 |
+| 5'7" | 170.2 | 170 | 157 |
+| 5'8" | 172.7 | 173 | 160 |
+| 5'9" | 175.3 | 175 | 162 |
+| 5'10" | 177.8 | 178 | 165 |
+| 5'11" | 180.3 | 180 | 167 |
+| 6'0" | 182.9 | 183 | 170 | *over the cap by 1* |
+| 6'1" | 185.4 | 185 | 172 | *over the cap by 3* |
+
+Useful anchors:
+
+* Joanna's `height` of 159 plus a human head's 13 is a crown of 172 — **5'7.7"**.
+* The tallest body in the table is Mr Blonde at 169, crown 182 — **5'11.7"**.
+  The cap is his crown, so he *is* the ceiling rather than being measured
+  against one.
+* The shortest human body is the secretary at 140, crown 153 — **5'0.2"**.
+* The 106 rows are Maian, and a Maian head adds 27 rather than 13, so their
+  crown is 133 — **4'4.4"**.
+
+So the range vanilla actually spans, for a human, is about 5'0" to 5'11.7", and
+**six feet is already over the ceiling**. A roster with anyone taller either
+moves the cap — which is what the cap exists to prevent, since it is what keeps
+a player's collision volume inside the geometry the levels were built for — or
+normalises the whole roster down so that its tallest member lands on 182.
+
+Going the other way, a `height` of *h* with a human head stands
+`(h + 13) / 2.54` inches.
+
 Both `height` and `scale` are per-row fields on `g_HeadsAndBodies` and both are parseable from a mod's `modconfig.txt`, so per-character proportions need no engine change.
 
 The two are independent. `height` drives the camera and the collision volume; `scale` is passed to `modelSetScale` and drives the rendered size of the model. Setting one without the other produces a character whose eyes are in one place and whose body is drawn at another size. Within a single body model the two are proportional, so a variant of an existing body wanting to be a different height should scale both by the same ratio; across different models there is no such relationship, because each raw model has its own intrinsic size — the ratio of `height` to `scale` ranges from 153 for Mr Blonde to 185 for Elvis.

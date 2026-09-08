@@ -3198,6 +3198,25 @@ static void imguiOverlayDrawStancePanel(void)
 	}
 }
 
+// One game unit is about one centimetre -- docs/heights.md -- which is the only
+// reason a feet-and-inches readout means anything. Nothing in the engine works
+// in these units. This is here so a number can be recognised as a person: 159
+// is a value, 5'2.6" is somebody.
+static void imguiOverlayFormatUsHeight(f32 units, char *buf, size_t len)
+{
+	f32 inches = units / 2.54f;
+	s32 feet = (s32)(inches / 12.0f);
+	f32 rem = inches - (f32)feet * 12.0f;
+
+	// Otherwise 11.96 inches prints as 5'12.0".
+	if (rem >= 11.95f) {
+		feet += 1;
+		rem = 0.0f;
+	}
+
+	snprintf(buf, len, "%d'%.1f\"", feet, rem);
+}
+
 static void imguiOverlayDrawProportionsPanel(void)
 {
 	// Switching stages, or anything else that takes the chr out of memory, is
@@ -3282,6 +3301,14 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 	ImGui::Text("skeleton: %d joints", jointcount);
 
+	// The head row's own height stacks on the body's to make the crown, which is
+	// the number a person recognises as a height -- the body row alone is eye
+	// level. Vanilla uses 13 for every human head and 27 for every Maian one.
+	s32 propheadnum = (s32)(u8)chr->headnum;
+	s32 headadd = (propheadnum >= 0 && propheadnum < g_NumHeadsAndBodies)
+		? (s32)g_HeadsAndBodies[propheadnum].height
+		: 13;
+
 	// --- height ----------------------------------------------------------
 	ImGui::SeparatorText("Height");
 
@@ -3297,10 +3324,6 @@ static void imguiOverlayDrawProportionsPanel(void)
 			g_ImGuiPropHeight = h;
 		}
 
-		s32 headnum = (s32)(u8)chr->headnum;
-		s32 headadd = (headnum >= 0 && headnum < g_NumHeadsAndBodies)
-			? (s32)g_HeadsAndBodies[headnum].height
-			: 13;
 		s32 cap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
 		s32 crown = (s32)(g_ImGuiPropHeight + 0.5f) + headadd;
 
@@ -3314,6 +3337,19 @@ static void imguiOverlayDrawProportionsPanel(void)
 					"crown %d clamps to %d (collision top)", crown, cap);
 		} else {
 			ImGui::TextDisabled("crown %d, cap %d", crown, cap);
+		}
+
+		{
+			char eyeus[24];
+			char crownus[24];
+			char baseus[24];
+
+			imguiOverlayFormatUsHeight(g_ImGuiPropHeight, eyeus, sizeof(eyeus));
+			imguiOverlayFormatUsHeight((f32)crown, crownus, sizeof(crownus));
+			imguiOverlayFormatUsHeight((f32)(g_ImGuiPropBaseHeight + headadd), baseus, sizeof(baseus));
+
+			ImGui::Text("stands %s   (eye %s)", crownus, eyeus);
+			ImGui::TextDisabled("shipped %s. 1 unit is about 1 cm.", baseus);
 		}
 
 		ImGui::TextDisabled("also changes movement speed, weapon sway and crouch depth.");
@@ -3331,9 +3367,29 @@ static void imguiOverlayDrawProportionsPanel(void)
 			g_ImGuiPropScale = s;
 		}
 
+		f32 ratio = g_ImGuiPropBaseScale != 0.0f ? g_ImGuiPropScale / g_ImGuiPropBaseScale : 1.0f;
+		f32 drawn = (f32)(g_ImGuiPropBaseHeight + headadd) * ratio;
+		char drawnus[24];
+
 		ImGui::Text("shipped %.5f  ->  %.5f   x%.4f",
-				g_ImGuiPropBaseScale, g_ImGuiPropScale,
-				g_ImGuiPropBaseScale != 0.0f ? g_ImGuiPropScale / g_ImGuiPropBaseScale : 1.0f);
+				g_ImGuiPropBaseScale, g_ImGuiPropScale, ratio);
+
+		imguiOverlayFormatUsHeight(drawn, drawnus, sizeof(drawnus));
+
+		// The height field is what the camera and the collision volume believe;
+		// this is what the eye is shown. They are independent fields and moving
+		// one without the other is the classic way to end up with a character
+		// whose eyes are in one place and whose body is drawn at another size.
+		ImGui::Text("drawn body reads as %s", drawnus);
+
+		if (isplayer) {
+			f32 crownf = (f32)((s32)(g_ImGuiPropHeight + 0.5f) + headadd);
+
+			if (fabsf(drawn - crownf) > 3.0f) {
+				ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
+						"body and camera disagree by %.0f cm", fabsf(drawn - crownf));
+			}
+		}
 	}
 
 	// --- joints ----------------------------------------------------------

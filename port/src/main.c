@@ -239,6 +239,9 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterFloat("Stance.FadeStart", &g_BodyFadeStart, 0.f, 1000.f);
 	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
 	configRegisterFloat("Stance.RollImpulse", &g_RollImpulse, 0.f, 200.f);
+	configRegisterInt("Stance.BuildSpeed", &g_BuildSpeedEnabled, 0, 1);
+	configRegisterFloat("Stance.BuildSpeedRef", &g_BuildSpeedRef, 60.f, 300.f);
+	configRegisterFloat("Stance.BuildCrouchMix", &g_BuildCrouchMix, 0.f, 1.f);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);
 	for (s32 j = 0; j < MAX_PLAYERS; ++j) {

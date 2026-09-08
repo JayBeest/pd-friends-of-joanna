@@ -50,6 +50,15 @@ extern f32 g_BodyFadeFloor;
 // The combat roll's push.
 extern f32 g_RollImpulse;
 
+// Build and movement: the master switch, and the body height that walks at
+// exactly 1. Everything scales as a delta from the reference, so a vanilla
+// roster is untouched however the rest of this moves. The mix is how much of
+// the crouch discount short characters actually get -- 0 is vanilla's flat
+// multipliers, 1 charges each body for the fraction of herself she folds away.
+extern s32 g_BuildSpeedEnabled;
+extern f32 g_BuildSpeedRef;
+extern f32 g_BuildCrouchMix;
+
 void stanceTuningReset(void);
 
 #endif

@@ -169,6 +169,9 @@ extern "C" f32 g_ThirdPersonCamMinDist;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
 extern "C" f32 g_RollImpulse;
+extern "C" s32 g_BuildSpeedEnabled;
+extern "C" f32 g_BuildSpeedRef;
+extern "C" f32 g_BuildCrouchMix;
 extern "C" void stanceTuningReset(void);
 
 // Proportion editor overrides, defined in src/game/chr.c. Declared by hand
@@ -3152,6 +3155,31 @@ static void imguiOverlayDrawStancePanel(void)
 	if (ImGui::CollapsingHeader("Roll", ImGuiTreeNodeFlags_DefaultOpen)) {
 		imguiOverlayStanceKnob("Roll impulse", &g_RollImpulse, 0.0f, 200.0f, "%.1f",
 				"The push a combat roll gets, for players and simulants alike.");
+	}
+
+	if (ImGui::CollapsingHeader("Build", ImGuiTreeNodeFlags_DefaultOpen)) {
+		bool enabled = g_BuildSpeedEnabled != 0;
+
+		if (ImGui::Checkbox("Build affects movement", &enabled)) {
+			g_BuildSpeedEnabled = enabled ? 1 : 0;
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Off is vanilla: everyone walks the same, and the\n"
+					"simulant path keeps the multiply that flattens the\n"
+					"whole body table to within a rounding error of 1.");
+		}
+
+		imguiOverlayStanceKnob("Reference height", &g_BuildSpeedRef, 60.0f, 300.0f, "%.0f",
+				"The body height that walks at exactly 1. Everything else is a\n"
+				"delta from it, so a stock roster is untouched while this sits\n"
+				"at 159. Move it if the roster is normalised to something else.");
+
+		imguiOverlayStanceKnob("Crouch discount", &g_BuildCrouchMix, 0.0f, 1.0f, "%.2f",
+				"How much of the crouch price scales with build. 0 keeps the\n"
+				"flat multipliers; 1 charges each body for the fraction of\n"
+				"herself she folds away, which the crouch already computes.\n"
+				"A short character is slower standing and faster crouched.");
 	}
 
 	ImGui::Separator();

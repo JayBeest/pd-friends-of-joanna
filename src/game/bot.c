@@ -1265,6 +1265,19 @@ f32 botCalculateMaxSpeed(struct chrdata *chr)
 
 	if (chr->aibot->hascase || chr->aibot->hasbriefcase) {
 		speed = -63.600006103516f;
+#ifndef PLATFORM_N64
+	} else if (g_BuildSpeedEnabled) {
+		// Vanilla multiplies here where the arithmetic wants a subtraction, and
+		// the briefcase constant above is the proof: -63.6 only means anything
+		// as a delta in the same height units, where it becomes the 0.82x
+		// carrying penalty it obviously is. Run the multiply instead and the
+		// entire body table lands within 0.03% of 1 -- every simulant in the
+		// game walks at the same speed, which is not what the line was for.
+		//
+		// As a delta the table spreads properly: the shortest bodies come out
+		// near 0.85, the reference at exactly 1, the tallest around 1.045.
+		speed = g_HeadsAndBodies[chr->bodynum].height - g_BuildSpeedRef;
+#endif
 	} else {
 		speed = g_HeadsAndBodies[chr->bodynum].height * (1.0f / 159.0f);
 	}

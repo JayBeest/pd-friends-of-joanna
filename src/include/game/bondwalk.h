@@ -27,6 +27,7 @@ void bwalkUpdateSpeedSideways(f32 targetspeed, f32 accelspeed, s32 mult);
 void bwalkUpdateSpeedForwards(f32 targetspeed, f32 accelspeed);
 void bwalkUpdateVertical(void);
 void bwalkApplyCrouchSpeed(void);
+void bwalkApplyBuildSpeed(void);
 void bwalkApplyAimSpeed(void);
 void bwalkApplyFlinchSpeed(void);
 bool bwalkIsFlinching(void);

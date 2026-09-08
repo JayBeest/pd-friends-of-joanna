@@ -2971,6 +2971,8 @@ struct player {
   // CHRHFLAG_CLOAKED is what a simulant decides whether it can see her by, so
   // a wall behind her must not touch it.
   /*ext*/ u8 bodyfadefrac;
+  // The frame the last flinch started on, or 0 for none. See FLINCH_BUSY.
+  /*ext*/ s32 flinchtime60;
   // How far back the camera actually got this frame after walls were taken
   // into account, or 0 when it could not get far enough to be worth it. Read
   // by the HUD, which draws the first person gun whenever the camera is on

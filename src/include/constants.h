@@ -441,6 +441,19 @@
 // of what makes third person the stance she moves in. Sits beside the crouch
 // multipliers in bwalkApplyCrouchSpeed() - 0.5 ducked, 0.35 squatting - and
 // stacks with them.
+// What a flinch costs, and for how long. Half her walk at the moment the shot
+// lands, recovering to all of it across the window, and no trigger at all until
+// it is over.
+//
+// The window is the flinch's own: chr.c runs flinchcnt from 1 to 30 (24 PAL) and
+// gives up the body there, so the penalty ends when the twitch does. It is kept
+// on the player's own clock rather than read off flinchcnt, because flinchcnt is
+// advanced in the model tick and the body is not ticked in every stance - a
+// counter that stops while she is aiming would leave the penalty on forever, in
+// exactly the stance she is most likely to be shot in.
+#define FLINCH_BUSY  TICKS(30)
+#define FLINCH_SPEED 0.5f
+
 #define AIMSTANCE_SPEED 0.6f
 
 #define THIRDPERSON_BODYFADE_START 130.0f

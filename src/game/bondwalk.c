@@ -1422,6 +1422,59 @@ void bwalkUpdateVertical(void)
 
 #ifndef PLATFORM_N64
 /**
+ * How far through the flinch she is, 0 at the shot and 1 once it is over.
+ *
+ * On the player's own clock rather than chr->flinchcnt, which is advanced in the
+ * model tick and so stops whenever the body is not being ticked - the low ready
+ * among them. A penalty that cannot expire is worse than no penalty.
+ */
+static f32 bwalkGetFlinchFrac(void)
+{
+	s32 elapsed;
+
+	if (g_Vars.currentplayer->flinchtime60 == 0) {
+		return 1.0f;
+	}
+
+	elapsed = g_Vars.lvframe60 - g_Vars.currentplayer->flinchtime60;
+
+	if (elapsed < 0 || elapsed >= FLINCH_BUSY) {
+		return 1.0f;
+	}
+
+	return (f32)elapsed / (f32)FLINCH_BUSY;
+}
+
+/**
+ * Whether a flinch still has her, for anything that is not the walk.
+ */
+bool bwalkIsFlinching(void)
+{
+	return bwalkGetFlinchFrac() < 1.0f;
+}
+
+/**
+ * Take the flinch out of her walk, and give it back as the flinch passes.
+ *
+ * Half speed at the moment the shot lands, all of it again by the end of the
+ * window, and linear between - being shot should take a step out of her rather
+ * than pin her, and the recovery is the half second the body spends twitching
+ * anyway. Stacks with the crouch and low ready multipliers, which is the point:
+ * shot while squatting and aiming is the slowest she gets.
+ */
+void bwalkApplyFlinchSpeed(void)
+{
+	f32 frac = bwalkGetFlinchFrac();
+
+	if (frac < 1.0f) {
+		f32 scale = FLINCH_SPEED + (1.0f - FLINCH_SPEED) * frac;
+
+		g_Vars.currentplayer->speedforwards *= scale;
+		g_Vars.currentplayer->speedsideways *= scale;
+	}
+}
+
+/**
  * Slow her to the low ready pace while she is aiming.
  *
  * The aim button is the stance switch: out of it she is behind her own
@@ -1814,6 +1867,7 @@ void bwalk0f0c69b8(void)
 		bwalkApplyCrouchSpeed();
 #ifndef PLATFORM_N64
 		bwalkApplyAimSpeed();
+		bwalkApplyFlinchSpeed();
 #endif
 		bwalkUpdateCrouchOffset();
 

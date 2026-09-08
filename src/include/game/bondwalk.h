@@ -28,6 +28,8 @@ void bwalkUpdateSpeedForwards(f32 targetspeed, f32 accelspeed);
 void bwalkUpdateVertical(void);
 void bwalkApplyCrouchSpeed(void);
 void bwalkApplyAimSpeed(void);
+void bwalkApplyFlinchSpeed(void);
+bool bwalkIsFlinching(void);
 bool bwalkCanUncrouch(void);
 void bwalkUpdateCrouchOffsetReal(void);
 void bwalkUpdateCrouchOffset(void);

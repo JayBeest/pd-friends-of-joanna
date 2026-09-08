@@ -5290,6 +5290,13 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 					if (g_Vars.currentplayer->haschrbody) {
 						chrFlinchBody(chr);
 #ifndef PLATFORM_N64
+						// The same event, on the player's own clock. What the
+						// flinch costs her is in bwalkApplyFlinchSpeed() and
+						// bmoveIsFlinching(); see FLINCH_BUSY for why it is not
+						// read off flinchcnt.
+						g_Vars.currentplayer->flinchtime60 = g_Vars.lvframe60;
+#endif
+#ifndef PLATFORM_N64
 						// playerDieByShooter() has already run above if this was
 						// the shot that killed, so chrIsDead() is the question
 						// of which of the two the body wants. The flinch would

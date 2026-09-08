@@ -2155,7 +2155,19 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		movedata.speedvertaup = savedverta;
 	}
 
+#ifndef PLATFORM_N64
+	// A flinch takes the trigger for as long as it lasts. Refused here, at the
+	// one place the trigger reaches the gun, rather than inside the gun's own
+	// state machine: the gunscript never starts, so nothing is spent, nothing
+	// is animated and there is no shot to suppress later.
+	//
+	// Only the trigger. The use button, the menus and everything else input
+	// does are untouched, so she can still open a door, work a terminal or read
+	// her inventory with a bullet in her.
+	bgunTickGameplay(movedata.triggeron && !bwalkIsFlinching());
+#else
 	bgunTickGameplay(movedata.triggeron);
+#endif
 
 	if (g_Vars.bondvisible && (bgunIsFiring(HAND_RIGHT) || bgunIsFiring(HAND_LEFT))) {
 		noiseradius = 0;

@@ -298,10 +298,10 @@ void modSpectateTick(void)
 	// camera is expected to do. The horizontal pair is the same expression
 	// bwalkTick() uses, so the sense of the stick does not change when the
 	// mode does.
-	dstpos.x = prop->pos.x + ((g_Vars.currentplayer->bond2.unk00.x * g_Vars.currentplayer->vv_cosverta * fwd)
-			- (g_Vars.currentplayer->bond2.unk00.z * side)) * speed;
-	dstpos.z = prop->pos.z + ((g_Vars.currentplayer->bond2.unk00.z * g_Vars.currentplayer->vv_cosverta * fwd)
-			+ (g_Vars.currentplayer->bond2.unk00.x * side)) * speed;
+	dstpos.x = prop->pos.x + ((g_Vars.currentplayer->bond2.heading.x * g_Vars.currentplayer->vv_cosverta * fwd)
+			- (g_Vars.currentplayer->bond2.heading.z * side)) * speed;
+	dstpos.z = prop->pos.z + ((g_Vars.currentplayer->bond2.heading.z * g_Vars.currentplayer->vv_cosverta * fwd)
+			+ (g_Vars.currentplayer->bond2.heading.x * side)) * speed;
 
 	// vv_sinverta is taken from vv_verta360, so looking up gives +1 and looking
 	// down gives -1 without a sign flip here.

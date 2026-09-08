@@ -542,9 +542,9 @@ f32 bmoveCalculateLookahead(void)
 
 	playerGetBbox(g_Vars.currentplayer->prop, &radius, &ymax, &ymin);
 
-	sp100.x = g_Vars.currentplayer->bond2.unk00.x;
-	sp100.y = g_Vars.currentplayer->bond2.unk00.y;
-	sp100.z = g_Vars.currentplayer->bond2.unk00.z;
+	sp100.x = g_Vars.currentplayer->bond2.heading.x;
+	sp100.y = g_Vars.currentplayer->bond2.heading.y;
+	sp100.z = g_Vars.currentplayer->bond2.heading.z;
 
 	spf0.x = g_Vars.currentplayer->prop->pos.x;
 	spf0.y = g_Vars.currentplayer->prop->pos.y - 30;
@@ -2770,9 +2770,9 @@ void bmoveUpdateVerta(void)
 	g_Vars.currentplayer->vv_cosverta = cosf(BADDEG2RAD(g_Vars.currentplayer->vv_verta360));
 	g_Vars.currentplayer->vv_sinverta = sinf(BADDEG2RAD(g_Vars.currentplayer->vv_verta360));
 
-	g_Vars.currentplayer->bond2.unk00.x = -g_Vars.currentplayer->vv_sintheta;
-	g_Vars.currentplayer->bond2.unk00.y = 0;
-	g_Vars.currentplayer->bond2.unk00.z = g_Vars.currentplayer->vv_costheta;
+	g_Vars.currentplayer->bond2.heading.x = -g_Vars.currentplayer->vv_sintheta;
+	g_Vars.currentplayer->bond2.heading.y = 0;
+	g_Vars.currentplayer->bond2.heading.z = g_Vars.currentplayer->vv_costheta;
 
 	if (g_Vars.currentplayer->prop) {
 		struct chrdata *chr = g_Vars.currentplayer->prop->chr;
@@ -2788,9 +2788,9 @@ void bmove0f0cc19c(struct coord *arg)
 	f32 min;
 	f32 mult;
 
-	g_Vars.currentplayer->bond2.unk10.x = arg->x;
-	g_Vars.currentplayer->bond2.unk10.y = arg->y;
-	g_Vars.currentplayer->bond2.unk10.z = arg->z;
+	g_Vars.currentplayer->bond2.eyepos.x = arg->x;
+	g_Vars.currentplayer->bond2.eyepos.y = arg->y;
+	g_Vars.currentplayer->bond2.eyepos.z = arg->z;
 
 	if (g_Vars.currentplayer->isdead && g_Vars.currentplayer->bondleandown > 0) {
 		g_Vars.currentplayer->bondleandown -= 0.25f;
@@ -2801,7 +2801,7 @@ void bmove0f0cc19c(struct coord *arg)
 	}
 
 	if (g_Vars.currentplayer->vv_verta < 0) {
-		g_Vars.currentplayer->bond2.unk10.y += -(1.0f - g_Vars.currentplayer->vv_cosverta) * g_Vars.currentplayer->bondleandown;
+		g_Vars.currentplayer->bond2.eyepos.y += -(1.0f - g_Vars.currentplayer->vv_cosverta) * g_Vars.currentplayer->bondleandown;
 	}
 
 	if (cheatIsActive(CHEAT_SMALLJO)) {
@@ -2809,30 +2809,30 @@ void bmove0f0cc19c(struct coord *arg)
 			mult = g_Vars.currentplayer->bondentert * 0.6f + 0.4f;
 		} else if (g_Vars.currentplayer->bondmovemode == MOVEMODE_WALK && g_Vars.currentplayer->walkinitmove) {
 			mult = (1.0f - g_Vars.currentplayer->walkinitt) * 0.6f + 0.4f;
-			g_Vars.currentplayer->bond2.unk10.y += (g_Vars.currentplayer->crouchoffsetreal - g_Vars.currentplayer->crouchoffsetrealsmall) * g_Vars.currentplayer->walkinitt;
+			g_Vars.currentplayer->bond2.eyepos.y += (g_Vars.currentplayer->crouchoffsetreal - g_Vars.currentplayer->crouchoffsetrealsmall) * g_Vars.currentplayer->walkinitt;
 		} else if (g_Vars.currentplayer->bondmovemode == MOVEMODE_WALK) {
 			mult = 0.4f;
-			g_Vars.currentplayer->bond2.unk10.y += (g_Vars.currentplayer->crouchoffsetreal - g_Vars.currentplayer->crouchoffsetrealsmall);
+			g_Vars.currentplayer->bond2.eyepos.y += (g_Vars.currentplayer->crouchoffsetreal - g_Vars.currentplayer->crouchoffsetrealsmall);
 		} else {
 			mult = 0.4f;
 		}
 
-		g_Vars.currentplayer->bond2.unk10.y = (g_Vars.currentplayer->bond2.unk10.y - g_Vars.currentplayer->vv_manground) * mult;
+		g_Vars.currentplayer->bond2.eyepos.y = (g_Vars.currentplayer->bond2.eyepos.y - g_Vars.currentplayer->vv_manground) * mult;
 
 #if VERSION < VERSION_NTSC_1_0
-		if (g_Vars.currentplayer->bond2.unk10.y < 30) {
-			g_Vars.currentplayer->bond2.unk10.y = 30;
+		if (g_Vars.currentplayer->bond2.eyepos.y < 30) {
+			g_Vars.currentplayer->bond2.eyepos.y = 30;
 		}
 #endif
 
-		g_Vars.currentplayer->bond2.unk10.y += g_Vars.currentplayer->vv_manground;
+		g_Vars.currentplayer->bond2.eyepos.y += g_Vars.currentplayer->vv_manground;
 	}
 
 #if VERSION >= VERSION_NTSC_1_0
 	min = g_Vars.currentplayer->vv_ground + 10;
 
-	if (g_Vars.currentplayer->bond2.unk10.y < min) {
-		g_Vars.currentplayer->bond2.unk10.y = min;
+	if (g_Vars.currentplayer->bond2.eyepos.y < min) {
+		g_Vars.currentplayer->bond2.eyepos.y = min;
 	}
 #endif
 }
@@ -2886,12 +2886,12 @@ void bmoveUpdateHead(f32 arg0, f32 arg1, f32 arg2, Mtxf *arg3, f32 arg4)
 		quaternionToMtx(sp68, &sp180);
 	}
 
-	g_Vars.currentplayer->bond2.unk1c.x = sp180.m[2][0];
-	g_Vars.currentplayer->bond2.unk1c.y = sp180.m[2][1];
-	g_Vars.currentplayer->bond2.unk1c.z = sp180.m[2][2];
-	g_Vars.currentplayer->bond2.unk28.x = sp180.m[1][0];
-	g_Vars.currentplayer->bond2.unk28.y = sp180.m[1][1];
-	g_Vars.currentplayer->bond2.unk28.z = sp180.m[1][2];
+	g_Vars.currentplayer->bond2.look.x = sp180.m[2][0];
+	g_Vars.currentplayer->bond2.look.y = sp180.m[2][1];
+	g_Vars.currentplayer->bond2.look.z = sp180.m[2][2];
+	g_Vars.currentplayer->bond2.up.x = sp180.m[1][0];
+	g_Vars.currentplayer->bond2.up.y = sp180.m[1][1];
+	g_Vars.currentplayer->bond2.up.z = sp180.m[1][2];
 }
 
 void bmove0f0cc654(f32 arg0, f32 arg1, f32 arg2)

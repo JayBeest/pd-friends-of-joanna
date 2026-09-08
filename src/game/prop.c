@@ -1269,7 +1269,7 @@ void hitCreate(struct shotdata *shotdata, struct prop *prop, f32 hitdistance, s3
 static bool handMeleeIsInReach(struct prop *prop, f32 reach)
 {
 	struct prop *playerprop = g_Vars.currentplayer->prop;
-	struct coord *look = &g_Vars.currentplayer->bond2.unk1c;
+	struct coord *look = &g_Vars.currentplayer->bond2.look;
 	f32 dx = prop->pos.x - playerprop->pos.x;
 	f32 dy = prop->pos.y - playerprop->pos.y;
 	f32 dz = prop->pos.z - playerprop->pos.z;
@@ -2787,16 +2787,16 @@ void farsightChooseTarget(void)
 							&& chr->actiontype != ACT_DEAD
 							&& (chr->hidden & CHRHFLAG_CLOAKED) == 0
 							&& (prop->type != PROPTYPE_PLAYER || !g_Vars.players[playermgrGetPlayerNumByProp(prop)]->isdead)) {
-						f32 xdist = g_Vars.currentplayer->bond2.unk10.x - prop->pos.x;
-						f32 ydist = g_Vars.currentplayer->bond2.unk10.y - prop->pos.y;
-						f32 zdist = g_Vars.currentplayer->bond2.unk10.z - prop->pos.z;
+						f32 xdist = g_Vars.currentplayer->bond2.eyepos.x - prop->pos.x;
+						f32 ydist = g_Vars.currentplayer->bond2.eyepos.y - prop->pos.y;
+						f32 zdist = g_Vars.currentplayer->bond2.eyepos.z - prop->pos.z;
 
 						f32 dist = sqrtf(xdist * xdist + ydist * ydist + zdist * zdist);
 
 						if (dist > 0) {
-							f32 thing = (xdist * g_Vars.currentplayer->bond2.unk1c.f[0]
-									+ ydist * g_Vars.currentplayer->bond2.unk1c.f[1]
-									+ zdist * g_Vars.currentplayer->bond2.unk1c.f[2]) / dist;
+							f32 thing = (xdist * g_Vars.currentplayer->bond2.look.f[0]
+									+ ydist * g_Vars.currentplayer->bond2.look.f[1]
+									+ zdist * g_Vars.currentplayer->bond2.look.f[2]) / dist;
 
 							if (thing < 0 && thing < bestthing) {
 								bestthing = thing;
@@ -2987,9 +2987,9 @@ void autoaimTick(void)
 		}
 
 		if (cangangsta) {
-			f32 xdist = g_Vars.currentplayer->bond2.unk10.x - bestprop->pos.x;
-			f32 ydist = g_Vars.currentplayer->bond2.unk10.y - bestprop->pos.y;
-			f32 zdist = g_Vars.currentplayer->bond2.unk10.z - bestprop->pos.z;
+			f32 xdist = g_Vars.currentplayer->bond2.eyepos.x - bestprop->pos.x;
+			f32 ydist = g_Vars.currentplayer->bond2.eyepos.y - bestprop->pos.y;
+			f32 zdist = g_Vars.currentplayer->bond2.eyepos.z - bestprop->pos.z;
 			f32 dist = sqrtf(xdist * xdist + ydist * ydist + zdist * zdist);
 
 			if (dist < 200) {

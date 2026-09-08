@@ -449,9 +449,9 @@ void playerReset(void)
 
 	playerResetBond(&g_Vars.currentplayer->bond2, &pos);
 
-	g_Vars.currentplayer->bond2.unk00.x = -sinf(turnanglerad);
-	g_Vars.currentplayer->bond2.unk00.y = 0;
-	g_Vars.currentplayer->bond2.unk00.z = cosf(turnanglerad);
+	g_Vars.currentplayer->bond2.heading.x = -sinf(turnanglerad);
+	g_Vars.currentplayer->bond2.heading.y = 0;
+	g_Vars.currentplayer->bond2.heading.z = cosf(turnanglerad);
 
 
 	g_Vars.currentplayer->prop->pos.f[0] = g_Vars.currentplayer->bondprevpos.f[0] = pos.f[0];
@@ -464,8 +464,8 @@ void playerReset(void)
 	g_Vars.currentplayer->prop->rooms[1] = -1;
 
 	playerSetCamPropertiesWithRoom(&pos,
-			&g_Vars.currentplayer->bond2.unk28,
-			&g_Vars.currentplayer->bond2.unk1c, rooms[0]);
+			&g_Vars.currentplayer->bond2.up,
+			&g_Vars.currentplayer->bond2.look, rooms[0]);
 
 	numchrs = chrsGetNumSlots();
 

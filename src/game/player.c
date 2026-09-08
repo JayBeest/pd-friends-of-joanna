@@ -551,9 +551,9 @@ void playerStartNewLife(void)
 
 	playerResetBond(&g_Vars.currentplayer->bond2, &pos);
 
-	g_Vars.currentplayer->bond2.unk00.x = -sinf(angle);
-	g_Vars.currentplayer->bond2.unk00.y = 0;
-	g_Vars.currentplayer->bond2.unk00.z = cosf(angle);
+	g_Vars.currentplayer->bond2.heading.x = -sinf(angle);
+	g_Vars.currentplayer->bond2.heading.y = 0;
+	g_Vars.currentplayer->bond2.heading.z = cosf(angle);
 
 	g_Vars.currentplayer->prop->pos.f[0] = g_Vars.currentplayer->bondprevpos.f[0] = pos.f[0];
 	g_Vars.currentplayer->prop->pos.f[1] = g_Vars.currentplayer->bondprevpos.f[1] = pos.f[1];
@@ -564,8 +564,8 @@ void playerStartNewLife(void)
 	g_Vars.currentplayer->prop->rooms[0] = rooms[0];
 	g_Vars.currentplayer->prop->rooms[1] = -1;
 
-	playerSetCamPropertiesWithRoom(&pos, &g_Vars.currentplayer->bond2.unk28,
-			&g_Vars.currentplayer->bond2.unk1c, rooms[0]);
+	playerSetCamPropertiesWithRoom(&pos, &g_Vars.currentplayer->bond2.up,
+			&g_Vars.currentplayer->bond2.look, rooms[0]);
 
 	if (g_Vars.coopplayers[g_Vars.currentplayernum] || g_Vars.bond == g_Vars.currentplayer) {
 		u32 stack;
@@ -1305,21 +1305,21 @@ void playerSpawn(void)
 
 void playerResetBond(struct playerbond *pb, struct coord *pos)
 {
-	pb->unk10.x = pos->x;
-	pb->unk10.y = pos->y;
-	pb->unk10.z = pos->z;
+	pb->eyepos.x = pos->x;
+	pb->eyepos.y = pos->y;
+	pb->eyepos.z = pos->z;
 
-	pb->unk1c.x = 1;
-	pb->unk1c.y = 0;
-	pb->unk1c.z = 0;
+	pb->look.x = 1;
+	pb->look.y = 0;
+	pb->look.z = 0;
 
-	pb->unk28.x = 0;
-	pb->unk28.y = 1;
-	pb->unk28.z = 0;
+	pb->up.x = 0;
+	pb->up.y = 1;
+	pb->up.z = 0;
 
-	pb->unk00.x = 0;
-	pb->unk00.y = 0;
-	pb->unk00.z = 1;
+	pb->heading.x = 0;
+	pb->heading.y = 0;
+	pb->heading.z = 1;
 
 	pb->radius = 30;
 }
@@ -1989,13 +1989,13 @@ void playerTickMpSwirl(void)
 
 	angle = (g_MpSwirlAngleDegrees - g_Vars.currentplayer->vv_theta) * M_PI / 180.0f;
 
-	pos.x = sinf(angle) * g_MpSwirlDistance + g_Vars.currentplayer->bond2.unk10.x;
-	pos.y = g_Vars.currentplayer->bond2.unk10.y + g_MpSwirlDistance * 0.08f;
-	pos.z = cosf(angle) * g_MpSwirlDistance + g_Vars.currentplayer->bond2.unk10.z;
+	pos.x = sinf(angle) * g_MpSwirlDistance + g_Vars.currentplayer->bond2.eyepos.x;
+	pos.y = g_Vars.currentplayer->bond2.eyepos.y + g_MpSwirlDistance * 0.08f;
+	pos.z = cosf(angle) * g_MpSwirlDistance + g_Vars.currentplayer->bond2.eyepos.z;
 
-	look.x = g_Vars.currentplayer->bond2.unk10.x - pos.x;
-	look.y = g_Vars.currentplayer->bond2.unk10.y - pos.y;
-	look.z = g_Vars.currentplayer->bond2.unk10.z - pos.z;
+	look.x = g_Vars.currentplayer->bond2.eyepos.x - pos.x;
+	look.y = g_Vars.currentplayer->bond2.eyepos.y - pos.y;
+	look.z = g_Vars.currentplayer->bond2.eyepos.z - pos.z;
 
 	player0f0c1840(&pos, &up, &look, &g_Vars.currentplayer->prop->pos, g_Vars.currentplayer->prop->rooms);
 
@@ -2346,14 +2346,14 @@ void playerTickCutscene(bool arg0)
 
 		bmoveSetMode(MOVEMODE_WALK);
 
-		pos.x += sp104 * (g_Vars.bond->bond2.unk10.x - pos.x);
-		pos.y += sp104 * (g_Vars.bond->bond2.unk10.y - pos.y);
-		pos.z += sp104 * (g_Vars.bond->bond2.unk10.z - pos.z);
+		pos.x += sp104 * (g_Vars.bond->bond2.eyepos.x - pos.x);
+		pos.y += sp104 * (g_Vars.bond->bond2.eyepos.y - pos.y);
+		pos.z += sp104 * (g_Vars.bond->bond2.eyepos.z - pos.z);
 
 		mtx00016d58(&spc4, 0, 0, 0, -look.x, -look.y, -look.z, up.x, up.y, up.z);
 		mtx00016d58(&sp84, 0, 0, 0,
-				-g_Vars.bond->bond2.unk1c.x, -g_Vars.bond->bond2.unk1c.y, -g_Vars.bond->bond2.unk1c.z,
-				g_Vars.bond->bond2.unk28.x, g_Vars.bond->bond2.unk28.y, g_Vars.bond->bond2.unk28.z);
+				-g_Vars.bond->bond2.look.x, -g_Vars.bond->bond2.look.y, -g_Vars.bond->bond2.look.z,
+				g_Vars.bond->bond2.up.x, g_Vars.bond->bond2.up.y, g_Vars.bond->bond2.up.z);
 		quaternion0f097044(&spc4, sp74);
 		quaternion0f097044(&sp84, sp64);
 		quaternion0f0976c0(sp64, sp74);
@@ -3433,7 +3433,7 @@ void playerUpdateShake(void)
 	struct coord coord = {0, 0, 0};
 
 	if (g_Vars.currentplayer->isdead == false) {
-		explosionsUpdateShake(&g_Vars.currentplayer->bond2.unk10, &g_Vars.currentplayer->bond2.unk1c, &coord);
+		explosionsUpdateShake(&g_Vars.currentplayer->bond2.eyepos, &g_Vars.currentplayer->bond2.look, &coord);
 	} else {
 		viShake(0);
 	}
@@ -3804,9 +3804,9 @@ static void playerPullBackCamera(struct coord *campos)
 		return;
 	}
 
-	back.x = campos->x - g_Vars.currentplayer->bond2.unk1c.x * dist;
-	back.y = campos->y - g_Vars.currentplayer->bond2.unk1c.y * dist;
-	back.z = campos->z - g_Vars.currentplayer->bond2.unk1c.z * dist;
+	back.x = campos->x - g_Vars.currentplayer->bond2.look.x * dist;
+	back.y = campos->y - g_Vars.currentplayer->bond2.look.y * dist;
+	back.z = campos->z - g_Vars.currentplayer->bond2.look.z * dist;
 
 	if (cdExamLos08(campos, g_Vars.currentplayer->prop->rooms, &back,
 				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
@@ -3842,9 +3842,9 @@ static void playerPullBackCamera(struct coord *campos)
 
 	g_Vars.currentplayer->thirdpersondist = dist;
 
-	campos->x -= g_Vars.currentplayer->bond2.unk1c.x * dist;
-	campos->y -= g_Vars.currentplayer->bond2.unk1c.y * dist;
-	campos->z -= g_Vars.currentplayer->bond2.unk1c.z * dist;
+	campos->x -= g_Vars.currentplayer->bond2.look.x * dist;
+	campos->y -= g_Vars.currentplayer->bond2.look.y * dist;
+	campos->z -= g_Vars.currentplayer->bond2.look.z * dist;
 
 	// Kept for the death camera, which stops here rather than working out
 	// somewhere of its own to stand.
@@ -3903,7 +3903,7 @@ static void playerDeathCamera(struct coord *campos, struct coord *camup, struct 
 	*campos = g_Vars.currentplayer->thirdpersoncampos;
 
 	// Unit length, because that is what the rest of the game gets from
-	// bond2.unk1c and reads cam_look as. The camera matrix would normalise it
+	// bond2.look and reads cam_look as. The camera matrix would normalise it
 	// either way; the star field and the gas cloud would not.
 	camlook->x = look.x / len;
 	camlook->y = look.y / len;
@@ -4519,16 +4519,16 @@ void playerTick(bool arg0)
 		playerUpdateShake();
 		playerSetCameraMode(CAMERAMODE_DEFAULT);
 
-		spf4.x = g_Vars.currentplayer->bond2.unk10.x;
-		spf4.y = g_Vars.currentplayer->bond2.unk10.y;
-		spf4.z = g_Vars.currentplayer->bond2.unk10.z;
+		spf4.x = g_Vars.currentplayer->bond2.eyepos.x;
+		spf4.y = g_Vars.currentplayer->bond2.eyepos.y;
+		spf4.z = g_Vars.currentplayer->bond2.eyepos.z;
 
 		spf4.x = a + spf4.x;
 		spf4.y = b + spf4.y;
 		spf4.z = c + spf4.z;
 
-		camup = g_Vars.currentplayer->bond2.unk28;
-		camlook = g_Vars.currentplayer->bond2.unk1c;
+		camup = g_Vars.currentplayer->bond2.up;
+		camlook = g_Vars.currentplayer->bond2.look;
 
 		// The eye position and both basis vectors in bond2 are left alone, so
 		// everything downstream carries on as if the camera had not moved -
@@ -4812,9 +4812,9 @@ void playerTick(bool arg0)
 		bmoveTick(1, 1, arg0, 0);
 		playerUpdateShake();
 		playerSetCameraMode(CAMERAMODE_DEFAULT);
-		player0f0c1840(&g_Vars.currentplayer->bond2.unk10,
-				&g_Vars.currentplayer->bond2.unk28,
-				&g_Vars.currentplayer->bond2.unk1c,
+		player0f0c1840(&g_Vars.currentplayer->bond2.eyepos,
+				&g_Vars.currentplayer->bond2.up,
+				&g_Vars.currentplayer->bond2.look,
 				&g_Vars.currentplayer->prop->pos,
 				g_Vars.currentplayer->prop->rooms);
 	} else if (g_Vars.tickmode == TICKMODE_MPSWIRL) {
@@ -4848,8 +4848,8 @@ void playerTick(bool arg0)
 			pad.pos.x -= 100;
 		}
 
-		xdist = pad.pos.x - g_Vars.currentplayer->bond2.unk10.x;
-		zdist = pad.pos.z - g_Vars.currentplayer->bond2.unk10.z;
+		xdist = pad.pos.x - g_Vars.currentplayer->bond2.eyepos.x;
+		zdist = pad.pos.z - g_Vars.currentplayer->bond2.eyepos.z;
 		targetangle = atan2f(xdist, zdist);
 
 		if (targetangle > M_BADTAU) {
@@ -4860,7 +4860,7 @@ void playerTick(bool arg0)
 			targetangle += M_BADTAU;
 		}
 
-		oldangle = atan2f(g_Vars.currentplayer->bond2.unk00.x, g_Vars.currentplayer->bond2.unk00.z);
+		oldangle = atan2f(g_Vars.currentplayer->bond2.heading.x, g_Vars.currentplayer->bond2.heading.z);
 
 		if (oldangle > M_BADTAU) {
 			oldangle -= M_BADTAU;
@@ -4925,9 +4925,9 @@ void playerTick(bool arg0)
 		bmoveTick(1, 1, 0, 1);
 		playerUpdateShake();
 		playerSetCameraMode(CAMERAMODE_DEFAULT);
-		player0f0c1840(&g_Vars.currentplayer->bond2.unk10,
-				&g_Vars.currentplayer->bond2.unk28,
-				&g_Vars.currentplayer->bond2.unk1c,
+		player0f0c1840(&g_Vars.currentplayer->bond2.eyepos,
+				&g_Vars.currentplayer->bond2.up,
+				&g_Vars.currentplayer->bond2.look,
 				&g_Vars.currentplayer->prop->pos,
 				g_Vars.currentplayer->prop->rooms);
 	}

@@ -115,8 +115,8 @@ void bwalkInit(void)
 		struct coord delta;
 		mtx00016b58(&g_Vars.currentplayer->walkinitmtx,
 				0, 0, 0,
-				-g_Vars.currentplayer->bond2.unk1c.x, -g_Vars.currentplayer->bond2.unk1c.y, -g_Vars.currentplayer->bond2.unk1c.z,
-				g_Vars.currentplayer->bond2.unk28.x, g_Vars.currentplayer->bond2.unk28.y, g_Vars.currentplayer->bond2.unk28.z);
+				-g_Vars.currentplayer->bond2.look.x, -g_Vars.currentplayer->bond2.look.y, -g_Vars.currentplayer->bond2.look.z,
+				g_Vars.currentplayer->bond2.up.x, g_Vars.currentplayer->bond2.up.y, g_Vars.currentplayer->bond2.up.z);
 		g_Vars.currentplayer->walkinitt = 0;
 		g_Vars.currentplayer->walkinitt2 = 0;
 		g_Vars.currentplayer->walkinitstart.x = g_Vars.currentplayer->prop->pos.x;
@@ -373,7 +373,7 @@ static f32 bwalkWrapAngle(f32 angle)
  *
  * Which way is the way they are already going, now in any direction rather than
  * only sideways: the movement the roll came out of is the one they meant, and
- * standing still still rolls right. The direction is built out of bond2.unk00,
+ * standing still still rolls right. The direction is built out of bond2.heading,
  * the flat look direction, and the strafe axis written out of it, and not off
  * chrGetSideVector() the way the simulants' is. A simulant's look angle is
  * where it is going, but a player's body carries angleoffset - the lean the
@@ -431,10 +431,10 @@ void bwalkTryRoll(void)
 
 	// The flat look direction and the strafe axis written out of it. Standing
 	// still has no direction of its own, so it keeps the one it always had.
-	fwd.x = g_Vars.currentplayer->bond2.unk00.x;
-	fwd.z = g_Vars.currentplayer->bond2.unk00.z;
-	side.x = -g_Vars.currentplayer->bond2.unk00.z;
-	side.z = g_Vars.currentplayer->bond2.unk00.x;
+	fwd.x = g_Vars.currentplayer->bond2.heading.x;
+	fwd.z = g_Vars.currentplayer->bond2.heading.z;
+	side.x = -g_Vars.currentplayer->bond2.heading.z;
+	side.z = g_Vars.currentplayer->bond2.heading.x;
 
 	if (sidespeed == 0.0f && fwdspeed == 0.0f) {
 		sidespeed = 1.0f;
@@ -1797,8 +1797,8 @@ void bwalk0f0c69b8(void)
 				&g_Vars.currentplayer->bondshotspeed,
 				g_Vars.currentplayer->vv_sintheta, g_Vars.currentplayer->vv_costheta);
 
-		tmp1 = -g_Vars.currentplayer->swaytarget * g_Vars.currentplayer->bond2.unk00.f[2];
-		tmp2 = g_Vars.currentplayer->swaytarget * g_Vars.currentplayer->bond2.unk00.f[0];
+		tmp1 = -g_Vars.currentplayer->swaytarget * g_Vars.currentplayer->bond2.heading.f[2];
+		tmp2 = g_Vars.currentplayer->swaytarget * g_Vars.currentplayer->bond2.heading.f[0];
 		tmp1 *= spc0;
 		tmp2 *= spc0;
 		spa8 = 0.0f;
@@ -1906,16 +1906,16 @@ void bwalk0f0c69b8(void)
 		}
 #endif
 
-		spcc.f[0] += (spd8 * g_Vars.currentplayer->bond2.unk00.f[0] - spdc * g_Vars.currentplayer->bond2.unk00.f[2]) * g_Vars.lvupdate60freal;
-		spcc.f[2] += (spd8 * g_Vars.currentplayer->bond2.unk00.f[2] + spdc * g_Vars.currentplayer->bond2.unk00.f[0]) * g_Vars.lvupdate60freal;
+		spcc.f[0] += (spd8 * g_Vars.currentplayer->bond2.heading.f[0] - spdc * g_Vars.currentplayer->bond2.heading.f[2]) * g_Vars.lvupdate60freal;
+		spcc.f[2] += (spd8 * g_Vars.currentplayer->bond2.heading.f[2] + spdc * g_Vars.currentplayer->bond2.heading.f[0]) * g_Vars.lvupdate60freal;
 		spcc.f[0] += spb4;
 		spcc.f[2] += spb0;
 
 		bmoveUpdateMoveInitSpeed(&spcc);
 
 		if (debugIsTurboModeEnabled()) {
-			spcc.f[0] += (g_Vars.currentplayer->bond2.unk00.f[0] * g_Vars.currentplayer->speedforwards - g_Vars.currentplayer->bond2.unk00.f[2] * g_Vars.currentplayer->speedsideways) * g_Vars.lvupdate60freal * 10.0f;
-			spcc.f[2] += (g_Vars.currentplayer->bond2.unk00.f[2] * g_Vars.currentplayer->speedforwards + g_Vars.currentplayer->bond2.unk00.f[0] * g_Vars.currentplayer->speedsideways) * g_Vars.lvupdate60freal * 10.0f;
+			spcc.f[0] += (g_Vars.currentplayer->bond2.heading.f[0] * g_Vars.currentplayer->speedforwards - g_Vars.currentplayer->bond2.heading.f[2] * g_Vars.currentplayer->speedsideways) * g_Vars.lvupdate60freal * 10.0f;
+			spcc.f[2] += (g_Vars.currentplayer->bond2.heading.f[2] * g_Vars.currentplayer->speedforwards + g_Vars.currentplayer->bond2.heading.f[0] * g_Vars.currentplayer->speedsideways) * g_Vars.lvupdate60freal * 10.0f;
 		}
 
 		if (g_Vars.currentplayer->bondforcespeed.f[0] != 0.0f || g_Vars.currentplayer->bondforcespeed.f[2] != 0.0f) {
@@ -1997,11 +1997,11 @@ void bwalk0f0c69b8(void)
 		xdelta = g_Vars.currentplayer->prop->pos.x - g_Vars.currentplayer->bondprevpos.x;
 		zdelta = g_Vars.currentplayer->prop->pos.z - g_Vars.currentplayer->bondprevpos.z;
 
-		sp54 = -xdelta * g_Vars.currentplayer->bond2.unk00.f[2] + zdelta * g_Vars.currentplayer->bond2.unk00.f[0];
-		sp50 = xdelta * g_Vars.currentplayer->bond2.unk00.f[0] + zdelta * g_Vars.currentplayer->bond2.unk00.f[2];
+		sp54 = -xdelta * g_Vars.currentplayer->bond2.heading.f[2] + zdelta * g_Vars.currentplayer->bond2.heading.f[0];
+		sp50 = xdelta * g_Vars.currentplayer->bond2.heading.f[0] + zdelta * g_Vars.currentplayer->bond2.heading.f[2];
 
-		sp4c = -spcc.f[0] * g_Vars.currentplayer->bond2.unk00.f[2] + spcc.f[2] * g_Vars.currentplayer->bond2.unk00.f[0];
-		sp48 = spcc.f[0] * g_Vars.currentplayer->bond2.unk00.f[0] + spcc.f[2] * g_Vars.currentplayer->bond2.unk00.f[2];
+		sp4c = -spcc.f[0] * g_Vars.currentplayer->bond2.heading.f[2] + spcc.f[2] * g_Vars.currentplayer->bond2.heading.f[0];
+		sp48 = spcc.f[0] * g_Vars.currentplayer->bond2.heading.f[0] + spcc.f[2] * g_Vars.currentplayer->bond2.heading.f[2];
 
 		if (xdelta >= 0.0f) {
 			if (g_Vars.currentplayer->bondshotspeed.f[0] > 0.0f) {

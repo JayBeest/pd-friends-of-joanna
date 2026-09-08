@@ -1093,14 +1093,14 @@ void bgrab0f0ce924(void)
 		}
 #endif
 
-		sp74.x += (sp80 * g_Vars.currentplayer->bond2.unk00.f[0] - sp84 * g_Vars.currentplayer->bond2.unk00.f[2]) * g_Vars.lvupdate60freal;
-		sp74.z += (sp80 * g_Vars.currentplayer->bond2.unk00.f[2] + sp84 * g_Vars.currentplayer->bond2.unk00.f[0]) * g_Vars.lvupdate60freal;
+		sp74.x += (sp80 * g_Vars.currentplayer->bond2.heading.f[0] - sp84 * g_Vars.currentplayer->bond2.heading.f[2]) * g_Vars.lvupdate60freal;
+		sp74.z += (sp80 * g_Vars.currentplayer->bond2.heading.f[2] + sp84 * g_Vars.currentplayer->bond2.heading.f[0]) * g_Vars.lvupdate60freal;
 
 		bmoveUpdateMoveInitSpeed(&sp74);
 
 		if (debugIsTurboModeEnabled()) {
-			sp74.x += (g_Vars.currentplayer->bond2.unk00.f[0] * g_Vars.currentplayer->speedforwards - (g_Vars.currentplayer->bond2.unk00.f[2] * g_Vars.currentplayer->speedsideways)) * g_Vars.lvupdate60freal * 10.0f;
-			sp74.z += (g_Vars.currentplayer->bond2.unk00.f[2] * g_Vars.currentplayer->speedforwards + (g_Vars.currentplayer->bond2.unk00.f[0] * g_Vars.currentplayer->speedsideways)) * g_Vars.lvupdate60freal * 10.0f;
+			sp74.x += (g_Vars.currentplayer->bond2.heading.f[0] * g_Vars.currentplayer->speedforwards - (g_Vars.currentplayer->bond2.heading.f[2] * g_Vars.currentplayer->speedsideways)) * g_Vars.lvupdate60freal * 10.0f;
+			sp74.z += (g_Vars.currentplayer->bond2.heading.f[2] * g_Vars.currentplayer->speedforwards + (g_Vars.currentplayer->bond2.heading.f[0] * g_Vars.currentplayer->speedsideways)) * g_Vars.lvupdate60freal * 10.0f;
 		}
 
 		bgrab0f0ce0bc(&sp74);
@@ -1108,10 +1108,10 @@ void bgrab0f0ce924(void)
 		xdelta = g_Vars.currentplayer->prop->pos.f[0] - g_Vars.currentplayer->bondprevpos.f[0];
 		zdelta = g_Vars.currentplayer->prop->pos.f[2] - g_Vars.currentplayer->bondprevpos.f[2];
 
-		sp50 = -xdelta * g_Vars.currentplayer->bond2.unk00.f[2] + zdelta * g_Vars.currentplayer->bond2.unk00.f[0];
-		sp4c = xdelta * g_Vars.currentplayer->bond2.unk00.f[0] + zdelta * g_Vars.currentplayer->bond2.unk00.f[2];
-		sp48 = -sp74.f[0] * g_Vars.currentplayer->bond2.unk00.f[2] + sp74.f[2] * g_Vars.currentplayer->bond2.unk00.f[0];
-		sp44 = sp74.f[0] * g_Vars.currentplayer->bond2.unk00.f[0] + sp74.f[2] * g_Vars.currentplayer->bond2.unk00.f[2];
+		sp50 = -xdelta * g_Vars.currentplayer->bond2.heading.f[2] + zdelta * g_Vars.currentplayer->bond2.heading.f[0];
+		sp4c = xdelta * g_Vars.currentplayer->bond2.heading.f[0] + zdelta * g_Vars.currentplayer->bond2.heading.f[2];
+		sp48 = -sp74.f[0] * g_Vars.currentplayer->bond2.heading.f[2] + sp74.f[2] * g_Vars.currentplayer->bond2.heading.f[0];
+		sp44 = sp74.f[0] * g_Vars.currentplayer->bond2.heading.f[0] + sp74.f[2] * g_Vars.currentplayer->bond2.heading.f[2];
 
 		if (sp48 != 0.0f) {
 			if (g_Vars.currentplayer->speedstrafe * sp48 > 0.0f) {

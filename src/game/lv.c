@@ -682,8 +682,8 @@ Gfx *lvRenderManPosIfEnabled(Gfx *gdl)
 	s32 y2;
 
 	if (debugIsManPosEnabled()) {
-		f32 xfrac = g_Vars.currentplayer->bond2.unk00.x;
-		f32 zfrac = g_Vars.currentplayer->bond2.unk00.z;
+		f32 xfrac = g_Vars.currentplayer->bond2.heading.x;
+		f32 zfrac = g_Vars.currentplayer->bond2.heading.z;
 
 		char directions[][3] = {
 			{'n', '\0', '\0'},

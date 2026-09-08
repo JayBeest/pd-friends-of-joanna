@@ -2140,26 +2140,39 @@ struct gunheld {
   s32 totaltime240_60;
 };
 
+/**
+ * The player's camera as an orthonormal frame: where the eye is, where it is
+ * pointed, and which way is up. heading and eyepos are written by
+ * bmove0f0cc19c, look and up by bmoveUpdateHead, both from vv_theta and
+ * vv_verta360. Consumed by anything that needs to know what the player is
+ * looking at -- auto-aim, melee, the third person camera.
+ *
+ * look and up are named by playerSetCamPropertiesWithRoom(pos, up, look),
+ * which is called with exactly these two fields.
+ */
 struct playerbond {
 
-  // unk00.x = look vector x (-1 to +1)
-  // unk00.y = always 0?
-  // unk00.z = look vector z (-1 to +1)
-  /*0x0338 0x036c*/ struct coord unk00;
+  // The look direction flattened onto the ground plane: (-sin theta, 0, cos
+  // theta), so y is exactly 0 rather than approximately. Equal to look when
+  // the player is not pitched. This is the movement basis -- walking and
+  // strafing are heading and its perpendicular, taken inline at the use site.
+  /*0x0338 0x036c*/ struct coord heading;
 
   /*0x0344 0x0378*/ f32 radius; // always 30?
 
-  /*0x0348 0x037c*/ struct coord unk10;
+  // Eye position in world space. Seeded from the camera position, then
+  // adjusted on y by lean and by the crouch offsets.
+  /*0x0348 0x037c*/ struct coord eyepos;
 
-  // unk1c.x = affected by both left/right and up/down looking
-  // unk1c.y = vertical look vector (-1 for down, 1 for up)
-  // unk1c.z = affected by both left/right and up/down looking
-  /*0x0354 0x0388*/ struct coord unk1c;
+  // Unit look direction, pitch included: y is -1 looking straight down and +1
+  // straight up. Note this is the VIEW direction and not the gun's -- the two
+  // diverge, and bgunCalculatePlayerShotSpread is the one that answers where a
+  // bullet goes.
+  /*0x0354 0x0388*/ struct coord look;
 
-  // unk28.x = affected by both horiz and vertical angle
-  // unk28.y = 0 when looking up or down, .999 when looking horizontal
-  // unk28.z = pos.z
-  /*0x0360 0x0394*/ struct coord unk28;
+  // Camera up vector. Horizontal components are non-zero only when pitched,
+  // and y falls from ~1 towards 0 as the player looks further up or down.
+  /*0x0360 0x0394*/ struct coord up;
 };
 
 struct trackedprop {

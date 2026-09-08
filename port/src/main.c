@@ -238,6 +238,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterFloat("Stance.CamMinDist", &g_ThirdPersonCamMinDist, 0.f, 500.f);
 	configRegisterFloat("Stance.FadeStart", &g_BodyFadeStart, 0.f, 1000.f);
 	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
+	configRegisterFloat("Stance.ReloadAnimSpeed", &g_ReloadAnimSpeed, 0.1f, 4.f);
 	configRegisterFloat("Stance.RollImpulse", &g_RollImpulse, 0.f, 200.f);
 	configRegisterInt("Game.GEMuzzleFlashes", &g_BgunGeMuzzleFlashes, 0, 1);
 	configRegisterInt("Game.MaxExplosions", &g_MaxExplosions, 6, 96);

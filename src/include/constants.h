@@ -461,6 +461,11 @@
 // rather than from the camera, and the cosine of the half angle either side of
 // where she is looking that a target may stand in. 60 plus a bare hand's own 60
 // is 120, which is the reach chrTryPunch() gives a human guard's punch.
+// How fast the body plays its reload animation. The reload's own length is the
+// weapon's and the two do not agree, so this is the dial that makes the reach
+// for a magazine look like it belongs to the gun being reloaded.
+#define RELOAD_ANIMSPEED 1.0f
+
 #define MELEE_BODY_REACH 60.0f
 #define MELEE_CONE_COS   0.7071f
 

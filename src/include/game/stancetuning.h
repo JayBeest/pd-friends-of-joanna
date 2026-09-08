@@ -47,6 +47,9 @@ extern f32 g_ThirdPersonCamMinDist;
 extern f32 g_BodyFadeStart;
 extern f32 g_BodyFadeFloor;
 
+// How fast the body plays its reload animation.
+extern f32 g_ReloadAnimSpeed;
+
 // The combat roll's push.
 extern f32 g_RollImpulse;
 

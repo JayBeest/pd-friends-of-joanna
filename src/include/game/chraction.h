@@ -118,6 +118,8 @@ void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart);
 void chrPlayDeathAnimation(struct chrdata *chr, f32 relangle, s32 hitpart);
 bool chrPlayYeetAnimation(struct chrdata *chr, struct coord *exppos, f32 force);
 void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum);
+s32 chrPlayReloadAnimation(struct chrdata *chr);
+void chrEndReloadAnimation(struct chrdata *chr);
 #endif
 struct eyespy *chrToEyespy(struct chrdata *chr);
 void chrTickStand(struct chrdata *chr);

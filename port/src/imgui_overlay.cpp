@@ -168,6 +168,7 @@ extern "C" f32 g_ThirdPersonCamClearance;
 extern "C" f32 g_ThirdPersonCamMinDist;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
+extern "C" f32 g_ReloadAnimSpeed;
 extern "C" f32 g_RollImpulse;
 extern "C" void stanceTuningReset(void);
 
@@ -3147,6 +3148,14 @@ static void imguiOverlayDrawStancePanel(void)
 		imguiOverlayStanceKnob("Fade depth", &g_BodyFadeFloor, 0.0f, 1.0f, "%.2f",
 				"How much of her alpha the fade takes at its deepest.\n"
 				"1.0 would remove her outright, which reads as a bug.");
+	}
+
+	if (ImGui::CollapsingHeader("Reload", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Reload anim speed", &g_ReloadAnimSpeed, 0.1f, 4.0f, "%.2f",
+				"How fast the body plays its reload animation.\n"
+				"The reload's own length is the weapon's, and the two do not\n"
+				"agree - the body gives up as soon as the gun is loaded, so this\n"
+				"is about making the reach look like it belongs to that gun.");
 	}
 
 	if (ImGui::CollapsingHeader("Roll", ImGuiTreeNodeFlags_DefaultOpen)) {

@@ -3677,6 +3677,81 @@ void chrBeginArgh(struct chrdata *chr, f32 angle, s32 hitpart)
 
 #ifndef PLATFORM_N64
 /**
+ * The body's own reload, on a chr that is driving its own movement.
+ *
+ * Both of these are stock and both are in the ROM already: the setup scripts
+ * put guards on ANIM_RELOAD_0209 to be found reloading, and chrTickAnim() knows
+ * that animation well enough to stop a chr firing while it runs. Nobody has
+ * ever played one on a player, because until third person there was no body to
+ * play it on - the reload was the first person gun's animation and nothing
+ * else.
+ *
+ * This is the other half of that, and it is only the animation. The reload
+ * itself is bgunTickIncReload()'s from beginning to end: the ammo, the timing,
+ * the eject and the sound all belong to the gun, and this is asked for on the
+ * frame the gun starts its own reload animation and never waited on.
+ *
+ * Returns the animation started, or 0 if none was.
+ */
+static s16 g_ReloadAnims[] = {
+	ANIM_RELOAD_0209,
+	ANIM_RELOAD,
+};
+
+s32 chrPlayReloadAnimation(struct chrdata *chr)
+{
+	s16 animnum;
+	f32 endframe;
+
+	if (!chrCanPlayOneShotAnim(chr)) {
+		return 0;
+	}
+
+	// Not over a swing or a roll. A reload is the least urgent thing a body can
+	// be doing and it is the one that can afford to wait for the next magazine.
+	if (chrIsOneShotAnimPlaying(chr)) {
+		return 0;
+	}
+
+	animnum = g_ReloadAnims[rngRandom() % ARRAYCOUNT(g_ReloadAnims)];
+	endframe = animGetNumFrames(animnum) - 1;
+
+	modelSetAnimation(chr->model, animnum, false, 0, g_ReloadAnimSpeed, 16);
+	modelSetAnimEndFrame(chr->model, endframe);
+
+	chr->oneshotanim = animnum;
+
+	return animnum;
+}
+
+/**
+ * Give the body back before the animation runs out, when the gun is done first.
+ *
+ * A reload's length is the weapon's, not the animation's, and the two do not
+ * agree - a pistol is loaded long before the body has finished reaching for
+ * anything. Dropping oneshotanim is enough: the walk selector has the body back
+ * on the next frame and merges out of whatever pose it was in, the same way it
+ * takes it back when a one shot ends on its own.
+ */
+void chrEndReloadAnimation(struct chrdata *chr)
+{
+	s32 i;
+
+	if (chr == NULL || chr->oneshotanim == 0) {
+		return;
+	}
+
+	for (i = 0; i < ARRAYCOUNT(g_ReloadAnims); i++) {
+		if (chr->oneshotanim == g_ReloadAnims[i]) {
+			chr->oneshotanim = 0;
+			return;
+		}
+	}
+}
+#endif
+
+#ifndef PLATFORM_N64
+/**
  * Throw, on a third person body that is driving its own movement.
  *
  * chrThrowGrenade() is the guards' version: ACT_THROWGRENADE, and a tick that

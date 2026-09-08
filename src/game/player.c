@@ -6311,6 +6311,14 @@ s32 playerTickThirdPerson(struct prop *prop)
 	// knows how far through the swing it is.
 	if (player->haschrbody) {
 		chrTickPunchHit(chr);
+
+		// And the reload animation gives the body back as soon as the gun is
+		// loaded, rather than holding it for an animation the weapon was never
+		// going to take that long over.
+		if (!bgunIsReloading(&player->hands[HAND_RIGHT])
+				&& !bgunIsReloading(&player->hands[HAND_LEFT])) {
+			chrEndReloadAnimation(chr);
+		}
 	}
 #endif
 

@@ -1567,6 +1567,15 @@ s32 bgunTickIncReload(struct handweaponinfo *info, s32 handnum, struct hand *han
 						&& info->weaponnum != WEAPON_COMBATKNIFE) {
 					bgunStartAnimation(info->definition->ammos[func->ammoindex]->reload_animation, handnum, hand);
 
+#ifndef PLATFORM_N64
+					// The body reaches for the magazine on the same frame the
+					// gun does. Asked for and not waited on: the reload is the
+					// gun's from beginning to end, and a body that cannot play
+					// it - first person with no body, or one already swinging -
+					// changes nothing about it.
+					chrPlayReloadAnimation(g_Vars.currentplayer->prop->chr);
+#endif
+
 					hand->unk0d0e_07 = true;
 
 					if (info->definition->ammos[func->ammoindex]->flags & AMMOFLAG_INCREMENTALRELOAD) {

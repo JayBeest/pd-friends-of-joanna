@@ -23,6 +23,8 @@ f32 g_ThirdPersonCamMinDist = THIRDPERSON_CAMMINDIST;
 f32 g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 f32 g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
 
+f32 g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
+
 f32 g_RollImpulse = ROLL_IMPULSE;
 
 /**
@@ -49,6 +51,7 @@ void stanceTuningReset(void)
 	g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 	g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
 
+	g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 	g_RollImpulse = ROLL_IMPULSE;
 }
 

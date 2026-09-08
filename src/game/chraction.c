@@ -5292,9 +5292,10 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 #ifndef PLATFORM_N64
 						// The same event, on the player's own clock. What the
 						// flinch costs her is in bwalkApplyFlinchSpeed() and
-						// bmoveIsFlinching(); see FLINCH_BUSY for why it is not
+						// bwalkIsFlinching(); see FLINCH_BUSY for why it is not
 						// read off flinchcnt.
 						g_Vars.currentplayer->flinchtime60 = g_Vars.lvframe60;
+						g_Vars.currentplayer->flinchbusy60 = FLINCH_BUSY;
 #endif
 #ifndef PLATFORM_N64
 						// playerDieByShooter() has already run above if this was
@@ -5305,6 +5306,32 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 						// happened to it.
 						if (!chrIsDead(chr)) {
 							chrPlayArghAnimation(chr, angle, hitpart);
+
+							// The penalty lasts the reel, not a fixed window, so
+							// its length is taken from the animation that just
+							// started - what is left of it, over the speed it is
+							// running at. Measured ONCE, here, and then spent on
+							// the player's own clock: the model this was read
+							// from is not ticked in every stance, and a penalty
+							// that waits for a frozen animation to finish would
+							// never end.
+							if (chr->oneshotanim && chr->model) {
+								f32 speed = modelGetAnimSpeed(chr->model);
+								f32 left = modelGetAnimEndFrame(chr->model)
+									- modelGetCurAnimFrame(chr->model);
+
+								if (speed > 0.0f && left > 0.0f) {
+									s32 ticks = (s32)(left / speed);
+
+									if (ticks > FLINCH_BUSY_MAX) {
+										ticks = FLINCH_BUSY_MAX;
+									}
+
+									if (ticks > g_Vars.currentplayer->flinchbusy60) {
+										g_Vars.currentplayer->flinchbusy60 = ticks;
+									}
+								}
+							}
 						} else if (!explosion || !chrPlayYeetAnimation(chr, explosionpos, explosionforce)) {
 							chrPlayDeathAnimation(chr, angle, hitpart);
 						}

@@ -1431,18 +1431,25 @@ void bwalkUpdateVertical(void)
 static f32 bwalkGetFlinchFrac(void)
 {
 	s32 elapsed;
+	s32 busy;
 
 	if (g_Vars.currentplayer->flinchtime60 == 0) {
 		return 1.0f;
 	}
 
+	busy = g_Vars.currentplayer->flinchbusy60;
+
+	if (busy <= 0) {
+		busy = FLINCH_BUSY;
+	}
+
 	elapsed = g_Vars.lvframe60 - g_Vars.currentplayer->flinchtime60;
 
-	if (elapsed < 0 || elapsed >= FLINCH_BUSY) {
+	if (elapsed < 0 || elapsed >= busy) {
 		return 1.0f;
 	}
 
-	return (f32)elapsed / (f32)FLINCH_BUSY;
+	return (f32)elapsed / (f32)busy;
 }
 
 /**

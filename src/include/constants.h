@@ -451,8 +451,15 @@
 // advanced in the model tick and the body is not ticked in every stance - a
 // counter that stops while she is aiming would leave the penalty on forever, in
 // exactly the stance she is most likely to be shot in.
-#define FLINCH_BUSY  TICKS(30)
-#define FLINCH_SPEED 0.5f
+// The penalty lasts the flinch ANIMATION, measured once when it starts, so a
+// long reel costs more than a short one. FLINCH_BUSY is what is used when there
+// is no animation to measure - no body to play one, or the body already busy
+// with a roll - and FLINCH_BUSY_MAX is the ceiling no reel may exceed, because
+// the animation's length is read from a model that is not ticked in every
+// stance and a penalty that cannot end is worse than no penalty.
+#define FLINCH_BUSY     TICKS(30)
+#define FLINCH_BUSY_MAX TICKS(150)
+#define FLINCH_SPEED    0.5f
 
 #define AIMSTANCE_SPEED 0.6f
 

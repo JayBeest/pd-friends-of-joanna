@@ -673,6 +673,7 @@ void playermgrAllocatePlayer(s32 index)
 #ifndef PLATFORM_N64
 	g_Vars.players[index]->bodyfadefrac = 0;
 	g_Vars.players[index]->flinchtime60 = 0;
+	g_Vars.players[index]->flinchbusy60 = 0;
 	g_Vars.players[index]->thirdpersondist = 0;
 	g_Vars.players[index]->thirdpersoncampos.x = 0;
 	g_Vars.players[index]->thirdpersoncampos.y = 0;

@@ -46,6 +46,14 @@ static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
 static bool g_ImGuiPropLinkScale = true;
+
+// Concept art is drawn at its own scale, and it is never the engine's: a chart
+// where the lead is 6'4" has to land somewhere in a game whose tallest body is
+// 5'11.7". This is the ratio between the two -- engine centimetres per chart
+// centimetre -- so a height can be read in the units it was designed in and
+// typed in the units the engine wants. 1.0 means the chart is already engine
+// scale. It persists, because it is a property of a project rather than a view.
+static f32 g_ImGuiPropLoreScale = 1.0f;
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -209,7 +217,15 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Profiler=%d", &value) == 1) { g_ImGuiOverlayShowProfiler = value != 0; return; }
 	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; return; }
 	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; return; }
-	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; }
+	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; return; }
+
+	{
+		float fvalue;
+
+		if (sscanf(line, "LoreScale=%f", &fvalue) == 1 && fvalue > 0.05f && fvalue < 20.0f) {
+			g_ImGuiPropLoreScale = fvalue;
+		}
+	}
 }
 
 static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *handler, ImGuiTextBuffer *buffer)
@@ -224,7 +240,8 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Profiler=%d\n", g_ImGuiOverlayShowProfiler);
 	buffer->appendf("LookingAt=%d\n", g_ImGuiOverlayShowLookingAt);
 	buffer->appendf("Proportions=%d\n", g_ImGuiOverlayShowProportions);
-	buffer->appendf("Stance=%d\n\n", g_ImGuiOverlayShowStance);
+	buffer->appendf("Stance=%d\n", g_ImGuiOverlayShowStance);
+	buffer->appendf("LoreScale=%.5f\n\n", g_ImGuiPropLoreScale);
 }
 
 static u32 imguiOverlayGetWindowState(void)
@@ -3443,6 +3460,85 @@ static void imguiOverlayDrawProportionsPanel(void)
 		}
 	}
 
+	// --- lore scale ------------------------------------------------------
+	//
+	// Two spaces, one ratio. Concept art is drawn to whatever scale the drawing
+	// wanted; the engine has a hard ceiling at the tallest body plus the tallest
+	// head. Nothing reconciles them automatically, and doing it by hand once per
+	// character is how a roster ends up inconsistent. Set the ratio once from a
+	// character whose height in both spaces is known, and every other reading
+	// here follows.
+	ImGui::SeparatorText("Lore scale");
+
+	if (bodyok) {
+		s32 refcap2 = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
+		f32 crowncm = g_ImGuiPropHeight + (f32)headadd;
+		f32 lorecm = g_ImGuiPropLoreScale > 0.0001f ? crowncm / g_ImGuiPropLoreScale : crowncm;
+		f32 capcm = g_ImGuiPropLoreScale > 0.0001f ? (f32)refcap2 / g_ImGuiPropLoreScale : (f32)refcap2;
+		char loreus[24];
+		char capus[24];
+		f32 ratio = g_ImGuiPropLoreScale;
+
+		imguiOverlayFormatUsHeight(lorecm, loreus, sizeof(loreus));
+		imguiOverlayFormatUsHeight(capcm, capus, sizeof(capus));
+
+		ImGui::Text("lore %s / %d cm", loreus, (s32)(lorecm + 0.5f));
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("What this character stands in chart space, at the ratio below.");
+		}
+
+		ImGui::TextDisabled("the cap of %d is lore %s -- nothing above that fits.",
+				refcap2, capus);
+
+		if (ImGui::DragFloat("ratio", &ratio, 0.0005f, 0.2f, 3.0f, "%.4f")) {
+			if (ratio > 0.0001f) {
+				g_ImGuiPropLoreScale = ratio;
+			}
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Engine centimetres per chart centimetre.\n"
+					"Below 1 the chart is bigger than the engine, which it\n"
+					"usually is. Set it from an anchor rather than by eye.");
+		}
+
+		// The anchor. Type what the LATCHED character is in the chart and the
+		// ratio falls out of what it currently is in the engine -- which is the
+		// only way to set this that does not require doing the division first.
+		{
+			static s32 anchorfeet = 6;
+			static s32 anchorinches = 0;
+
+			ImGui::PushItemWidth(ImGui::GetFontSize() * 3.5f);
+			ImGui::DragInt("##loreanchorfeet", &anchorfeet, 0.03f, 2, 9, "%d'");
+			ImGui::SameLine(0.0f, 4.0f);
+			ImGui::DragInt("##loreanchorinches", &anchorinches, 0.08f, 0, 11, "%d\"");
+			ImGui::PopItemWidth();
+			ImGui::SameLine();
+
+			if (ImGui::Button("anchor to this chr")) {
+				f32 anchorcm = (f32)(anchorfeet * 12 + anchorinches) * 2.54f;
+
+				if (anchorcm > 1.0f) {
+					g_ImGuiPropLoreScale = crowncm / anchorcm;
+				}
+			}
+
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("This character is that tall in the chart. Sets the ratio so\n"
+						"chart space and engine space agree on it, and every other\n"
+						"character reads off the same ruler afterwards.");
+			}
+		}
+
+		if (ImGui::Button("reset to 1.0")) {
+			g_ImGuiPropLoreScale = 1.0f;
+		}
+	} else {
+		ImGui::TextDisabled("body row out of range");
+	}
+
 	// --- scale reference -------------------------------------------------
 	//
 	// The arithmetic nobody should have to redo mid-drag. It is built from the
@@ -3458,11 +3554,12 @@ static void imguiOverlayDrawProportionsPanel(void)
 		ImGui::TextDisabled("1 unit is about 1 cm. The body row is eye level; the head");
 		ImGui::TextDisabled("row stacks on it (%d for this one) to make the crown.", headadd);
 
-		if (ImGui::BeginTable("pd stature reference", 3, ImGuiTableFlags_SizingFixedFit
+		if (ImGui::BeginTable("pd stature reference", 4, ImGuiTableFlags_SizingFixedFit
 				| ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
 			ImGui::TableSetupColumn("stands");
 			ImGui::TableSetupColumn("crown");
 			ImGui::TableSetupColumn("body row");
+			ImGui::TableSetupColumn("lore");
 			ImGui::TableHeadersRow();
 
 			for (totalinches = 58; totalinches <= 74; totalinches += 2) {
@@ -3495,6 +3592,23 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 				ImGui::TableSetColumnIndex(2);
 				ImGui::Text("%d", bodyunits);
+
+				// The same row read in chart space. Scan this column for the
+				// height as drawn, then type the body row beside it.
+				ImGui::TableSetColumnIndex(3);
+
+				{
+					char rowlore[24];
+
+					imguiOverlayFormatUsHeight(g_ImGuiPropLoreScale > 0.0001f
+							? cm / g_ImGuiPropLoreScale : cm, rowlore, sizeof(rowlore));
+
+					if (over) {
+						ImGui::TextDisabled("%s", rowlore);
+					} else {
+						ImGui::Text("%s", rowlore);
+					}
+				}
 			}
 
 			ImGui::EndTable();

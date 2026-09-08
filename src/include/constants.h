@@ -436,6 +436,13 @@
 // Where the body starts going translucent as the camera closes on it, and how
 // far the fade goes. The maximum is the same 127 a chr's cloakfadefrac counts
 // to, because it drives the same two render sites.
+// How much of her walk she keeps in the low ready stance. Aiming has never
+// cost anything in this game; it costs this now, because it is the other half
+// of what makes third person the stance she moves in. Sits beside the crouch
+// multipliers in bwalkApplyCrouchSpeed() - 0.5 ducked, 0.35 squatting - and
+// stacks with them.
+#define AIMSTANCE_SPEED 0.6f
+
 #define THIRDPERSON_BODYFADE_START 130.0f
 #define THIRDPERSON_BODYFADE_MAX   127
 
@@ -4994,7 +5001,6 @@ enum weaponnum {
 #define BUTTON_HALF_CROUCH    CONT_4000
 #define BUTTON_FULL_CROUCH    CONT_2000
 #define BUTTON_JUMP           CONT_1000
-#define BUTTON_THIRDPERSON    CONT_0400
 
 #define BUTTON_UI_ACCEPT      CONT_0010
 #define BUTTON_UI_CANCEL      CONT_0020

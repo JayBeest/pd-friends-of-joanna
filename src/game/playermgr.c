@@ -671,7 +671,6 @@ void playermgrAllocatePlayer(s32 index)
 
 	g_Vars.players[index]->haschrbody = false;
 #ifndef PLATFORM_N64
-	g_Vars.players[index]->thirdperson = false;
 	g_Vars.players[index]->bodyfadefrac = 0;
 	g_Vars.players[index]->thirdpersondist = 0;
 	g_Vars.players[index]->thirdpersoncampos.x = 0;

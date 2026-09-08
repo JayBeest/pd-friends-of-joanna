@@ -1493,7 +1493,11 @@ static bool playerWantsThirdPerson(struct player *player)
 #ifdef PLATFORM_N64
 	return false;
 #else
-	return player->thirdperson;
+	// Always, now. Third person is the stance she stands in and the aim button
+	// is the only way out of it - see playerIsThirdPerson(), which is this
+	// answer minus insightaimmode. There is no toggle and no option, so there
+	// is nothing to ask: a body is built for every life and kept.
+	return true;
 #endif
 }
 

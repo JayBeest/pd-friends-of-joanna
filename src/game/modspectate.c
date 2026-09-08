@@ -61,7 +61,7 @@ static bool g_ModSpectating[MAX_PLAYERS] = { false, false, false, false };
 static bool g_ModSpectateOldVisible = true;
 static bool g_ModSpectateOldCollisions = true;
 static u8 g_ModSpectateOldInvincible = 0;
-static bool g_ModSpectateOldThirdPerson = false;
+static bool g_ModSpectateOldAimStance = false;
 
 // The body already built is the other mode's model, and the body is built once.
 // playerTickChrBody() is where this is acted on rather than where the mode
@@ -123,10 +123,12 @@ void modSpectateSetOn(bool on)
 
 			// A camera you cannot see is the one thing this does not want to
 			// be, now that it has a model worth looking at. Third person is
-			// what shows it, so entering takes it and leaving gives back
-			// whatever the player was using - V still works either way.
-			g_ModSpectateOldThirdPerson = g_Vars.currentplayer->thirdperson;
-			g_Vars.currentplayer->thirdperson = true;
+			// no longer a thing to take - it is the stance - but the aim
+			// button drops out of it, and a player who died holding aim would
+			// arrive here in first person looking out of a camera that has no
+			// gun. So the stance is put back and remembered.
+			g_ModSpectateOldAimStance = g_Vars.currentplayer->insightaimmode;
+			g_Vars.currentplayer->insightaimmode = false;
 
 			// Nothing should walk into a camera. The perimeter is what other
 			// props collide against, and it is restored on the way out.
@@ -140,7 +142,7 @@ void modSpectateSetOn(bool on)
 
 		if (g_Vars.currentplayer) {
 			g_Vars.currentplayer->invincible = g_ModSpectateOldInvincible;
-			g_Vars.currentplayer->thirdperson = g_ModSpectateOldThirdPerson;
+			g_Vars.currentplayer->insightaimmode = g_ModSpectateOldAimStance;
 
 			if (g_Vars.currentplayer->prop) {
 				propSetPerimEnabled(g_Vars.currentplayer->prop, true);
@@ -253,7 +255,7 @@ void modSpectateReset(void)
 	g_ModSpectateOldVisible = true;
 	g_ModSpectateOldCollisions = true;
 	g_ModSpectateOldInvincible = 0;
-	g_ModSpectateOldThirdPerson = false;
+	g_ModSpectateOldAimStance = false;
 	g_ModSpectateAppliedStage = -1;
 }
 

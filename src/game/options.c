@@ -79,7 +79,16 @@ s32 optionsGetLookAhead(s32 mpchrnum)
 
 s32 optionsGetAimControl(s32 mpchrnum)
 {
+#ifndef PLATFORM_N64
+	// The aim button is the stance switch now, so it is a toggle for everyone
+	// and there is nothing to choose. Answered here rather than at the six
+	// places that ask, so no reader can disagree with another about which
+	// stance the player is in. OPTION_AIMCONTROL is still written and still
+	// saved, so a build without this reads its own setting back unharmed.
+	return AIMCONTROL_TOGGLE;
+#else
 	return (g_PlayerConfigsArray[mpchrnum].options & OPTION_AIMCONTROL) != 0;
+#endif
 }
 
 s32 optionsGetSightOnScreen(s32 mpchrnum)

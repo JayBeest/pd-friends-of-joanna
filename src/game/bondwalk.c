@@ -1420,6 +1420,27 @@ void bwalkUpdateVertical(void)
 	}
 }
 
+#ifndef PLATFORM_N64
+/**
+ * Slow her to the low ready pace while she is aiming.
+ *
+ * The aim button is the stance switch: out of it she is behind her own
+ * shoulder, hip firing, with her fists and her roll; in it the camera is on
+ * the eye, the gun is up and the crosshair is hers to move. Stock charges
+ * nothing for that, which is why aiming has always been free. This is the
+ * charge, and it is the same shape as the crouch multiplier below because it
+ * is the same kind of thing - the two stack, so aiming while squatting is
+ * slower than either.
+ */
+void bwalkApplyAimSpeed(void)
+{
+	if (g_Vars.currentplayer->insightaimmode) {
+		g_Vars.currentplayer->speedforwards *= AIMSTANCE_SPEED;
+		g_Vars.currentplayer->speedsideways *= AIMSTANCE_SPEED;
+	}
+}
+#endif
+
 void bwalkApplyCrouchSpeed(void)
 {
 	if (bmoveGetCrouchPos() == CROUCHPOS_DUCK) {
@@ -1791,6 +1812,9 @@ void bwalk0f0c69b8(void)
 		bwalkCalculateNewPositionWithPush(&spcc, 0.0f, true, 0.0f, CDTYPE_ALL);
 	} else {
 		bwalkApplyCrouchSpeed();
+#ifndef PLATFORM_N64
+		bwalkApplyAimSpeed();
+#endif
 		bwalkUpdateCrouchOffset();
 
 		bmove0f0cba88(&spc8, &spc4,

@@ -3685,82 +3685,75 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 	// --- scale reference -------------------------------------------------
 	//
-	// The arithmetic nobody should have to redo mid-drag. It is built from the
-	// LATCHED character's own head row rather than from a constant, so the body
-	// row column is the number to type for this character specifically -- a
-	// Maian head adds 27 where a human one adds 13, and a table that assumed 13
-	// would be silently wrong by half a foot on half the roster.
+	// Indexed by LORE height, because that is the number she arrives with. The
+	// first version of this table was indexed by in-game stature, which meant
+	// reading it backwards: find the answer, then check it was the question.
+	//
+	// Built from the LATCHED character's own head row rather than from a
+	// constant, so the body row column is the number to type for THIS
+	// character -- a Maian head adds 27 where a human one adds 13, and a fixed
+	// table would be wrong by half a foot on half the roster.
 	if (ImGui::CollapsingHeader("Scale reference")) {
 		s32 refcap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
 		s32 nowcrown = bodyok ? (s32)(g_ImGuiPropHeight + 0.5f) + headadd : -1;
-		s32 totalinches;
+		f32 shrink = g_ImGuiPropLoreScale > 0.0001f ? g_ImGuiPropLoreScale : 1.0f;
+		s32 loreinches;
 
-		ImGui::TextDisabled("1 unit is about 1 cm. The body row is eye level; the head");
-		ImGui::TextDisabled("row stacks on it (%d for this one) to make the crown.", headadd);
+		ImGui::TextDisabled("Left is what she is in the chart. Right is what to type.");
 
-		if (ImGui::BeginTable("pd stature reference", 4, ImGuiTableFlags_SizingFixedFit
+		if (ImGui::BeginTable("pd stature reference", 3, ImGuiTableFlags_SizingFixedFit
 				| ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
-			ImGui::TableSetupColumn("stands");
-			ImGui::TableSetupColumn("crown");
+			ImGui::TableSetupColumn("in the chart");
+			ImGui::TableSetupColumn("in the game");
 			ImGui::TableSetupColumn("body row");
-			ImGui::TableSetupColumn("lore");
 			ImGui::TableHeadersRow();
 
-			for (totalinches = 58; totalinches <= 74; totalinches += 2) {
-				f32 cm = (f32)totalinches * 2.54f;
-				s32 crownunits = (s32)(cm + 0.5f);
+			for (loreinches = 58; loreinches <= 80; loreinches += 2) {
+				f32 lorecmrow = (f32)loreinches * 2.54f;
+				s32 crownunits = (s32)(lorecmrow * shrink + 0.5f);
 				s32 bodyunits = crownunits - headadd;
 				bool over = crownunits > refcap;
-				// The row the latched character currently sits in.
 				bool here = nowcrown >= 0 && nowcrown >= crownunits - 1 && nowcrown <= crownunits + 1;
+				char ingame[24];
+
+				imguiOverlayFormatUsHeight((f32)crownunits, ingame, sizeof(ingame));
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 
 				if (here) {
-					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%d'%d\"",
-							totalinches / 12, totalinches % 12);
+					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%d\'%d\"",
+							loreinches / 12, loreinches % 12);
 				} else if (over) {
-					ImGui::TextDisabled("%d'%d\"", totalinches / 12, totalinches % 12);
+					ImGui::TextDisabled("%d\'%d\"", loreinches / 12, loreinches % 12);
 				} else {
-					ImGui::Text("%d'%d\"", totalinches / 12, totalinches % 12);
+					ImGui::Text("%d\'%d\"", loreinches / 12, loreinches % 12);
 				}
 
 				ImGui::TableSetColumnIndex(1);
 
 				if (over) {
-					ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d", crownunits);
+					ImGui::TextDisabled("%s", ingame);
 				} else {
-					ImGui::Text("%d", crownunits);
+					ImGui::Text("%s", ingame);
 				}
 
 				ImGui::TableSetColumnIndex(2);
-				ImGui::Text("%d", bodyunits);
 
-				// The same row read in chart space. Scan this column for the
-				// height as drawn, then type the body row beside it.
-				ImGui::TableSetColumnIndex(3);
-
-				{
-					char rowlore[24];
-
-					imguiOverlayFormatUsHeight(g_ImGuiPropLoreScale > 0.0001f
-							? cm / g_ImGuiPropLoreScale : cm, rowlore, sizeof(rowlore));
-
-					if (over) {
-						ImGui::TextDisabled("%s", rowlore);
-					} else {
-						ImGui::Text("%s", rowlore);
-					}
+				if (over) {
+					ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d too tall", bodyunits);
+				} else {
+					ImGui::Text("%d", bodyunits);
 				}
 			}
 
 			ImGui::EndTable();
 		}
 
-		ImGui::TextDisabled("Red is past the collision cap of %d, which is %d'%d\" --",
+		ImGui::TextDisabled("Green is where she is now. Red will not fit: the game stops");
+		ImGui::TextDisabled("growing anyone past %d units, or %d\'%d\", and draws the rest",
 				refcap, (s32)(refcap / 2.54f) / 12, (s32)(refcap / 2.54f) % 12);
-		ImGui::TextDisabled("the tallest body plus the tallest head. Six feet is already over it.");
+		ImGui::TextDisabled("of the body somewhere the camera is not.");
 	}
 
 	// --- model scale -----------------------------------------------------

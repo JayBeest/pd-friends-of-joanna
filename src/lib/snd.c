@@ -19,6 +19,7 @@
 #include "lib/lib_317f0.h"
 #include "lib/mp3.h"
 #include "lib/lib_39c80.h"
+#include "lib/lib_3e3e0.h"
 #include "lib/speaker.h"
 #include "data.h"
 #include "types.h"
@@ -2442,6 +2443,10 @@ void sndTickUfo(void)
 // it is worth, so every naudio-internal reach lives on this side of the seam.
 // Slot indices are into g_SeqInstances / g_SeqChannels, 0..2.
 // ---------------------------------------------------------------------------
+
+// defined in naudio/n_csplayer.c:1250 and declared in no header; without this
+// it is an implicit declaration, which the build warns about.
+void func00037634(N_ALCSPlayer *seqp, u8 value);
 
 #define SNDDEBUG_NUM_SLOTS ARRAYCOUNT(g_SeqInstances)
 

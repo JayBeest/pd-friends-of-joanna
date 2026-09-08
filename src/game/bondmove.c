@@ -974,7 +974,15 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 					if (optionsGetAimControl(g_Vars.currentplayerstats->mpindex) != AIMCONTROL_HOLD) {
 						for (i = 0; i < numsamples; i++) {
 							if (allowc1buttons && joyGetButtonsPressedOnSample(i, aimpad, aimallowedbuttons & Z_TRIG)) {
-								g_Vars.currentplayer->insightaimmode = !g_Vars.currentplayer->insightaimmode;
+#ifndef PLATFORM_N64
+								// The press is read and then dropped rather than
+								// queued: a stance she asked for during a reload
+								// is not one she still wants a second later.
+								if (!bwalkStanceIsLocked())
+#endif
+								{
+									g_Vars.currentplayer->insightaimmode = !g_Vars.currentplayer->insightaimmode;
+								}
 							}
 
 							aimonhist[i] = g_Vars.currentplayer->insightaimmode;
@@ -1316,7 +1324,15 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 					if (optionsGetAimControl(g_Vars.currentplayerstats->mpindex) != AIMCONTROL_HOLD) {
 						for (i = 0; i < numsamples; i++) {
 							if (allowc1buttons && joyGetButtonsPressedOnSample(i, contpad1, aimbuttons & c1allowedbuttons)) {
-								g_Vars.currentplayer->insightaimmode = !g_Vars.currentplayer->insightaimmode;
+#ifndef PLATFORM_N64
+								// The press is read and then dropped rather than
+								// queued: a stance she asked for during a reload
+								// is not one she still wants a second later.
+								if (!bwalkStanceIsLocked())
+#endif
+								{
+									g_Vars.currentplayer->insightaimmode = !g_Vars.currentplayer->insightaimmode;
+								}
 							}
 
 							aimonhist[i] = g_Vars.currentplayer->insightaimmode;

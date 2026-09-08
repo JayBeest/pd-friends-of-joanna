@@ -1462,6 +1462,28 @@ bool bwalkIsFlinching(void)
 }
 
 /**
+ * Whether the stance is hers to change right now.
+ *
+ * Two things take it away. A reload is a thing done with both hands and a whole
+ * body, and dropping to the sights or coming out of them in the middle of one is
+ * the player asking the animation to be somewhere it cannot be. And a flinch has
+ * already decided where she is: knocked out of the low ready and kept there
+ * while it lasts, so the toggle would only be arguing with it.
+ *
+ * The aim button is the only stance control there is, so this is the whole of
+ * the lock - see bmoveProcessInput(), which is where the button is answered.
+ */
+bool bwalkStanceIsLocked(void)
+{
+	if (bwalkIsFlinching()) {
+		return true;
+	}
+
+	return bgunIsReloading(&g_Vars.currentplayer->hands[HAND_RIGHT])
+		|| bgunIsReloading(&g_Vars.currentplayer->hands[HAND_LEFT]);
+}
+
+/**
  * Take the flinch out of her walk, and give it back as the flinch passes.
  *
  * Half speed at the moment the shot lands, all of it again by the end of the

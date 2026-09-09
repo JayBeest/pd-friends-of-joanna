@@ -3399,6 +3399,71 @@ static void imguiOverlayDrawProportionsPanel(void)
 	// The aim path reads the player's gun direction, which is frozen while
 	// the overlay has the mouse -- so it only finds whoever you were already
 	// pointing at. Right-clicking a row in Entities is the reliable way in.
+	// A picker, because both other ways in have failed in play. The aim path
+	// reads a gun direction that is frozen while the overlay holds the mouse,
+	// and the Entities context menu depends on finding the right row in another
+	// window. This one needs neither: every chr in the level, in one list, with
+	// the button next to it.
+	if (ImGui::CollapsingHeader("Pick a character", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (g_ChrSlots == NULL || g_NumChrSlots <= 0) {
+			ImGui::TextDisabled("no chr slots");
+		} else if (ImGui::BeginTable("fojoproplatchlist", 4,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+				ImVec2(0.0f, 170.0f))) {
+			ImGui::TableSetupColumn("chr");
+			ImGui::TableSetupColumn("body");
+			ImGui::TableSetupColumn("who");
+			ImGui::TableSetupColumn("");
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableHeadersRow();
+
+			for (s32 i = 0; i < g_NumChrSlots; i++) {
+				struct chrdata *c = &g_ChrSlots[i];
+
+				if (!imguiOverlayChrIsCurrent(c) || c->prop == NULL || c->model == NULL) {
+					continue;
+				}
+
+				bool isself = imguiPropChrIsPlayer(c);
+				bool islatched = g_ImGuiPropChr == c;
+
+				ImGui::TableNextRow();
+				ImGui::PushID(20000 + i);
+
+				ImGui::TableNextColumn();
+
+				if (islatched) {
+					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%04x", (u32)(u16)c->chrnum);
+				} else {
+					ImGui::Text("%04x", (u32)(u16)c->chrnum);
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%d", (s32)c->bodynum);
+
+				ImGui::TableNextColumn();
+
+				if (isself) {
+					ImGui::TextDisabled("you");
+				} else if (c->aibot) {
+					ImGui::TextDisabled("simulant");
+				} else {
+					ImGui::TextDisabled("ai");
+				}
+
+				ImGui::TableNextColumn();
+
+				if (ImGui::SmallButton("latch")) {
+					imguiPropLatch(c);
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
 	ImGui::TextDisabled("or right-click a character in Entities");
 
 	if (!g_ImGuiPropChr) {

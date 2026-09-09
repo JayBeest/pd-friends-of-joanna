@@ -812,6 +812,17 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 	// half a body.
 	fracmerge = anim->fracmerge;
 
+	// Report every chr node drawn while the budget lasts, WHETHER OR NOT the mask
+	// is set on it. Gating this on the mask was the mistake in the last two runs:
+	// if the model being drawn is not the model the split was written to, a
+	// mask-gated log is silent and silence looks like "not called".
+	if (g_SplitLogBudget > 0) {
+		g_SplitLogBudget--;
+		DEBUG_SPLIT("CHR draw model %p anim %p part %d mask 0x%04x slot2 %d",
+				(void *)model, (void *)anim, animpart,
+				(unsigned)anim->splitmask, (s32)anim->animnum2);
+	}
+
 	// animpart is a u16 and the mask is 32 bits, so the shift is bounded before
 	// it is taken. A part number past the end of the mask is simply not split.
 	// The second slot has to exist as well: forcing a part onto a slot that was
@@ -822,11 +833,6 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 		if (g_SplitLogBudget > 0) {
 			g_SplitLogBudget--;
 			DEBUG_SPLIT("CHR node part %d TAKES THE WALK", animpart);
-		}
-	} else if (anim->splitmask && anim->animnum2) {
-		if (g_SplitLogBudget > 0) {
-			g_SplitLogBudget--;
-			DEBUG_SPLIT("CHR node part %d follows the one shot", animpart);
 		}
 	} else if (anim->splitmask && !anim->animnum2) {
 		// Drawn with a mask over an empty slot two. One line, then the mask is
@@ -1193,10 +1199,11 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 				g_SplitLogBudget--;
 				DEBUG_SPLIT("joint part %d TAKES THE WALK", animpart);
 			}
-		} else if (anim->splitmask && g_SplitLogBudget > 0) {
+		} else if (g_SplitLogBudget > 0) {
 			g_SplitLogBudget--;
-			DEBUG_SPLIT("joint part %d follows the one shot%s", animpart,
-					anim->animnum2 ? "" : " (NO SLOT TWO)");
+			DEBUG_SPLIT("POS draw model %p anim %p part %d mask 0x%04x slot2 %d",
+					(void *)model, (void *)anim, animpart,
+					(unsigned)anim->splitmask, (s32)anim->animnum2);
 		}
 
 		if (fracmerge != 0.0f) {
@@ -1948,6 +1955,8 @@ void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 me
 				(s32)anim->animnum, (s32)anim->animnum2, (unsigned)splitmask, merge);
 
 		g_SplitLogBudget = g_DebugSplit ? 40 : 0;
+
+		DEBUG_SPLIT("written to model %p anim %p", (void *)model, (void *)anim);
 	}
 }
 #endif

@@ -3430,6 +3430,17 @@ bool chrIsOneShotAnimPlaying(struct chrdata *chr)
 	if (modelGetAnimNum(chr->model) != chr->oneshotanim
 			|| modelGetCurAnimFrame(chr->model) >= modelGetAnimEndFrame(chr->model)) {
 		chr->oneshotanim = 0;
+
+#ifndef PLATFORM_N64
+		// And the body is whole again. modelSetAnimation() clears the mask when
+		// an animation is replaced, but a one shot that simply RUNS OUT is not
+		// replaced until the walk selector next changes row, and until then the
+		// legs would still be taking the second slot.
+		if (chr->model->anim) {
+			chr->model->anim->splitmask = 0;
+		}
+#endif
+
 		return false;
 	}
 
@@ -3713,7 +3724,17 @@ static s16 g_ReloadAnims[] = {
 static void chrSplitAnimAtWaist(struct chrdata *chr)
 {
 	if (chr->model && chr->model->anim) {
-		chr->model->anim->splitmask = g_AnimSplitLowerMask;
+		// The split holds the legs in the SECOND animation slot, so there has to
+		// be a second slot to hold them in. modelCopyAnimForMerge() declines to
+		// make one whenever the merge time was zeroed - which the absolute
+		// translation rule in modelSetAnimationWithMerge() does on its own, with
+		// no way for the caller to know - and a mask set over an empty slot two
+		// points the legs at animation zero, which is why they stopped moving.
+		if (chr->model->anim->animnum2) {
+			chr->model->anim->splitmask = g_AnimSplitLowerMask;
+		} else {
+			chr->model->anim->splitmask = 0;
+		}
 	}
 }
 
@@ -3764,6 +3785,11 @@ void chrEndReloadAnimation(struct chrdata *chr)
 	for (i = 0; i < ARRAYCOUNT(g_ReloadAnims); i++) {
 		if (chr->oneshotanim == g_ReloadAnims[i]) {
 			chr->oneshotanim = 0;
+
+			if (chr->model && chr->model->anim) {
+				chr->model->anim->splitmask = 0;
+			}
+
 			return;
 		}
 	}

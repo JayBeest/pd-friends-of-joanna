@@ -3219,6 +3219,36 @@ static void imguiOverlayDrawStancePanel(void)
 		}
 
 		ImGui::Text("mask 0x%04x", (unsigned)g_AnimSplitLowerMask);
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Live");
+
+		// A split that is not working looks the same from the outside whichever
+		// way it broke - the legs stop. These four numbers say which: a mask
+		// with no slot two behind it, a mask still set after the one shot ended,
+		// or a blend that never reached the end of its crossfade.
+		if (imguiOverlayCanAimInspect() && g_Vars.currentplayer->prop
+				&& g_Vars.currentplayer->prop->chr
+				&& g_Vars.currentplayer->prop->chr->model
+				&& g_Vars.currentplayer->prop->chr->model->anim) {
+			struct chrdata *bond = g_Vars.currentplayer->prop->chr;
+			struct anim *anim = bond->model->anim;
+
+			ImGui::Text("anim %d  slot2 %d  fracmerge %.2f",
+					(s32)anim->animnum, (s32)anim->animnum2, anim->fracmerge);
+			ImGui::Text("live mask 0x%04x  oneshot %d",
+					(unsigned)anim->splitmask, (s32)bond->oneshotanim);
+
+			if (anim->splitmask && !anim->animnum2) {
+				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+						"split with no second slot - legs have nothing to play");
+			} else if (anim->splitmask && !bond->oneshotanim) {
+				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+						"split outlived its one shot - legs are stuck on slot two");
+			}
+		} else {
+			ImGui::TextDisabled("(no live player)");
+		}
 	}
 
 	if (ImGui::CollapsingHeader("Reload", ImGuiTreeNodeFlags_DefaultOpen)) {

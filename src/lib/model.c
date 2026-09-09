@@ -798,7 +798,11 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 	// half a body.
 	fracmerge = anim->fracmerge;
 
-	if (anim->splitmask & (1 << animpart)) {
+	// animpart is a u16 and the mask is 32 bits, so the shift is bounded before
+	// it is taken. A part number past the end of the mask is simply not split.
+	// The second slot has to exist as well: forcing a part onto a slot that was
+	// never filled reads animation zero and the part stops moving entirely.
+	if (anim->animnum2 && animpart < 32 && (anim->splitmask & (1 << animpart))) {
 		fracmerge = 1.0f;
 	}
 
@@ -1137,11 +1141,11 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 			sp128 = false;
 		}
 
+		// NO SPLIT HERE. This is a position node and rodata->part is not the
+		// same numbering as a chrinfo node's animpart, so a joint mask means
+		// nothing to it - applying one froze parts of the skeleton at random.
+		// The split belongs to modelUpdateChrNodeMtx() and nowhere else.
 		fracmerge = anim->fracmerge;
-
-		if (anim->splitmask & (1 << animpart)) {
-			fracmerge = 1.0f;
-		}
 
 		if (fracmerge != 0.0f) {
 			animGetRotTranslateScale(animpart, anim->flip2, skel, anim->animnum2, anim->frameslot3, &rot3, &translate3, &scale3);

@@ -1155,11 +1155,23 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 			sp128 = false;
 		}
 
-		// NO SPLIT HERE. This is a position node and rodata->part is not the
-		// same numbering as a chrinfo node's animpart, so a joint mask means
-		// nothing to it - applying one froze parts of the skeleton at random.
-		// The split belongs to modelUpdateChrNodeMtx() and nowhere else.
+		// THE SPLIT LIVES HERE. Every joint in the skeleton is a POSITION node
+		// and this is what draws them; the CHRINFO node modelUpdateChrNodeMtx()
+		// handles is the ROOT and there is exactly one of it (model.c:551 and
+		// modelCopyAnimForMerge() both treat rootnode as the chrinfo node). A
+		// mask applied only over there reaches one node out of the whole body,
+		// which is why it read as doing nothing at all.
+		//
+		// rodata->part and a chrinfo node's animpart ARE the same numbering:
+		// both are handed to the same animGetRotTranslateScale(). An earlier
+		// pass here claimed otherwise and reverted this, on the strength of a
+		// freeze that was really the empty second slot fixed in 1963c7108.
 		fracmerge = anim->fracmerge;
+
+		if (anim->animnum2 && animpart >= 0 && animpart < 32
+				&& (anim->splitmask & (1 << animpart))) {
+			fracmerge = 1.0f;
+		}
 
 		if (fracmerge != 0.0f) {
 			animGetRotTranslateScale(animpart, anim->flip2, skel, anim->animnum2, anim->frameslot3, &rot3, &translate3, &scale3);

@@ -1479,8 +1479,40 @@ bool bwalkStanceIsLocked(void)
 		return true;
 	}
 
+	return bwalkIsReloading();
+}
+
+/**
+ * Whether either hand is in the middle of a reload.
+ *
+ * Either, not both: one gun being fed is enough to have her attention, and a
+ * dual wield feeding one at a time would otherwise be free.
+ */
+bool bwalkIsReloading(void)
+{
 	return bgunIsReloading(&g_Vars.currentplayer->hands[HAND_RIGHT])
 		|| bgunIsReloading(&g_Vars.currentplayer->hands[HAND_LEFT]);
+}
+
+/**
+ * Bring her nearly to a stop while she is reloading.
+ *
+ * The heaviest of the three multipliers by a long way, and meant to be: a
+ * reload already takes the stance and the trigger, and this is what makes
+ * choosing when to do one a decision rather than something done on the move.
+ * She is not pinned - RELOAD_SPEED is a fraction and not a zero, so she can
+ * still walk out of a doorway - but she is not going anywhere in a hurry.
+ *
+ * Stacks with the crouch, low ready and flinch multipliers like the rest of
+ * them. Shot while reloading is the slowest she gets, which is the correct
+ * answer to having been caught doing it.
+ */
+void bwalkApplyReloadSpeed(void)
+{
+	if (bwalkIsReloading()) {
+		g_Vars.currentplayer->speedforwards *= g_ReloadSpeed;
+		g_Vars.currentplayer->speedsideways *= g_ReloadSpeed;
+	}
 }
 
 /**
@@ -2004,6 +2036,7 @@ void bwalk0f0c69b8(void)
 		bwalkApplyBuildSpeed();
 		bwalkApplyAimSpeed();
 		bwalkApplyFlinchSpeed();
+		bwalkApplyReloadSpeed();
 #endif
 		bwalkUpdateCrouchOffset();
 

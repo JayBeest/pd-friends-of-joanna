@@ -32,6 +32,8 @@ void bwalkApplyAimSpeed(void);
 void bwalkApplyFlinchSpeed(void);
 bool bwalkIsFlinching(void);
 bool bwalkStanceIsLocked(void);
+bool bwalkIsReloading(void);
+void bwalkApplyReloadSpeed(void);
 bool bwalkCanUncrouch(void);
 void bwalkUpdateCrouchOffsetReal(void);
 void bwalkUpdateCrouchOffset(void);

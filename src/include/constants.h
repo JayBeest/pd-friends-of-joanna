@@ -467,6 +467,16 @@
 // What is left of her walk while she is reloading. The heaviest of the four
 // movement multipliers on purpose: a reload already costs her the stance and
 // the trigger, and this is what makes choosing when to do one a decision.
+// Which animation parts keep walking while a one shot plays on the arms - a bit
+// per animpart, over the fifteen joints of the chr skeleton (g_SkelChrJoints).
+//
+// THIS DEFAULT IS A GUESS. The joints have no names in this tree yet, only
+// indices and the mirror pairs, so which three pairs are the legs has to be
+// settled by eye - tick them in the Fojo Stance panel until the legs stop
+// following the punch, then bake the answer here. A wrong guess freezes the
+// arms instead, which is obvious the moment she throws one.
+#define ANIMSPLIT_LOWERBODY 0x7e00
+
 #define RELOAD_SPEED 0.05f
 
 #define RELOAD_ANIMSPEED 1.0f

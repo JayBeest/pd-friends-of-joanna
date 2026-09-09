@@ -733,6 +733,7 @@ void modelUpdateInfo(struct model *model)
 
 void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, struct modelnode *node)
 {
+	f32 fracmerge;
 	struct anim *anim = model->anim;
 	union modelrodata *rodata = node->rodata;
 	union modelrwdata *rwdata = modelGetNodeRwData(model, node);
@@ -791,7 +792,17 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 		modelTweenRot(&rot1, &rot2, sp154);
 	}
 
-	if (anim->fracmerge != 0.0f) {
+	// A part in the split mask takes the second animation whole rather than the
+	// blend - see struct anim's splitmask. One bit test per node, in the hottest
+	// loop in the renderer, and zero for everything that is not being played on
+	// half a body.
+	fracmerge = anim->fracmerge;
+
+	if (anim->splitmask & (1 << animpart)) {
+		fracmerge = 1.0f;
+	}
+
+	if (fracmerge != 0.0f) {
 		animGetRotTranslateScale(animpart, anim->flip2, skel, anim->animnum2, anim->frameslot3, &rot3, &translate3, &scale3);
 
 		if (anim->frac2 != 0.0f) {
@@ -810,7 +821,7 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 
 		quaternion0f096ca0(&rot1, spfc);
 		quaternion0f0976c0(spfc, spec);
-		quaternionSlerp(spfc, spec, anim->fracmerge, spdc);
+		quaternionSlerp(spfc, spec, fracmerge, spdc);
 		quaternionToMtx(spdc, &sp1d8);
 	} else {
 		mtx4LoadRotation(&rot1, &sp1d8);
@@ -1059,6 +1070,7 @@ void modelPositionJointUsingQuatRot(struct modelrenderdata *renderdata, struct m
 
 void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model *model, struct modelnode *node)
 {
+	f32 fracmerge;
 	struct anim *anim;
 	struct modelrodata_position *rodata = &node->rodata->position;
 	s32 animpart;
@@ -1125,7 +1137,13 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 			sp128 = false;
 		}
 
-		if (anim->fracmerge != 0.0f) {
+		fracmerge = anim->fracmerge;
+
+		if (anim->splitmask & (1 << animpart)) {
+			fracmerge = 1.0f;
+		}
+
+		if (fracmerge != 0.0f) {
 			animGetRotTranslateScale(animpart, anim->flip2, skel, anim->animnum2, anim->frameslot3, &rot3, &translate3, &scale3);
 
 			if (anim->frac2 != 0.0f) {
@@ -1136,7 +1154,7 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 			quaternion0f096ca0(&rot1, sp88);
 			quaternion0f096ca0(&rot3, sp78);
 			quaternion0f0976c0(sp88, sp78);
-			quaternionSlerp(sp88, sp78, anim->fracmerge, sp68);
+			quaternionSlerp(sp88, sp78, fracmerge, sp68);
 
 			if (translate1.f[0] != 0.0f || translate1.f[1] != 0.0f || translate1.f[2] != 0.0f) {
 				translate1.x *= anim->animscale;
@@ -1798,6 +1816,11 @@ void modelSetAnimation2(struct model *model, s16 animnum, s32 flip, f32 fstartfr
 			anim->timemerge = 0;
 			anim->fracmerge = 0;
 		}
+
+		// A new animation is a whole body one until something says otherwise.
+		// Every caller that wants half a body sets the mask after this returns,
+		// so nothing can inherit a split from the animation before it.
+		anim->splitmask = 0;
 
 		anim->animnum = animnum;
 		anim->flip = flip;
@@ -2555,6 +2578,13 @@ void modelTickAnimQuarterSpeed(struct model *model, s32 lvupdate240, bool arg2)
 				} else {
 					if (anim->elapsemerge < anim->timemerge) {
 						anim->fracmerge = (anim->timemerge - anim->elapsemerge) / anim->timemerge;
+					} else if (anim->splitmask) {
+						// The crossfade is over for the upper body, but the
+						// lower body is still being played out of the second
+						// slot, so the slot is kept and only the blend ends.
+						// Without this the walk would be dropped sixteen frames
+						// in and the legs would join the punch.
+						anim->fracmerge = 0;
 					} else {
 						anim->timemerge = 0;
 						anim->fracmerge = 0;
@@ -2699,6 +2729,13 @@ void modelTickAnim(struct model *model, s32 lvupdate240, bool arg2)
 				} else {
 					if (anim->elapsemerge < anim->timemerge) {
 						anim->fracmerge = (anim->timemerge - anim->elapsemerge) / anim->timemerge;
+					} else if (anim->splitmask) {
+						// The crossfade is over for the upper body, but the
+						// lower body is still being played out of the second
+						// slot, so the slot is kept and only the blend ends.
+						// Without this the walk would be dropped sixteen frames
+						// in and the legs would join the punch.
+						anim->fracmerge = 0;
 					} else {
 						anim->timemerge = 0;
 						anim->fracmerge = 0;

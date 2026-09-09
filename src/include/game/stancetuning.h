@@ -47,6 +47,9 @@ extern f32 g_ThirdPersonCamMinDist;
 extern f32 g_BodyFadeStart;
 extern f32 g_BodyFadeFloor;
 
+// Which animation parts keep walking while a one shot plays on the arms.
+extern s32 g_AnimSplitLowerMask;
+
 // What is left of her walk while she is reloading.
 extern f32 g_ReloadSpeed;
 

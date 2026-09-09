@@ -3698,6 +3698,25 @@ static s16 g_ReloadAnims[] = {
 	ANIM_RELOAD,
 };
 
+/**
+ * Play what has just been started on the arms only, and leave the legs walking.
+ *
+ * The walk is still in the animation's second slot and still advancing at its
+ * own speed - modelCopyAnimForMerge() put it there and lib/model.c keeps it
+ * ticking - so the parts named in the mask can take it whole while everything
+ * above them takes the one shot. Called after the animation is set, because
+ * modelSetAnimation() clears the mask so nothing inherits a split.
+ *
+ * Not for every one shot. A roll or a death is a whole body move and legs that
+ * carried on walking through one would be nonsense.
+ */
+static void chrSplitAnimAtWaist(struct chrdata *chr)
+{
+	if (chr->model && chr->model->anim) {
+		chr->model->anim->splitmask = g_AnimSplitLowerMask;
+	}
+}
+
 s32 chrPlayReloadAnimation(struct chrdata *chr)
 {
 	s16 animnum;
@@ -3718,6 +3737,7 @@ s32 chrPlayReloadAnimation(struct chrdata *chr)
 
 	modelSetAnimation(chr->model, animnum, false, 0, g_ReloadAnimSpeed, 16);
 	modelSetAnimEndFrame(chr->model, endframe);
+	chrSplitAnimAtWaist(chr);
 
 	chr->oneshotanim = animnum;
 
@@ -3803,6 +3823,7 @@ void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum)
 
 	modelSetAnimation(chr->model, animnum, flip, startframe, THROW_ANIMSPEED, 16);
 	modelSetAnimEndFrame(chr->model, endframe);
+	chrSplitAnimAtWaist(chr);
 
 	chr->oneshotanim = animnum;
 }
@@ -3826,6 +3847,13 @@ void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart)
 	}
 
 	chrBeginArghWithAction(chr, angle, hitpart, true);
+
+	// Above the waist only. A flinch is a thing that happens to a torso, and
+	// legs that stopped walking to take part in one would read as a stumble
+	// rather than as being shot.
+	if (chr->oneshotanim) {
+		chrSplitAnimAtWaist(chr);
+	}
 }
 #endif
 
@@ -8664,6 +8692,7 @@ s32 chrPlayPunchAnimation(struct chrdata *chr)
 
 	modelSetAnimation(chr->model, anims[index].animnum, flip, startframe, 0.85f, 16);
 	modelSetAnimEndFrame(chr->model, anims[index].endframe);
+	chrSplitAnimAtWaist(chr);
 
 	chr->oneshotanim = anims[index].animnum;
 

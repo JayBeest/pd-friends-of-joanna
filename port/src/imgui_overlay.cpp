@@ -185,6 +185,7 @@ extern "C" f32 g_ThirdPersonCamClearance;
 extern "C" f32 g_ThirdPersonCamMinDist;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
+extern "C" s32 g_AnimSplitLowerMask;
 extern "C" f32 g_ReloadSpeed;
 extern "C" f32 g_ReloadAnimSpeed;
 extern "C" f32 g_RollImpulse;
@@ -3186,6 +3187,38 @@ static void imguiOverlayDrawStancePanel(void)
 		imguiOverlayStanceKnob("Fade depth", &g_BodyFadeFloor, 0.0f, 1.0f, "%.2f",
 				"How much of her alpha the fade takes at its deepest.\n"
 				"1.0 would remove her outright, which reads as a bug.");
+	}
+
+	if (ImGui::CollapsingHeader("Body split", ImGuiTreeNodeFlags_DefaultOpen)) {
+		s32 i;
+
+		ImGui::TextWrapped("Parts ticked here keep walking while a punch, reload, flinch "
+				"or throw plays on everything above them. A roll and a death are whole "
+				"body moves and ignore this.");
+		ImGui::TextDisabled("The chr skeleton is 15 joints and they have no names in this "
+				"tree yet, so the default is a guess: tick until the legs stop following "
+				"the punch. If the ARMS freeze instead, the guess was inverted.");
+
+		for (i = 0; i < 15; i++) {
+			char label[32];
+			bool on = (g_AnimSplitLowerMask & (1 << i)) != 0;
+
+			snprintf(label, sizeof(label), "joint %d", i);
+
+			if (ImGui::Checkbox(label, &on)) {
+				if (on) {
+					g_AnimSplitLowerMask |= 1 << i;
+				} else {
+					g_AnimSplitLowerMask &= ~(1 << i);
+				}
+			}
+
+			if (i % 3 != 2 && i != 14) {
+				ImGui::SameLine();
+			}
+		}
+
+		ImGui::Text("mask 0x%04x", (unsigned)g_AnimSplitLowerMask);
 	}
 
 	if (ImGui::CollapsingHeader("Reload", ImGuiTreeNodeFlags_DefaultOpen)) {

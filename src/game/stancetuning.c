@@ -23,6 +23,8 @@ f32 g_ThirdPersonCamMinDist = THIRDPERSON_CAMMINDIST;
 f32 g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 f32 g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
 
+s32 g_AnimSplitLowerMask = ANIMSPLIT_LOWERBODY;
+
 f32 g_ReloadSpeed = RELOAD_SPEED;
 f32 g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 
@@ -56,6 +58,7 @@ void stanceTuningReset(void)
 	g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 	g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
 
+	g_AnimSplitLowerMask = ANIMSPLIT_LOWERBODY;
 	g_ReloadSpeed = RELOAD_SPEED;
 	g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 	g_RollImpulse = ROLL_IMPULSE;

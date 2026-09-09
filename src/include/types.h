@@ -410,6 +410,16 @@ struct model;
 struct anim {
   /*0x00*/ s16 animnum;
   /*0x02*/ s16 animnum2;
+  // Which animation parts take the OUTGOING animation whole instead of the
+  // current one - a bit per animpart, and zero for the ordinary behaviour of
+  // every animation this engine has ever played.
+  //
+  // It is how a one shot is played on the upper body only: the arms take the
+  // punch or the reload while the legs carry on with the walk that was already
+  // running, because the walk is still in the second slot and still advancing
+  // at its own speed. See modelUpdateChrNodeMtx(), which is where a node
+  // chooses, and ANIMSPLIT_LOWERBODY for the mask itself.
+  /*ext*/ u32 splitmask;
   /*0x04*/ u8 frameslot1;
   /*0x05*/ u8 frameslot2;
   /*0x06*/ u8 frameslot3;

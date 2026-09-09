@@ -3721,20 +3721,19 @@ static s16 g_ReloadAnims[] = {
  * Not for every one shot. A roll or a death is a whole body move and legs that
  * carried on walking through one would be nonsense.
  */
-static void chrSplitAnimAtWaist(struct chrdata *chr)
+static void chrSaveAnimForSplit(struct chrdata *chr, struct animsplitsave *save)
 {
-	if (chr->model && chr->model->anim) {
-		// The split holds the legs in the SECOND animation slot, so there has to
-		// be a second slot to hold them in. modelCopyAnimForMerge() declines to
-		// make one whenever the merge time was zeroed - which the absolute
-		// translation rule in modelSetAnimationWithMerge() does on its own, with
-		// no way for the caller to know - and a mask set over an empty slot two
-		// points the legs at animation zero, which is why they stopped moving.
-		if (chr->model->anim->animnum2) {
-			chr->model->anim->splitmask = g_AnimSplitLowerMask;
-		} else {
-			chr->model->anim->splitmask = 0;
-		}
+	save->animnum = 0;
+
+	if (chr->model) {
+		modelSaveAnimForSplit(chr->model, save);
+	}
+}
+
+static void chrSplitAnimAtWaist(struct chrdata *chr, struct animsplitsave *save)
+{
+	if (chr->model) {
+		modelApplyAnimSplit(chr->model, save, 16, g_AnimSplitLowerMask);
 	}
 }
 
@@ -3742,6 +3741,7 @@ s32 chrPlayReloadAnimation(struct chrdata *chr)
 {
 	s16 animnum;
 	f32 endframe;
+	struct animsplitsave save;
 
 	if (!chrCanPlayOneShotAnim(chr)) {
 		return 0;
@@ -3756,9 +3756,11 @@ s32 chrPlayReloadAnimation(struct chrdata *chr)
 	animnum = g_ReloadAnims[rngRandom() % ARRAYCOUNT(g_ReloadAnims)];
 	endframe = animGetNumFrames(animnum) - 1;
 
+	chrSaveAnimForSplit(chr, &save);
+
 	modelSetAnimation(chr->model, animnum, false, 0, g_ReloadAnimSpeed, 16);
 	modelSetAnimEndFrame(chr->model, endframe);
-	chrSplitAnimAtWaist(chr);
+	chrSplitAnimAtWaist(chr, &save);
 
 	chr->oneshotanim = animnum;
 
@@ -3824,6 +3826,7 @@ void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum)
 	s32 animnum;
 	f32 startframe;
 	f32 endframe;
+	struct animsplitsave save;
 
 	if (!chrCanPlayOneShotAnim(chr)) {
 		return;
@@ -3847,9 +3850,11 @@ void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum)
 		break;
 	}
 
+	chrSaveAnimForSplit(chr, &save);
+
 	modelSetAnimation(chr->model, animnum, flip, startframe, THROW_ANIMSPEED, 16);
 	modelSetAnimEndFrame(chr->model, endframe);
-	chrSplitAnimAtWaist(chr);
+	chrSplitAnimAtWaist(chr, &save);
 
 	chr->oneshotanim = animnum;
 }
@@ -3868,9 +3873,13 @@ void chrPlayThrowAnimation(struct chrdata *chr, s32 handnum)
  */
 void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart)
 {
+	struct animsplitsave save;
+
 	if (!chrCanPlayOneShotAnim(chr) || chrIsRollAnimPlaying(chr)) {
 		return;
 	}
+
+	chrSaveAnimForSplit(chr, &save);
 
 	chrBeginArghWithAction(chr, angle, hitpart, true);
 
@@ -3878,7 +3887,7 @@ void chrPlayArghAnimation(struct chrdata *chr, f32 angle, s32 hitpart)
 	// legs that stopped walking to take part in one would read as a stumble
 	// rather than as being shot.
 	if (chr->oneshotanim) {
-		chrSplitAnimAtWaist(chr);
+		chrSplitAnimAtWaist(chr, &save);
 	}
 }
 #endif
@@ -8655,6 +8664,7 @@ s32 g_MeleeCombosEnabled = true;
 
 s32 chrPlayPunchAnimation(struct chrdata *chr)
 {
+	struct animsplitsave save;
 	struct punchanim *anims;
 	bool flip = (rngRandom() % 256) > 128;
 	f32 startframe;
@@ -8716,9 +8726,11 @@ s32 chrPlayPunchAnimation(struct chrdata *chr)
 		flip = chr->weapons_held[HAND_LEFT] != NULL;
 	}
 
+	chrSaveAnimForSplit(chr, &save);
+
 	modelSetAnimation(chr->model, anims[index].animnum, flip, startframe, 0.85f, 16);
 	modelSetAnimEndFrame(chr->model, anims[index].endframe);
-	chrSplitAnimAtWaist(chr);
+	chrSplitAnimAtWaist(chr, &save);
 
 	chr->oneshotanim = anims[index].animnum;
 

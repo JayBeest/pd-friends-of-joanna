@@ -1804,6 +1804,95 @@ void modelCopyAnimForMerge(struct model *model, f32 merge)
 	}
 }
 
+#ifndef PLATFORM_N64
+/**
+ * Take a copy of what the body is doing, before a one shot replaces it.
+ *
+ * modelCopyAnimForMerge() already does this, but it does not always do it: the
+ * caller reaches it through modelSetAnimation(), which zeroes the merge time on
+ * its own whenever the outgoing animation has absolute translation and the
+ * incoming one does not - and a walk carries the character's translation while
+ * a reload does not, so that is EVERY split we actually want. The copy is then
+ * declined, slot two is emptied, and the split has nothing to hold the legs in.
+ *
+ * That veto is right about what it is guarding - blending an absolute animation
+ * out into a relative one moves the model - but the split is not a blend. The
+ * legs take slot two whole and the position node is left out of the mask
+ * entirely, so nothing is being interpolated across the two.
+ */
+void modelSaveAnimForSplit(struct model *model, struct animsplitsave *save)
+{
+	save->animnum = 0;
+
+	if (model && model->anim && model->anim->animnum) {
+		struct anim *anim = model->anim;
+
+		save->animnum = anim->animnum;
+		save->flip = anim->flip;
+		save->frame = anim->frame;
+		save->framea = anim->framea;
+		save->frameb = anim->frameb;
+		save->frac = anim->frac;
+		save->speed = anim->speed;
+		save->endframe = anim->endframe;
+	}
+}
+
+/**
+ * Put the saved animation into the second slot and split the body across the
+ * two, after the one shot has been set on the first.
+ *
+ * This runs after modelSetAnimation(), which clears the mask so that no
+ * animation inherits a split from the one before it, and which may or may not
+ * have filled slot two depending on the veto above. Either way the slot is
+ * written here from the save, so the result does not depend on which.
+ */
+void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 merge, u32 splitmask)
+{
+	if (model == NULL || model->anim == NULL || save->animnum == 0) {
+		return;
+	}
+
+	{
+		struct anim *anim = model->anim;
+		struct modelnode *node = model->definition->rootnode;
+
+		anim->animnum2 = save->animnum;
+		anim->flip2 = save->flip;
+		anim->frame2 = save->frame;
+		anim->frame2a = save->framea;
+		anim->frame2b = save->frameb;
+		anim->frac2 = save->frac;
+		anim->speed2 = save->speed;
+		anim->newspeed2 = save->speed;
+		anim->oldspeed2 = save->speed;
+		anim->timespeed2 = 0;
+		anim->elapsespeed2 = 0;
+		anim->endframe2 = save->endframe;
+
+		anim->timemerge = merge;
+		anim->elapsemerge = 0;
+		anim->fracmerge = 1;
+
+		// The same handover modelCopyAnimForMerge() does. Without it the root
+		// keeps accumulating translation against a frame the second slot is no
+		// longer on and she drifts.
+		if ((node->type & 0xff) == MODELNODETYPE_CHRINFO) {
+			struct modelrwdata_chrinfo *rwdata = modelGetNodeRwData(model, node);
+			rwdata->unk02 = 1;
+			rwdata->unk4c.x = rwdata->unk34.x;
+			rwdata->unk4c.y = rwdata->unk34.y;
+			rwdata->unk4c.z = rwdata->unk34.z;
+			rwdata->unk40.x = rwdata->unk24.x;
+			rwdata->unk40.y = rwdata->unk24.y;
+			rwdata->unk40.z = rwdata->unk24.z;
+		}
+
+		anim->splitmask = splitmask;
+	}
+}
+#endif
+
 void modelSetAnimation2(struct model *model, s16 animnum, s32 flip, f32 fstartframe, f32 speed, f32 merge)
 {
 	struct anim *anim = model->anim;

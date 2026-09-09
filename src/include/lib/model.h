@@ -64,6 +64,26 @@ s32 modelGetNumAnimFrames(struct model *model);
 f32 modelGetAnimSpeed(struct model *model);
 f32 modelGetAbsAnimSpeed(struct model *model);
 s32 modelConstrainOrWrapAnimFrame(s32 frame, s16 animnum, f32 endframe);
+#ifndef PLATFORM_N64
+/**
+ * What the body was doing before a one shot took it, kept so the legs can carry
+ * on doing it.
+ */
+struct animsplitsave {
+	s16 animnum;
+	s32 flip;
+	f32 frame;
+	f32 framea;
+	f32 frameb;
+	f32 frac;
+	f32 speed;
+	f32 endframe;
+};
+
+void modelSaveAnimForSplit(struct model *model, struct animsplitsave *save);
+void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 merge, u32 splitmask);
+#endif
+
 void modelCopyAnimForMerge(struct model *model, f32 merge);
 void modelSetAnimation2(struct model *model, s16 animnum, s32 flip, f32 fstartframe, f32 speed, f32 merge);
 bool modelIsAnimMerging(struct model *model);

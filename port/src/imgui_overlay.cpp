@@ -55,6 +55,13 @@ static bool g_ImGuiPropLinkScale = true;
 // scale. It persists, because it is a property of a project rather than a view.
 static f32 g_ImGuiPropLoreScale = 1.0f;
 static bool g_ImGuiPropTypeValues = false;
+
+// A hitpart's joint, when the model's own tree gives the wrong answer.
+// HITPART_ values run to 201, so the array is indexed by hitpart directly and
+// -1 means "believe the model". Cleared on every latch, because it is a fact
+// about one body rather than about the game.
+#define kFojoMaxHitPart 210
+static s16 g_ImGuiPropPartJoint[kFojoMaxHitPart];
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -3036,6 +3043,10 @@ static void imguiPropLatch(struct chrdata *chr)
 
 	g_ImGuiPropBaseHeight = bodyok ? (s32)g_HeadsAndBodies[bodynum].height : 0;
 	g_ImGuiPropBaseScale = bodyok ? g_HeadsAndBodies[bodynum].scale : 1.0f;
+	for (s32 i = 0; i < kFojoMaxHitPart; i++) {
+		g_ImGuiPropPartJoint[i] = -1;
+	}
+
 	g_ImGuiPropHeight = (f32)g_ImGuiPropBaseHeight;
 	g_ImGuiPropScale = g_ImGuiPropBaseScale;
 	g_ImGuiPropMarkJoint = -1;
@@ -3289,6 +3300,14 @@ static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *o
 			// what actually carries the per-part matrix. Calling it means this
 			// cannot drift from what the renderer believes.
 			s32 joint = modelFindNodeMtxIndex(node, 0);
+
+			{
+				s32 hp = node->rodata->bbox.hitpart;
+
+				if (hp >= 0 && hp < kFojoMaxHitPart && g_ImGuiPropPartJoint[hp] >= 0) {
+					joint = g_ImGuiPropPartJoint[hp];
+				}
+			}
 
 			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
 				// The box itself, kept so a row can be checked against what it
@@ -3870,12 +3889,32 @@ static void imguiOverlayDrawProportionsPanel(void)
 					}
 				}
 
+				// Editable, because the model's own tree has proved an
+				// unreliable narrator about which joint a part rides on. Mark a
+				// joint, watch where the dot lands, type the number that is
+				// actually right. Calibration beats inference when the
+				// inference keeps being wrong.
 				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(52.0f);
 
-				if (shared) {
-					ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%d", joint);
-				} else {
-					ImGui::Text("%d", joint);
+				{
+					s32 jedit = joint;
+					s32 hp = parts[p].hitpart;
+
+					if (shared) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+					}
+
+					if (ImGui::InputInt("##pj", &jedit, 0, 0)) {
+						if (jedit >= 0 && jedit < kFojoMaxJointOverrides
+								&& hp >= 0 && hp < kFojoMaxHitPart) {
+							g_ImGuiPropPartJoint[hp] = (s16)jedit;
+						}
+					}
+
+					if (shared) {
+						ImGui::PopStyleColor();
+					}
 				}
 
 				ImGui::TableNextColumn();
@@ -3934,8 +3973,37 @@ static void imguiOverlayDrawProportionsPanel(void)
 			ImGui::EndTable();
 		}
 
-		ImGui::TextDisabled("Read off this model's own nodes, not a fixed table. Amber joints are");
-		ImGui::TextDisabled("claimed by more than one part; mark one and watch where the dot lands.");
+		if (partcount > 0) {
+			if (ImGui::Button("copy mapping")) {
+				char buf[1600];
+				s32 off = 0;
+
+				off += snprintf(buf + off, sizeof(buf) - off, "# part = joint (box y, box x)\n");
+
+				for (s32 p = 0; p < partcount && off < (s32)sizeof(buf) - 96; p++) {
+					const char *nm = imguiPropHitPartName(parts[p].hitpart);
+
+					off += snprintf(buf + off, sizeof(buf) - off,
+							"%-12s = %2d   (%.0f..%.0f, %.0f..%.0f)\n",
+							nm ? nm : "?", parts[p].joint,
+							parts[p].ymin, parts[p].ymax, parts[p].xmin, parts[p].xmax);
+				}
+
+				ImGui::SetClipboardText(buf);
+			}
+
+			ImGui::SameLine();
+
+			if (ImGui::Button("forget corrections")) {
+				for (s32 i = 0; i < kFojoMaxHitPart; i++) {
+					g_ImGuiPropPartJoint[i] = -1;
+				}
+			}
+		}
+
+		ImGui::TextDisabled("The joint column is EDITABLE. Where the model's tree gets a part");
+		ImGui::TextDisabled("wrong, mark a joint, watch the dot, and type the right number in.");
+		ImGui::TextDisabled("Amber means two parts claim one joint. Corrections last until relatch.");
 	}
 
 	// --- joints ----------------------------------------------------------

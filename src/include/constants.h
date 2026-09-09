@@ -3018,9 +3018,10 @@
 #define FOJO_INDEX_MIKADO          2
 #define FOJO_INDEX_POPLIN          3
 #define FOJO_INDEX_CALICO          4
+#define FOJO_INDEX_WILLOW          5
 
 // including CS character
-#define NUM_FOJO_HEADS FOJO_INDEX_CALICO + 2
+#define NUM_FOJO_HEADS FOJO_INDEX_WILLOW + 2
 
 #define MPLOCKTYPE_NONE       0
 #define MPLOCKTYPE_LASTWINNER 1

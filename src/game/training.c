@@ -2334,6 +2334,7 @@ void frIncrementNumShots(void)
 static s32 g_FojoMpHeadMikado = -1;
 static s32 g_FojoMpHeadPoplin = -1;
 static s32 g_FojoMpHeadCalico = -1;
+static s32 g_FojoMpHeadWillow = -1;
 
 static struct biocharid g_ChrBioCharacters[] = {
 	{ BODY_DARK_COMBAT, MPHEAD_DARK_COMBAT }, // Joanna Dark
@@ -2341,6 +2342,7 @@ static struct biocharid g_ChrBioCharacters[] = {
 	{ BODY_DARK_COMBAT, -1 },                  // Mikado Dark (resolved at runtime)
 	{ BODY_DARK_COMBAT, -1 },                  // Poplin Dark (resolved at runtime)
 	{ BODY_DARK_COMBAT, -1 },                  // Calico Dark (resolved at runtime)
+	{ BODY_DARK_COMBAT, -1 },                  // Willow Dark (resolved at runtime)
 	{ BODY_JONATHAN,    -1 },
 	{ BODY_CARRINGTON,  -1 },
 	{ BODY_CASSANDRA,   -1 },
@@ -2362,9 +2364,11 @@ void fojoInitChrBioCharacters(void)
 
 	g_FojoMpHeadPoplin = modLookupHeadByName("head_foslerfer");
 	g_FojoMpHeadCalico = modLookupHeadByName("head_catherine");
+	g_FojoMpHeadWillow = modLookupHeadByName("head_willow");
 
 	g_ChrBioCharacters[3].mpheadnum = g_FojoMpHeadPoplin;
 	g_ChrBioCharacters[4].mpheadnum = g_FojoMpHeadCalico;
+	g_ChrBioCharacters[5].mpheadnum = g_FojoMpHeadWillow;
 }
 
 static bool ciIsBioCharUnlocked(struct biocharid *ch)
@@ -2426,15 +2430,16 @@ struct chrbio *ciGetChrBio(struct biocharid *ch)
 		/*2*/ { (uintptr_t)"Mikado Dark", (uintptr_t)"cI-101 Replicant (Female)", (uintptr_t)"23 (apparent)", (uintptr_t)"|CI File #101 -\n\nTraining Status: Complete\nTraining Grade: A++\nActive Status: Assigned\nManufacturer: Carrington\n\n|Profile -\n\nTokyo's instantiation of the Perfect Dark combat agent but with localized experiential modules. Their likeness and personality is influenced by an amalgamation of Japanese cultural media training data collected from the years 1980-1990. Some of the agent's training data has been back ported to the other Perfect Dark agents to aid in better cooperation between friends. The perfect embodiment of Japanese corporate values, hence the call sign 'Mikado Dark.'\n", CHRBIO_FLAG_LITERAL },
 		/*3*/ { (uintptr_t)"Poplin Dark", (uintptr_t)"dD-100 Replicant (Female)", (uintptr_t)"20 (apparent)", (uintptr_t)"|CI File #081 -\n\nTraining Status: N/A\nTraining Grade: N/A\nActive Status: Unassigned\nManufacturer: dataDyne\n\n|Profile -\n\nFirst-generation dataDyne-produced autonomous combat agent. Pre-loaded with extracted Joanna Dark personality and skill models. Mission to destroy the [redacted] in Africa was successful, but the agent was retired after found to have suffered from data contamination. Given this agent's inextricable moral compass, they can still can be repurposed for emergencies if their friends' lives are at risk, hence the call sign 'Poplin Dark.'\n", CHRBIO_FLAG_LITERAL },
 		/*4*/ { (uintptr_t)"Calico Dark", (uintptr_t)"dD-200x Replicant (Female)", (uintptr_t)"27 (apparent)", (uintptr_t)"|CI File #141 -\n\nTraining Status: N/A\nTraining Grade: N/A\nActive Status: Unassigned\nManufacturer: dataDyne\n\n|Profile -\n\nExperimental dataDyne protoype unit. A composite of experiential modules harvested from anonymous engramboards. It was fitted with self-replicating neurotic modules intended to render it docile and subservient. dataDyne records indicate this unit killed its handlers during a botched affinity calibration sequence. Caution is advised when interacting with this agent.\n", CHRBIO_FLAG_LITERAL },
-		/*5*/  { L_MISC_223, L_MISC_224, L_MISC_225, L_MISC_226, 0 }, // Jonathan
-		/*6*/  { L_MISC_227, L_MISC_228, L_MISC_229, L_MISC_230, 0 }, // Daniel Carrington
-		/*7*/  { L_MISC_231, L_MISC_232, L_MISC_233, L_MISC_234, 0 }, // Cassandra De Vries
-		/*8*/  { L_MISC_235, L_MISC_236, L_MISC_237, L_MISC_238, 0 }, // Trent Easton
-		/*9*/  { L_MISC_239, L_MISC_240, L_MISC_241, L_MISC_242, 0 }, // Dr. Caroll
-		/*10*/ { L_MISC_243, L_MISC_244, L_MISC_245, L_MISC_246, 0 }, // Elvis
-		/*11*/ { L_MISC_247, L_MISC_248, L_MISC_249, L_MISC_250, 0 }, // Mr. Blonde
-		/*12*/ { L_MISC_251, L_MISC_252, L_MISC_253, L_MISC_254, 0 }, // Mr. Blonde (repeat)
-		/*13*/ { L_MISC_255, L_MISC_256, L_MISC_257, L_MISC_258, 0 }, // The U.S. President
+		/*5*/ { (uintptr_t)"Willow Dark", (uintptr_t)"Lorem ipsum dolor (sit amet)", (uintptr_t)"00 (consectetur)", (uintptr_t)"|Lorem Ipsum -\n\nDolor Sit: Amet\nConsectetur: Adipiscing\nSed Eiusmod: Tempor\nIncididunt: Ut Labore\n\n|Dolore Magna -\n\nUt enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\n", CHRBIO_FLAG_LITERAL },
+		/*6*/  { L_MISC_223, L_MISC_224, L_MISC_225, L_MISC_226, 0 }, // Jonathan
+		/*7*/  { L_MISC_227, L_MISC_228, L_MISC_229, L_MISC_230, 0 }, // Daniel Carrington
+		/*8*/  { L_MISC_231, L_MISC_232, L_MISC_233, L_MISC_234, 0 }, // Cassandra De Vries
+		/*9*/  { L_MISC_235, L_MISC_236, L_MISC_237, L_MISC_238, 0 }, // Trent Easton
+		/*10*/  { L_MISC_239, L_MISC_240, L_MISC_241, L_MISC_242, 0 }, // Dr. Caroll
+		/*11*/ { L_MISC_243, L_MISC_244, L_MISC_245, L_MISC_246, 0 }, // Elvis
+		/*12*/ { L_MISC_247, L_MISC_248, L_MISC_249, L_MISC_250, 0 }, // Mr. Blonde
+		/*13*/ { L_MISC_251, L_MISC_252, L_MISC_253, L_MISC_254, 0 }, // Mr. Blonde (repeat)
+		/*14*/ { L_MISC_255, L_MISC_256, L_MISC_257, L_MISC_258, 0 }, // The U.S. President
 #endif
 	};
 
@@ -2443,29 +2448,30 @@ struct chrbio *ciGetChrBio(struct biocharid *ch)
 		if (g_FojoMpHeadMikado >= 0 && ch->mpheadnum == g_FojoMpHeadMikado) return &bios[2];
 		if (g_FojoMpHeadPoplin >= 0 && ch->mpheadnum == g_FojoMpHeadPoplin) return &bios[3];
 		if (g_FojoMpHeadCalico >= 0 && ch->mpheadnum == g_FojoMpHeadCalico) return &bios[4];
+		if (g_FojoMpHeadWillow >= 0 && ch->mpheadnum == g_FojoMpHeadWillow) return &bios[5];
 		return &bios[0]; // Joanna (default)
 	}
 
 	switch (ch->bodynum) {
 	case BODY_JONATHAN:
-		return &bios[5];
-	case BODY_CARRINGTON:
 		return &bios[6];
-	case BODY_CASSANDRA:
+	case BODY_CARRINGTON:
 		return &bios[7];
-	case BODY_TRENT:
+	case BODY_CASSANDRA:
 		return &bios[8];
-	case BODY_DRCAROLL:
+	case BODY_TRENT:
 		return &bios[9];
-	case BODY_THEKING:
+	case BODY_DRCAROLL:
 		return &bios[10];
+	case BODY_THEKING:
+		return &bios[11];
 	case BODY_MRBLONDE:
 		if (ciIsStageComplete(SOLOSTAGEINDEX_CRASHSITE)) {
-			return &bios[12];
+			return &bios[13];
 		}
-		return &bios[11];
+		return &bios[12];
 	case BODY_PRESIDENT:
-		return &bios[13];
+		return &bios[14];
 	}
 
 	return NULL;

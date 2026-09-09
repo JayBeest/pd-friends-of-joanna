@@ -2154,6 +2154,8 @@ static const char *fojoHeadConfigName(s32 optionindex) {
     return "head_foslerfer";
   case FOJO_INDEX_CALICO:
     return "head_catherine";
+  case FOJO_INDEX_WILLOW:
+    return "head_willow";
   default:
     return NULL;
   }
@@ -2174,6 +2176,8 @@ static const char *fojoHeadDisplayName(s32 optionindex) {
     return "Poplin Dark";
   case FOJO_INDEX_CALICO:
     return "Calico Dark";
+  case FOJO_INDEX_WILLOW:
+    return "Willow Dark";
   default:
     return "Unknown";
   }
@@ -2213,7 +2217,7 @@ void fojoInitHeadOptions(void) {
   g_FojoHeadOptions[g_FojoHeadCount++] = FOJO_HEAD_JOANNA;
   g_FojoHeadOptions[g_FojoHeadCount++] = FOJO_HEAD_VELVET;
 
-  for (s32 idx = FOJO_INDEX_MIKADO; idx <= FOJO_INDEX_CALICO; ++idx) {
+  for (s32 idx = FOJO_INDEX_MIKADO; idx <= FOJO_INDEX_WILLOW; ++idx) {
     const char *cfgName = fojoHeadConfigName(idx);
     if (!cfgName)
       continue;

@@ -818,6 +818,16 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 	// never filled reads animation zero and the part stops moving entirely.
 	if (anim->animnum2 && animpart < 32 && (anim->splitmask & (1 << animpart))) {
 		fracmerge = 1.0f;
+
+		if (g_SplitLogBudget > 0) {
+			g_SplitLogBudget--;
+			DEBUG_SPLIT("CHR node part %d TAKES THE WALK", animpart);
+		}
+	} else if (anim->splitmask && anim->animnum2) {
+		if (g_SplitLogBudget > 0) {
+			g_SplitLogBudget--;
+			DEBUG_SPLIT("CHR node part %d follows the one shot", animpart);
+		}
 	} else if (anim->splitmask && !anim->animnum2) {
 		// Drawn with a mask over an empty slot two. One line, then the mask is
 		// dropped, because every following node and every following frame would

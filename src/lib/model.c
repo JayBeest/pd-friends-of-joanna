@@ -35,6 +35,11 @@
 // every node of every frame forever.
 static s32 g_SplitLogBudget = 0;
 
+// The model the split was actually written to. The draw logs report only this
+// one: without it the budget was spent on the first two models of the frame -
+// eleven parts each, neither of them the body - and the body never got a line.
+static struct model *g_SplitLogModel = NULL;
+
 #endif
 
 /**
@@ -816,11 +821,11 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 	// is set on it. Gating this on the mask was the mistake in the last two runs:
 	// if the model being drawn is not the model the split was written to, a
 	// mask-gated log is silent and silence looks like "not called".
-	if (g_SplitLogBudget > 0) {
+	if (g_SplitLogBudget > 0 && model == g_SplitLogModel) {
 		g_SplitLogBudget--;
-		DEBUG_SPLIT("CHR draw model %p anim %p part %d mask 0x%04x slot2 %d",
-				(void *)model, (void *)anim, animpart,
-				(unsigned)anim->splitmask, (s32)anim->animnum2);
+		DEBUG_SPLIT("CHR draw anim %p part %d mask 0x%04x slot2 %d frac %.2f",
+				(void *)anim, animpart, (unsigned)anim->splitmask,
+				(s32)anim->animnum2, anim->fracmerge);
 	}
 
 	// animpart is a u16 and the mask is 32 bits, so the shift is bounded before
@@ -1199,11 +1204,11 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 				g_SplitLogBudget--;
 				DEBUG_SPLIT("joint part %d TAKES THE WALK", animpart);
 			}
-		} else if (g_SplitLogBudget > 0) {
+		} else if (g_SplitLogBudget > 0 && model == g_SplitLogModel) {
 			g_SplitLogBudget--;
-			DEBUG_SPLIT("POS draw model %p anim %p part %d mask 0x%04x slot2 %d",
-					(void *)model, (void *)anim, animpart,
-					(unsigned)anim->splitmask, (s32)anim->animnum2);
+			DEBUG_SPLIT("POS draw anim %p part %d mask 0x%04x slot2 %d frac %.2f",
+					(void *)anim, animpart, (unsigned)anim->splitmask,
+					(s32)anim->animnum2, anim->fracmerge);
 		}
 
 		if (fracmerge != 0.0f) {
@@ -1954,7 +1959,9 @@ void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 me
 		DEBUG_SPLIT("APPLIED: upper %d / lower %d, mask 0x%04x, merge %.0f",
 				(s32)anim->animnum, (s32)anim->animnum2, (unsigned)splitmask, merge);
 
-		g_SplitLogBudget = g_DebugSplit ? 40 : 0;
+		g_SplitLogBudget = g_DebugSplit ? 60 : 0;
+
+		g_SplitLogModel = model;
 
 		DEBUG_SPLIT("written to model %p anim %p", (void *)model, (void *)anim);
 	}

@@ -55,6 +55,13 @@ static bool g_ImGuiPropLinkScale = true;
 // scale. It persists, because it is a property of a project rather than a view.
 static f32 g_ImGuiPropLoreScale = 1.0f;
 static bool g_ImGuiPropTypeValues = false;
+
+// A hitpart's joint, when the model's own tree gives the wrong answer.
+// HITPART_ values run to 201, so the array is indexed by hitpart directly and
+// -1 means "believe the model". Cleared on every latch, because it is a fact
+// about one body rather than about the game.
+#define kFojoMaxHitPart 210
+static s16 g_ImGuiPropPartJoint[kFojoMaxHitPart];
 static bool g_ImGuiPropMirror = true;
 static bool g_ImGuiPropDrawBox = true;
 static s32 g_ImGuiPropMarkJoint = -1;
@@ -3037,6 +3044,10 @@ static void imguiPropLatch(struct chrdata *chr)
 
 	g_ImGuiPropBaseHeight = bodyok ? (s32)g_HeadsAndBodies[bodynum].height : 0;
 	g_ImGuiPropBaseScale = bodyok ? g_HeadsAndBodies[bodynum].scale : 1.0f;
+	for (s32 i = 0; i < kFojoMaxHitPart; i++) {
+		g_ImGuiPropPartJoint[i] = -1;
+	}
+
 	g_ImGuiPropHeight = (f32)g_ImGuiPropBaseHeight;
 	g_ImGuiPropScale = g_ImGuiPropBaseScale;
 	g_ImGuiPropMarkJoint = -1;
@@ -3299,6 +3310,14 @@ static s32 imguiPropCollectParts(struct chrdata *chr, struct imguiPropPartRow *o
 			// cannot drift from what the renderer believes.
 			s32 joint = modelFindNodeMtxIndex(node, 0);
 
+			{
+				s32 hp = node->rodata->bbox.hitpart;
+
+				if (hp >= 0 && hp < kFojoMaxHitPart && g_ImGuiPropPartJoint[hp] >= 0) {
+					joint = g_ImGuiPropPartJoint[hp];
+				}
+			}
+
 			if (joint >= 0 && joint < kFojoMaxJointOverrides) {
 				// The box itself, kept so a row can be checked against what it
 				// claims to be. A pelvis and an arm do not occupy the same
@@ -3389,6 +3408,71 @@ static void imguiOverlayDrawProportionsPanel(void)
 	// The aim path reads the player's gun direction, which is frozen while
 	// the overlay has the mouse -- so it only finds whoever you were already
 	// pointing at. Right-clicking a row in Entities is the reliable way in.
+	// A picker, because both other ways in have failed in play. The aim path
+	// reads a gun direction that is frozen while the overlay holds the mouse,
+	// and the Entities context menu depends on finding the right row in another
+	// window. This one needs neither: every chr in the level, in one list, with
+	// the button next to it.
+	if (ImGui::CollapsingHeader("Pick a character", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (g_ChrSlots == NULL || g_NumChrSlots <= 0) {
+			ImGui::TextDisabled("no chr slots");
+		} else if (ImGui::BeginTable("fojoproplatchlist", 4,
+				ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+				ImVec2(0.0f, 170.0f))) {
+			ImGui::TableSetupColumn("chr");
+			ImGui::TableSetupColumn("body");
+			ImGui::TableSetupColumn("who");
+			ImGui::TableSetupColumn("");
+			ImGui::TableSetupScrollFreeze(0, 1);
+			ImGui::TableHeadersRow();
+
+			for (s32 i = 0; i < g_NumChrSlots; i++) {
+				struct chrdata *c = &g_ChrSlots[i];
+
+				if (!imguiOverlayChrIsCurrent(c) || c->prop == NULL || c->model == NULL) {
+					continue;
+				}
+
+				bool isself = imguiPropChrIsPlayer(c);
+				bool islatched = g_ImGuiPropChr == c;
+
+				ImGui::TableNextRow();
+				ImGui::PushID(20000 + i);
+
+				ImGui::TableNextColumn();
+
+				if (islatched) {
+					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%04x", (u32)(u16)c->chrnum);
+				} else {
+					ImGui::Text("%04x", (u32)(u16)c->chrnum);
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::Text("%d", (s32)c->bodynum);
+
+				ImGui::TableNextColumn();
+
+				if (isself) {
+					ImGui::TextDisabled("you");
+				} else if (c->aibot) {
+					ImGui::TextDisabled("simulant");
+				} else {
+					ImGui::TextDisabled("ai");
+				}
+
+				ImGui::TableNextColumn();
+
+				if (ImGui::SmallButton("latch")) {
+					imguiPropLatch(c);
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
 	ImGui::TextDisabled("or right-click a character in Entities");
 
 	if (!g_ImGuiPropChr) {
@@ -3694,82 +3778,75 @@ static void imguiOverlayDrawProportionsPanel(void)
 
 	// --- scale reference -------------------------------------------------
 	//
-	// The arithmetic nobody should have to redo mid-drag. It is built from the
-	// LATCHED character's own head row rather than from a constant, so the body
-	// row column is the number to type for this character specifically -- a
-	// Maian head adds 27 where a human one adds 13, and a table that assumed 13
-	// would be silently wrong by half a foot on half the roster.
+	// Indexed by LORE height, because that is the number she arrives with. The
+	// first version of this table was indexed by in-game stature, which meant
+	// reading it backwards: find the answer, then check it was the question.
+	//
+	// Built from the LATCHED character's own head row rather than from a
+	// constant, so the body row column is the number to type for THIS
+	// character -- a Maian head adds 27 where a human one adds 13, and a fixed
+	// table would be wrong by half a foot on half the roster.
 	if (ImGui::CollapsingHeader("Scale reference")) {
 		s32 refcap = (s32)g_HeadsAndBodies[BODY_MRBLONDE].height + (s32)g_HeadsAndBodies[HEAD_MRBLONDE].height;
 		s32 nowcrown = bodyok ? (s32)(g_ImGuiPropHeight + 0.5f) + headadd : -1;
-		s32 totalinches;
+		f32 shrink = g_ImGuiPropLoreScale > 0.0001f ? g_ImGuiPropLoreScale : 1.0f;
+		s32 loreinches;
 
-		ImGui::TextDisabled("1 unit is about 1 cm. The body row is eye level; the head");
-		ImGui::TextDisabled("row stacks on it (%d for this one) to make the crown.", headadd);
+		ImGui::TextDisabled("Left is what she is in the chart. Right is what to type.");
 
-		if (ImGui::BeginTable("pd stature reference", 4, ImGuiTableFlags_SizingFixedFit
+		if (ImGui::BeginTable("pd stature reference", 3, ImGuiTableFlags_SizingFixedFit
 				| ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
-			ImGui::TableSetupColumn("stands");
-			ImGui::TableSetupColumn("crown");
+			ImGui::TableSetupColumn("in the chart");
+			ImGui::TableSetupColumn("in the game");
 			ImGui::TableSetupColumn("body row");
-			ImGui::TableSetupColumn("lore");
 			ImGui::TableHeadersRow();
 
-			for (totalinches = 58; totalinches <= 74; totalinches += 2) {
-				f32 cm = (f32)totalinches * 2.54f;
-				s32 crownunits = (s32)(cm + 0.5f);
+			for (loreinches = 58; loreinches <= 80; loreinches += 2) {
+				f32 lorecmrow = (f32)loreinches * 2.54f;
+				s32 crownunits = (s32)(lorecmrow * shrink + 0.5f);
 				s32 bodyunits = crownunits - headadd;
 				bool over = crownunits > refcap;
-				// The row the latched character currently sits in.
 				bool here = nowcrown >= 0 && nowcrown >= crownunits - 1 && nowcrown <= crownunits + 1;
+				char ingame[24];
+
+				imguiOverlayFormatUsHeight((f32)crownunits, ingame, sizeof(ingame));
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 
 				if (here) {
-					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%d'%d\"",
-							totalinches / 12, totalinches % 12);
+					ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f), "%d\'%d\"",
+							loreinches / 12, loreinches % 12);
 				} else if (over) {
-					ImGui::TextDisabled("%d'%d\"", totalinches / 12, totalinches % 12);
+					ImGui::TextDisabled("%d\'%d\"", loreinches / 12, loreinches % 12);
 				} else {
-					ImGui::Text("%d'%d\"", totalinches / 12, totalinches % 12);
+					ImGui::Text("%d\'%d\"", loreinches / 12, loreinches % 12);
 				}
 
 				ImGui::TableSetColumnIndex(1);
 
 				if (over) {
-					ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d", crownunits);
+					ImGui::TextDisabled("%s", ingame);
 				} else {
-					ImGui::Text("%d", crownunits);
+					ImGui::Text("%s", ingame);
 				}
 
 				ImGui::TableSetColumnIndex(2);
-				ImGui::Text("%d", bodyunits);
 
-				// The same row read in chart space. Scan this column for the
-				// height as drawn, then type the body row beside it.
-				ImGui::TableSetColumnIndex(3);
-
-				{
-					char rowlore[24];
-
-					imguiOverlayFormatUsHeight(g_ImGuiPropLoreScale > 0.0001f
-							? cm / g_ImGuiPropLoreScale : cm, rowlore, sizeof(rowlore));
-
-					if (over) {
-						ImGui::TextDisabled("%s", rowlore);
-					} else {
-						ImGui::Text("%s", rowlore);
-					}
+				if (over) {
+					ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%d too tall", bodyunits);
+				} else {
+					ImGui::Text("%d", bodyunits);
 				}
 			}
 
 			ImGui::EndTable();
 		}
 
-		ImGui::TextDisabled("Red is past the collision cap of %d, which is %d'%d\" --",
+		ImGui::TextDisabled("Green is where she is now. Red will not fit: the game stops");
+		ImGui::TextDisabled("growing anyone past %d units, or %d\'%d\", and draws the rest",
 				refcap, (s32)(refcap / 2.54f) / 12, (s32)(refcap / 2.54f) % 12);
-		ImGui::TextDisabled("the tallest body plus the tallest head. Six feet is already over it.");
+		ImGui::TextDisabled("of the body somewhere the camera is not.");
 	}
 
 	// --- model scale -----------------------------------------------------
@@ -3886,12 +3963,32 @@ static void imguiOverlayDrawProportionsPanel(void)
 					}
 				}
 
+				// Editable, because the model's own tree has proved an
+				// unreliable narrator about which joint a part rides on. Mark a
+				// joint, watch where the dot lands, type the number that is
+				// actually right. Calibration beats inference when the
+				// inference keeps being wrong.
 				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth(52.0f);
 
-				if (shared) {
-					ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%d", joint);
-				} else {
-					ImGui::Text("%d", joint);
+				{
+					s32 jedit = joint;
+					s32 hp = parts[p].hitpart;
+
+					if (shared) {
+						ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+					}
+
+					if (ImGui::InputInt("##pj", &jedit, 0, 0)) {
+						if (jedit >= 0 && jedit < kFojoMaxJointOverrides
+								&& hp >= 0 && hp < kFojoMaxHitPart) {
+							g_ImGuiPropPartJoint[hp] = (s16)jedit;
+						}
+					}
+
+					if (shared) {
+						ImGui::PopStyleColor();
+					}
 				}
 
 				ImGui::TableNextColumn();
@@ -3950,8 +4047,37 @@ static void imguiOverlayDrawProportionsPanel(void)
 			ImGui::EndTable();
 		}
 
-		ImGui::TextDisabled("Read off this model's own nodes, not a fixed table. Amber joints are");
-		ImGui::TextDisabled("claimed by more than one part; mark one and watch where the dot lands.");
+		if (partcount > 0) {
+			if (ImGui::Button("copy mapping")) {
+				char buf[1600];
+				s32 off = 0;
+
+				off += snprintf(buf + off, sizeof(buf) - off, "# part = joint (box y, box x)\n");
+
+				for (s32 p = 0; p < partcount && off < (s32)sizeof(buf) - 96; p++) {
+					const char *nm = imguiPropHitPartName(parts[p].hitpart);
+
+					off += snprintf(buf + off, sizeof(buf) - off,
+							"%-12s = %2d   (%.0f..%.0f, %.0f..%.0f)\n",
+							nm ? nm : "?", parts[p].joint,
+							parts[p].ymin, parts[p].ymax, parts[p].xmin, parts[p].xmax);
+				}
+
+				ImGui::SetClipboardText(buf);
+			}
+
+			ImGui::SameLine();
+
+			if (ImGui::Button("forget corrections")) {
+				for (s32 i = 0; i < kFojoMaxHitPart; i++) {
+					g_ImGuiPropPartJoint[i] = -1;
+				}
+			}
+		}
+
+		ImGui::TextDisabled("The joint column is EDITABLE. Where the model's tree gets a part");
+		ImGui::TextDisabled("wrong, mark a joint, watch the dot, and type the right number in.");
+		ImGui::TextDisabled("Amber means two parts claim one joint. Corrections last until relatch.");
 	}
 
 	// --- joints ----------------------------------------------------------

@@ -5372,6 +5372,19 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 						// read off flinchcnt.
 						g_Vars.currentplayer->flinchtime60 = g_Vars.lvframe60;
 						g_Vars.currentplayer->flinchbusy60 = g_FlinchBusy;
+
+						// Knocked out of the low ready. Being shot is not
+						// something that happens to someone lining up a shot:
+						// the sights come down, the body takes over, and the
+						// stance is not hers again until the reel is over -
+						// bwalkStanceIsLocked() holds the aim button off for
+						// exactly as long.
+						//
+						// She is put in third person rather than merely allowed
+						// into it, because the flinch is an animation on the
+						// body and the low ready is the one view it cannot be
+						// seen from.
+						g_Vars.currentplayer->insightaimmode = false;
 #endif
 #ifndef PLATFORM_N64
 						// playerDieByShooter() has already run above if this was

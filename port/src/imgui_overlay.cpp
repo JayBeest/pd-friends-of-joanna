@@ -185,6 +185,7 @@ extern "C" f32 g_ThirdPersonCamClearance;
 extern "C" f32 g_ThirdPersonCamMinDist;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
+extern "C" f32 g_ReloadSpeed;
 extern "C" f32 g_ReloadAnimSpeed;
 extern "C" f32 g_RollImpulse;
 extern "C" s32 g_BuildSpeedEnabled;
@@ -3188,6 +3189,12 @@ static void imguiOverlayDrawStancePanel(void)
 	}
 
 	if (ImGui::CollapsingHeader("Reload", ImGuiTreeNodeFlags_DefaultOpen)) {
+		imguiOverlayStanceKnob("Reload speed", &g_ReloadSpeed, 0.01f, 1.0f, "%.2f",
+				"What is left of her walk while she is reloading.\n"
+				"The heaviest of the four multipliers on purpose - a reload\n"
+				"already costs the stance and the trigger, and this is what\n"
+				"makes choosing when to do one a decision. Stacks with the rest.");
+
 		imguiOverlayStanceKnob("Reload anim speed", &g_ReloadAnimSpeed, 0.1f, 4.0f, "%.2f",
 				"How fast the body plays its reload animation.\n"
 				"The reload's own length is the weapon's, and the two do not\n"

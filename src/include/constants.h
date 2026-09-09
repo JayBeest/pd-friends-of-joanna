@@ -464,6 +464,11 @@
 // How fast the body plays its reload animation. The reload's own length is the
 // weapon's and the two do not agree, so this is the dial that makes the reach
 // for a magazine look like it belongs to the gun being reloaded.
+// What is left of her walk while she is reloading. The heaviest of the four
+// movement multipliers on purpose: a reload already costs her the stance and
+// the trigger, and this is what makes choosing when to do one a decision.
+#define RELOAD_SPEED 0.05f
+
 #define RELOAD_ANIMSPEED 1.0f
 
 #define MELEE_BODY_REACH 60.0f

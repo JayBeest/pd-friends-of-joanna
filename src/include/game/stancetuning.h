@@ -47,6 +47,9 @@ extern f32 g_ThirdPersonCamMinDist;
 extern f32 g_BodyFadeStart;
 extern f32 g_BodyFadeFloor;
 
+// What is left of her walk while she is reloading.
+extern f32 g_ReloadSpeed;
+
 // How fast the body plays its reload animation.
 extern f32 g_ReloadAnimSpeed;
 

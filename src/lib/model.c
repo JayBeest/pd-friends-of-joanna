@@ -28,6 +28,13 @@
 // the outside - the legs stop, or nothing happens at all - so it says which.
 #define DEBUG_SPLIT(fmt, ...) \
 	do { if (g_DebugSplit) sysLogPrintf(LOG_NOTE, "split: " fmt, ##__VA_ARGS__); } while (0)
+
+// How many part numbers are still worth logging for the current split. Reset by
+// modelApplyAnimSplit(); counts down as the position path reports what it sees,
+// so one reload says which numbers the joints actually carry without printing
+// every node of every frame forever.
+static s32 g_SplitLogBudget = 0;
+
 #endif
 
 /**
@@ -1171,6 +1178,15 @@ void modelUpdatePositionNodeMtx(struct modelrenderdata *renderdata, struct model
 		if (anim->animnum2 && animpart >= 0 && animpart < 32
 				&& (anim->splitmask & (1 << animpart))) {
 			fracmerge = 1.0f;
+
+			if (g_SplitLogBudget > 0) {
+				g_SplitLogBudget--;
+				DEBUG_SPLIT("joint part %d TAKES THE WALK", animpart);
+			}
+		} else if (anim->splitmask && g_SplitLogBudget > 0) {
+			g_SplitLogBudget--;
+			DEBUG_SPLIT("joint part %d follows the one shot%s", animpart,
+					anim->animnum2 ? "" : " (NO SLOT TWO)");
 		}
 
 		if (fracmerge != 0.0f) {
@@ -1920,6 +1936,8 @@ void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 me
 
 		DEBUG_SPLIT("APPLIED: upper %d / lower %d, mask 0x%04x, merge %.0f",
 				(s32)anim->animnum, (s32)anim->animnum2, (unsigned)splitmask, merge);
+
+		g_SplitLogBudget = g_DebugSplit ? 40 : 0;
 	}
 }
 #endif

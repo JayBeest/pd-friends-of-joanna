@@ -98,34 +98,66 @@ else()
   message(FATAL_ERROR "Unknown ROM ID: ${ROMID}")
 endif()
 
-# git commit hash
-execute_process(
-  COMMAND git rev-parse --short HEAD
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE VERSION_HASH
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# git branch name
-execute_process(
-  COMMAND git rev-parse --abbrev-ref HEAD
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE VERSION_BRANCH
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
 set(VERSION_TARGET "${TARGET_PLATFORM}")
 set(VERSION_ARCH "${TARGET_ARCH}")
 set(VERSION_ROMID "${ROMID}")
 set(VERSION_BUILD "${CMAKE_BUILD_TYPE}")
 
+# The commit hash and branch resolved HERE are configure-time values and go stale
+# as soon as anything is committed after the build directory is made. They are
+# kept only for the Switch nacp, which is packed at configure time anyway.
+# THE HEADER THE BINARY REPORTS ITSELF FROM DOES NOT USE THEM - it is written on
+# every build by cmake/GitVersion.cmake, via the versioninfo target below.
+execute_process(
+  COMMAND git rev-parse --short HEAD
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE VERSION_HASH
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+
+execute_process(
+  COMMAND git rev-parse --abbrev-ref HEAD
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE VERSION_BRANCH
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+
 if((VERSION_BRANCH STREQUAL "") OR (VERSION_BRANCH STREQUAL "HEAD"))
   set(VERSION_BRANCH "port-custom")
 endif()
 
-message(STATUS "Version: ${VERSION_ROMID}, hash ${VERSION_HASH}, branch ${VERSION_BRANCH}")
+message(STATUS "Version: ${VERSION_ROMID}, branch ${VERSION_BRANCH} (hash stamped per build)")
 
-configure_file("${CMAKE_SOURCE_DIR}/port/include/versioninfo.h.in" "${CMAKE_BINARY_DIR}/port/include/versioninfo.h" @ONLY)
+# Written before anything compiles, on every build, by the script above.
+add_custom_target(versioninfo ALL
+  COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_SOURCE_DIR}
+    -DTEMPLATE=${CMAKE_SOURCE_DIR}/port/include/versioninfo.h.in
+    -DOUT_FILE=${CMAKE_BINARY_DIR}/port/include/versioninfo.h
+    -DVERSION_TARGET=${VERSION_TARGET}
+    -DVERSION_ARCH=${VERSION_ARCH}
+    -DVERSION_ROMID=${VERSION_ROMID}
+    -DVERSION_BUILD=${VERSION_BUILD}
+    -P ${CMAKE_SOURCE_DIR}/cmake/GitVersion.cmake
+  COMMENT "Stamping build with the current commit"
+  VERBATIM
+)
+
+# And once now, so the first configure leaves a header on disk for anything that
+# reads it before the target has run.
+execute_process(
+  COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_SOURCE_DIR}
+    -DTEMPLATE=${CMAKE_SOURCE_DIR}/port/include/versioninfo.h.in
+    -DOUT_FILE=${CMAKE_BINARY_DIR}/port/include/versioninfo.h
+    -DVERSION_TARGET=${VERSION_TARGET}
+    -DVERSION_ARCH=${VERSION_ARCH}
+    -DVERSION_ROMID=${VERSION_ROMID}
+    -DVERSION_BUILD=${VERSION_BUILD}
+    -P ${CMAKE_SOURCE_DIR}/cmake/GitVersion.cmake
+)
 
 set(ASSET_DIR "src/assets/${ROMID}")
 set(GENERATED_DIR "src/generated/${ROMID}")
@@ -360,7 +392,7 @@ add_custom_target(pd_headers ALL DEPENDS ${JSON_HEADERS})
 
 set(BIN_NAME "pd${BIN_REGION}.${TARGET_ARCH}")
 add_executable(pd ${SRC})
-add_dependencies(pd pd_headers)
+add_dependencies(pd pd_headers versioninfo)
 target_link_libraries(pd ${LIBS})
 set_target_properties(pd PROPERTIES OUTPUT_NAME "${BIN_NAME}")
 if(WIN32)

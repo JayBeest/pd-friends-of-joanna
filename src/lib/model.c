@@ -23,6 +23,13 @@
 #define DEBUG_MODELS(fmt, ...) \
 	do { if (g_DebugModels) sysLogPrintf(LOG_NOTE, fmt, ##__VA_ARGS__); } while (0)
 
+#ifndef PLATFORM_N64
+// PD_DEBUG_SPLIT=1. Every way the upper body split fails looks the same from
+// the outside - the legs stop, or nothing happens at all - so it says which.
+#define DEBUG_SPLIT(fmt, ...) \
+	do { if (g_DebugSplit) sysLogPrintf(LOG_NOTE, "split: " fmt, ##__VA_ARGS__); } while (0)
+#endif
+
 /**
  * -- Model Definitions --
  *
@@ -804,6 +811,13 @@ void modelUpdateChrNodeMtx(struct modelrenderdata *arg0, struct model *model, st
 	// never filled reads animation zero and the part stops moving entirely.
 	if (anim->animnum2 && animpart < 32 && (anim->splitmask & (1 << animpart))) {
 		fracmerge = 1.0f;
+	} else if (anim->splitmask && !anim->animnum2) {
+		// Drawn with a mask over an empty slot two. One line, then the mask is
+		// dropped, because every following node and every following frame would
+		// say exactly the same thing.
+		DEBUG_SPLIT("DROPPED AT DRAW: mask 0x%04x set but slot two is empty on anim %d",
+				(unsigned)anim->splitmask, (s32)anim->animnum);
+		anim->splitmask = 0;
 	}
 
 	if (fracmerge != 0.0f) {
@@ -1850,6 +1864,8 @@ void modelSaveAnimForSplit(struct model *model, struct animsplitsave *save)
 void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 merge, u32 splitmask)
 {
 	if (model == NULL || model->anim == NULL || save->animnum == 0) {
+		DEBUG_SPLIT("DECLINED: nothing saved to hold the legs in (model %p anim %p saved %d)",
+				(void *)model, (void *)(model ? model->anim : NULL), save ? (s32)save->animnum : -1);
 		return;
 	}
 
@@ -1889,6 +1905,9 @@ void modelApplyAnimSplit(struct model *model, struct animsplitsave *save, f32 me
 		}
 
 		anim->splitmask = splitmask;
+
+		DEBUG_SPLIT("APPLIED: upper %d / lower %d, mask 0x%04x, merge %.0f",
+				(s32)anim->animnum, (s32)anim->animnum2, (unsigned)splitmask, merge);
 	}
 }
 #endif

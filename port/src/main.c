@@ -53,6 +53,7 @@ s32 g_FileAutoSelect = -1;
 bool g_DebugEndscreen = false;
 bool g_DebugMenu = false;
 bool g_DebugModels = false;
+bool g_DebugSplit = false;
 
 extern s32 g_StageNum;
 
@@ -174,6 +175,11 @@ int main(int argc, const char **argv)
 	if (getenv("PD_DEBUG_MODELS")) {
 		g_DebugModels = true;
 		sysLogPrintf(LOG_NOTE, "Model/mod scaling debugging enabled");
+	}
+
+	if (getenv("PD_DEBUG_SPLIT")) {
+		g_DebugSplit = true;
+		sysLogPrintf(LOG_NOTE, "Upper body split debugging enabled");
 	}
 
 	// Spectator from the first frame. A button press cannot happen before the

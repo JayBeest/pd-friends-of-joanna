@@ -46,6 +46,7 @@ extern bool g_SndDisabled;
 extern bool g_DebugEndscreen;
 extern bool g_DebugMenu;
 extern bool g_DebugModels;
+extern bool g_DebugSplit;
 extern u16 g_SfxVolume;
 extern s32 g_SoundMode;
 extern s32 g_SndNumPlaying;

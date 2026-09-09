@@ -1,4 +1,5 @@
 #include <ultra64.h>
+#include "system.h"
 #include "constants.h"
 #include "game/acosfasinf.h"
 #include "game/atan2f.h"
@@ -3437,6 +3438,11 @@ bool chrIsOneShotAnimPlaying(struct chrdata *chr)
 		// replaced until the walk selector next changes row, and until then the
 		// legs would still be taking the second slot.
 		if (chr->model->anim) {
+			if (g_DebugSplit && chr->model->anim->splitmask) {
+				sysLogPrintf(LOG_NOTE, "split: cleared, one shot ran out on chr 0x%04x",
+						(u16)chr->chrnum);
+			}
+
 			chr->model->anim->splitmask = 0;
 		}
 #endif
@@ -3733,6 +3739,11 @@ static void chrSaveAnimForSplit(struct chrdata *chr, struct animsplitsave *save)
 static void chrSplitAnimAtWaist(struct chrdata *chr, struct animsplitsave *save)
 {
 	if (chr->model) {
+		if (g_DebugSplit) {
+			sysLogPrintf(LOG_NOTE, "split: request chr 0x%04x, saved lower %d, mask 0x%04x",
+					(u16)chr->chrnum, (s32)save->animnum, (unsigned)g_AnimSplitLowerMask);
+		}
+
 		modelApplyAnimSplit(chr->model, save, 16, g_AnimSplitLowerMask);
 	}
 }
@@ -3789,6 +3800,11 @@ void chrEndReloadAnimation(struct chrdata *chr)
 			chr->oneshotanim = 0;
 
 			if (chr->model && chr->model->anim) {
+				if (g_DebugSplit && chr->model->anim->splitmask) {
+					sysLogPrintf(LOG_NOTE, "split: cleared, reload ended early on chr 0x%04x",
+							(u16)chr->chrnum);
+				}
+
 				chr->model->anim->splitmask = 0;
 			}
 

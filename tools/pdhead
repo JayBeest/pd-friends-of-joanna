@@ -53,7 +53,10 @@ def plausible_modeldef(d, o):
     texptr, = struct.unpack_from(">I", d, o + 0x18)
     if root >> 24 != 5 or texptr >> 24 != 5:
         return False
-    if (texptr & 0xffffff) != 0x1c:          # the table always follows the header
+    tex_off = texptr & 0xffffff
+    if tex_off < 0x1c or o + tex_off + 12 > len(d):
+        return False                          # after the header, and inside the file
+    if numparts and parts >> 24 != 5:         # a parts array is segment 5 too
         return False
     if not (1 <= numtex <= 64) or not (1 <= nummtx <= 64):
         return False
@@ -66,7 +69,7 @@ def plausible_modeldef(d, o):
     if struct.unpack_from(">H", d, o + (root & 0xffffff))[0] not in NODETYPES:
         return False
     for i in range(numtex):                   # every texconfig must be sane
-        p = o + 0x1c + i * 12
+        p = o + tex_off + i * 12
         if p + 12 > len(d):
             return False
         w, h, lvl, fmt, depth = d[p + 4], d[p + 5], d[p + 6], d[p + 7], d[p + 8]
@@ -151,6 +154,96 @@ def donor_from(path):
     return dict(kind=kind, header=len(hdr), box=box[1:], hitpart=box[0],
                 scale=md["scale"], with_toggle=has_toggle, texconfigs=texconfigs(m, md["numtex"]))
 
+# ── reindexing ───────────────────────────────────────────────────────
+
+def next_free_texid(moddir, floor=0x0db7):
+    """Next id after the highest this MOD already overrides.
+
+    Scans `<moddir>/ext_tex/<Model>/<id>.png` only — the per-model PNG override
+    convention — deliberately not other mods. `floor` is the first id free on
+    every regional ROM (JPN's texture table is longer than NTSC's), so nothing
+    below it is ever handed out.
+    """
+    hi = floor - 1
+    ext = os.path.join(moddir, "ext_tex")
+    if not os.path.isdir(ext):
+        die("%s has no ext_tex/ to scan; pass --base instead" % moddir)
+    for model in os.listdir(ext):
+        d = os.path.join(ext, model)
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            stem = os.path.splitext(f)[0]
+            if len(stem) == 4:
+                try:
+                    hi = max(hi, int(stem, 16))
+                except ValueError:
+                    pass
+    return hi + 1
+
+def rewrite_texids(m, mapping):
+    """Remap texture ids in the texconfig table AND in every display list.
+
+    The ids live in two places: a u32 per texconfig, and the low bits of the
+    repurposed G_NOOP (0xC0) binds inside each DL — w1 bits 0-11, plus bits
+    12-23 when the subcommand is 1. Changing one and not the other silently
+    ships a model whose table and geometry disagree.
+    """
+    for v in mapping.values():
+        if not (0 < v <= 0xfff):
+            die("texture id 0x%x does not fit the 12 bits a display list carries" % v)
+    d = bytearray(m)
+    md = modeldef(d)
+    tex_off = struct.unpack_from(">I", d, 0x18)[0] & 0xffffff
+    ntab = 0
+    for i in range(md["numtex"]):
+        q = tex_off + i * 12
+        old = struct.unpack_from(">I", d, q)[0]
+        if old in mapping:
+            struct.pack_into(">I", d, q, mapping[old]); ntab += 1
+    ndl = 0
+    for n in walk(d, md["root"]):
+        if n["type"] != 0x18:
+            continue
+        for base in [x & 0xffffff for x in struct.unpack_from(">II", d, n["rodata"])]:
+            o = base
+            while base and o + 8 <= len(d):
+                cmd = d[o]
+                if cmd == 0xc0:
+                    w0, w1 = struct.unpack_from(">II", d, o)
+                    t0 = w1 & 0xfff
+                    if t0 in mapping:
+                        w1 = (w1 & ~0xfff) | (mapping[t0] & 0xfff); ndl += 1
+                    if (w0 & 0xff) == 1:
+                        t1 = (w1 >> 12) & 0xfff
+                        if t1 in mapping:
+                            w1 = (w1 & ~(0xfff << 12)) | ((mapping[t1] & 0xfff) << 12); ndl += 1
+                    struct.pack_into(">I", d, o + 4, w1)
+                o += 8
+                if cmd == 0xb8:
+                    break
+    return bytes(d), ntab, ndl
+
+def cmd_reindex(a):
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    old = [t["texid"] for t in texconfigs(m, md["numtex"])]
+    if a.map:
+        mapping = {}
+        for pair in a.map.split(","):
+            k, v = pair.split("=")
+            mapping[int(k, 0)] = int(v, 0)
+    else:
+        base = next_free_texid(a.mods) if a.base is None else int(a.base, 0)
+        mapping = {t: base + i for i, t in enumerate(old)}
+    new, ntab, ndl = rewrite_texids(m, mapping)
+    M.write_out(a.out, M.rarezip(new))
+    for t in old:
+        print("  0x%04x -> 0x%04x" % (t, mapping.get(t, t)))
+    print("pdhead: %d texconfig entries and %d display-list binds rewritten; wrote %s"
+          % (ntab, ndl, a.out))
+    return 0
+
 # ── commands ─────────────────────────────────────────────────────────
 
 def cmd_info(a):
@@ -221,6 +314,14 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(fn=cmd_info)
+
+    p = sub.add_parser("reindex")
+    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
+    p.add_argument("--base", help="first new texture id, e.g. 0x0dbd")
+    p.add_argument("--mods", dest="mods", default="pd-fojo-basedir/data/mods/mod_fojo",
+                   help="mod directory whose ext_tex/ sets the next free id")
+    p.add_argument("--map", help="explicit remap: 0xdaf=0xdbd,0xdb0=0xdbe")
+    p.set_defaults(fn=cmd_reindex)
 
     p = sub.add_parser("untemplate")
     p.add_argument("file"); p.add_argument("-o", "--out", required=True)

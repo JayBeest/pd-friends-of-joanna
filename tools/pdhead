@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""pdhead — work with Perfect Dark head models, including GE-editor templates.
+
+  pdhead info       <file>                        what it is, and what is in it
+  pdhead untemplate <template> -o <out.Z>         strip the prefix, emit a *Z
+  pdhead build      <mesh.fbx> -o <out.Z> [...]   author a head from a mesh
+
+A *template* is an editor artefact: a fixed-size prefix of metadata followed by
+a complete, ordinary PD head model. Nothing in the prefix is needed to use the
+model, so this tool does not decode it — it LOCATES the model by its own
+signature and ignores everything before it. That means a template, a raw model
+and a 0x1173-compressed *Z are all the same input here.
+
+  --from-template <file>   take the hit box, model scale and node-tree shape
+                           from that file instead of this tool's defaults.
+                           Accepts a template, a raw model or a *Z.
+
+stdlib only.
+"""
+
+import argparse, os, struct, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pdhead_fbx as fbxlib
+import pdhead_model as M
+
+NODETYPES = {0x01: "CHRINFO", 0x02: "POSITION", 0x04: "GUNDL", 0x05: "05",
+             0x08: "DISTANCE", 0x09: "REORDER", 0x0a: "BBOX", 0x0b: "0B",
+             0x0c: "CHRGUNFIRE", 0x0d: "0D", 0x0e: "0E", 0x0f: "0F", 0x11: "11",
+             0x12: "TOGGLE", 0x15: "POSITIONHELD", 0x16: "STARGUNFIRE",
+             0x17: "HEADSPOT", 0x18: "DL"}
+
+def die(m): sys.exit("pdhead: " + m)
+
+# ── loading ──────────────────────────────────────────────────────────
+
+def rare_unzip(b):
+    import zlib
+    if b[:2] == b"\x11\x73":
+        return zlib.decompress(b[5:], wbits=-15)
+    if b[:2] == b"\x11\x72":
+        return zlib.decompress(b[2:], wbits=-15)
+    return None
+
+def plausible_modeldef(d, o):
+    """Does a modeldef start at offset o? Checked against its own invariants."""
+    if o + 0x1c > len(d):
+        return False
+    root, skel, parts = struct.unpack_from(">III", d, o)
+    numparts, nummtx = struct.unpack_from(">hh", d, o + 0x0c)
+    scale, = struct.unpack_from(">f", d, o + 0x10)
+    rwdatalen, numtex = struct.unpack_from(">hh", d, o + 0x14)
+    texptr, = struct.unpack_from(">I", d, o + 0x18)
+    if root >> 24 != 5 or texptr >> 24 != 5:
+        return False
+    if (texptr & 0xffffff) != 0x1c:          # the table always follows the header
+        return False
+    if not (1 <= numtex <= 64) or not (1 <= nummtx <= 64):
+        return False
+    if numparts < 0 or rwdatalen < 0:
+        return False
+    if not (0.0 < scale < 1e5):
+        return False
+    if o + (root & 0xffffff) + 2 > len(d):
+        return False
+    if struct.unpack_from(">H", d, o + (root & 0xffffff))[0] not in NODETYPES:
+        return False
+    for i in range(numtex):                   # every texconfig must be sane
+        p = o + 0x1c + i * 12
+        if p + 12 > len(d):
+            return False
+        w, h, lvl, fmt, depth = d[p + 4], d[p + 5], d[p + 6], d[p + 7], d[p + 8]
+        if not (1 <= w <= 255 and 1 <= h <= 255) or fmt > 7 or depth > 3:
+            return False
+    return True
+
+def load(path, scan=4096):
+    """Return (kind, header_bytes, model_bytes)."""
+    raw = open(path, "rb").read()
+    un = rare_unzip(raw)
+    if un is not None:
+        if not plausible_modeldef(un, 0):
+            die("%s: decompresses but is not a model" % path)
+        return "compressed", b"", un
+    if plausible_modeldef(raw, 0):
+        return "raw model", b"", raw
+    for o in range(2, min(scan, len(raw)), 2):
+        if plausible_modeldef(raw, o):
+            return "template", raw[:o], raw[o:]
+    die("%s: no model found. Not a *Z, a raw model, or a template with a model "
+        "in its first %d bytes." % (path, scan))
+
+# ── reading the model ────────────────────────────────────────────────
+
+def modeldef(d):
+    root, skel, parts = struct.unpack_from(">III", d, 0)
+    numparts, nummtx = struct.unpack_from(">hh", d, 0x0c)
+    scale, = struct.unpack_from(">f", d, 0x10)
+    rwdatalen, numtex = struct.unpack_from(">hh", d, 0x14)
+    return dict(root=root & 0xffffff, skel=skel, numparts=numparts,
+                nummatrices=nummtx, scale=scale, rwdatalen=rwdatalen, numtex=numtex)
+
+def texconfigs(d, n):
+    out = []
+    for i in range(n):
+        p = 0x1c + i * 12
+        out.append(dict(texid=struct.unpack_from(">I", d, p)[0], width=d[p + 4],
+                        height=d[p + 5], level=d[p + 6], format=d[p + 7], depth=d[p + 8]))
+    return out
+
+def node(d, o):
+    t, = struct.unpack_from(">H", d, o)
+    ro, par, nxt, prv, ch = [x & 0xffffff for x in struct.unpack_from(">IIIII", d, o + 4)]
+    return dict(off=o, type=t, name=NODETYPES.get(t, "%02x" % t),
+                rodata=ro, next=nxt, child=ch)
+
+def walk(d, o, depth=0, out=None):
+    out = [] if out is None else out
+    while o:
+        n = node(d, o)
+        n["depth"] = depth
+        out.append(n)
+        if n["child"]:
+            walk(d, n["child"], depth + 1, out)
+        o = n["next"]
+    return out
+
+def bbox_of(d):
+    for n in walk(d, modeldef(d)["root"]):
+        if n["type"] == 0x0a:
+            hit, = struct.unpack_from(">i", d, n["rodata"])
+            return (hit,) + struct.unpack_from(">6f", d, n["rodata"] + 4)
+    return None
+
+def dl_of(d):
+    for n in walk(d, modeldef(d)["root"]):
+        if n["type"] == 0x18:
+            opa, xlu, col, vtx = [x & 0xffffff for x in struct.unpack_from(">IIII", d, n["rodata"])]
+            nv, mc, rw, nc = struct.unpack_from(">hhHH", d, n["rodata"] + 16)
+            return dict(opagdl=opa, vertices=vtx, numvertices=nv, numcolours=nc, mcount=mc)
+    return None
+
+# ── donor ────────────────────────────────────────────────────────────
+
+def donor_from(path):
+    kind, hdr, m = load(path)
+    md, box = modeldef(m), bbox_of(m)
+    if box is None:
+        die("%s: no BBOX node, so it cannot be a shape donor" % path)
+    has_toggle = any(n["type"] == 0x12 for n in walk(m, md["root"]))
+    return dict(kind=kind, header=len(hdr), box=box[1:], hitpart=box[0],
+                scale=md["scale"], with_toggle=has_toggle, texconfigs=texconfigs(m, md["numtex"]))
+
+# ── commands ─────────────────────────────────────────────────────────
+
+def cmd_info(a):
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    print("%s: %s" % (os.path.basename(a.file), kind)
+          + (" (%d-byte prefix ignored)" % len(hdr) if hdr else ""))
+    print("  skel %d  nummatrices %d  numparts %d  scale %.4f  rwdatalen %d  texconfigs %d"
+          % (md["skel"], md["nummatrices"], md["numparts"], md["scale"],
+             md["rwdatalen"], md["numtex"]))
+    for i, t in enumerate(texconfigs(m, md["numtex"])):
+        print("    tex %d  0x%04x  %dx%d  level %d  format %d  depth %d"
+              % (i, t["texid"], t["width"], t["height"], t["level"], t["format"], t["depth"]))
+    b = bbox_of(m)
+    if b:
+        print("  bbox hitpart %d  x %.1f..%.1f  y %.1f..%.1f  z %.1f..%.1f" % b)
+    d = dl_of(m)
+    if d:
+        print("  dl  %d vertices  %d colours  mcount %d" % (d["numvertices"], d["numcolours"], d["mcount"]))
+    print("  tree:")
+    for n in walk(m, md["root"]):
+        print("    " + "  " * n["depth"] + "%s(0x%02x) @%04x" % (n["name"], n["type"], n["off"]))
+    if hdr:
+        nz = [(i, hdr[i]) for i in range(len(hdr)) if hdr[i]]
+        print("  prefix: %d bytes, %d non-zero: %s" % (len(hdr), len(nz),
+              " ".join("%d=0x%02x" % t for t in nz)))
+        print("  (not decoded — nothing in it is needed to use the model)")
+    return 0
+
+def cmd_untemplate(a):
+    kind, hdr, m = load(a.file)
+    if not hdr:
+        print("pdhead: %s has no prefix (%s); re-emitting as *Z" % (a.file, kind))
+    M.write_out(a.out, M.rarezip(m))
+    print("pdhead: wrote %s (%d bytes, from %d bytes of model)" % (a.out, os.path.getsize(a.out), len(m)))
+    return 0
+
+def cmd_build(a):
+    presets = {}
+    for line in open(a.textures):
+        if line.strip():
+            tid, name = line.split(None, 1)
+            presets[name.strip().rsplit(".", 1)[0]] = int(tid, 16)
+
+    pos, tris, uv, uvi, mat, mat_png = fbxlib.read_mesh(a.mesh)
+    matmap = [presets[p.rsplit(".", 1)[0]] for p in mat_png]
+    texsize = {t: (a.texwidth, a.texheight) for t in presets.values()}
+
+    box, scale, toggle = M.DEFAULT_BOX, M.DEFAULT_SCALE, True
+    if a.from_template:
+        d = donor_from(a.from_template)
+        box, scale, toggle = d["box"], d["scale"], d["with_toggle"]
+        print("pdhead: donor %s (%s) — box %s scale %.4f %s"
+              % (os.path.basename(a.from_template), d["kind"],
+                 " ".join("%.0f" % v for v in box), scale,
+                 "with toggle" if toggle else "no toggle"))
+
+    raw, info = M.build(pos, tris, uv, uvi, mat, matmap, texsize, box, scale,
+                        with_toggle=toggle)
+    M.write_out(a.out, M.rarezip(raw))
+    print("pdhead: wrote %s — %d vertices, %d bytes raw, %d compressed, texids %s"
+          % (a.out, info["numvertices"], len(raw), os.path.getsize(a.out),
+             " ".join(hex(t) for t in info["texids"])))
+    return 0
+
+def main():
+    ap = argparse.ArgumentParser(prog="pdhead")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(fn=cmd_info)
+
+    p = sub.add_parser("untemplate")
+    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
+    p.set_defaults(fn=cmd_untemplate)
+
+    p = sub.add_parser("build")
+    p.add_argument("mesh")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--textures", required=True, help="head_texturePresets.txt")
+    p.add_argument("--from-template", dest="from_template",
+                   help="take hit box, scale and tree shape from this template / model / *Z")
+    p.add_argument("--texwidth", type=int, default=32)
+    p.add_argument("--texheight", type=int, default=64)
+    p.set_defaults(fn=cmd_build)
+
+    a = ap.parse_args()
+    return a.fn(a)
+
+if __name__ == "__main__":
+    sys.exit(main())

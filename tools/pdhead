@@ -18,7 +18,7 @@ and a 0x1173-compressed *Z are all the same input here.
 stdlib only.
 """
 
-import argparse, os, struct, sys
+import argparse, os, shutil, struct, sys, zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pdhead_fbx as fbxlib
@@ -153,6 +153,165 @@ def donor_from(path):
     has_toggle = any(n["type"] == 0x12 for n in walk(m, md["root"]))
     return dict(kind=kind, header=len(hdr), box=box[1:], hitpart=box[0],
                 scale=md["scale"], with_toggle=has_toggle, texconfigs=texconfigs(m, md["numtex"]))
+
+# ── embedded textures ────────────────────────────────────────────────
+
+def write_png(path, w, h, rgba):
+    """Minimal RGBA8 PNG. stdlib only, so this runs anywhere python does."""
+    raw = b"".join(b"\x00" + rgba[y * w * 4:(y + 1) * w * 4] for y in range(h))
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw, 9))
+    png += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+def core_end(m):
+    """First byte after the last display list — where a texture payload starts.
+
+    Derived from the model rather than read out of the template prefix, so it
+    works on a raw model or a *Z too.
+    """
+    end = 0
+    for n in walk(m, modeldef(m)["root"]):
+        if n["type"] != 0x18:
+            continue
+        for base in [x & 0xffffff for x in struct.unpack_from(">II", m, n["rodata"])]:
+            o = base
+            while base and o + 8 <= len(m):
+                c = m[o]; o += 8
+                if c == 0xb8:
+                    break
+            end = max(end, o)
+    return end
+
+def extract_textures(m):
+    """Pull the CI8 + palette payload a GE-editor template carries.
+
+    Per texconfig, after the last display list:
+        u32 texid, u32 zero, u32 payload_len,
+        256-entry RGBA5551 palette, u8 width, u8 height,
+        0x1173 blob -> width*height bytes of 8-bit palette indices.
+
+    Two things are NOT decoded and are handled empirically, because one sample
+    is not enough to pin them down:
+      - the few bytes between an entry header and its palette vary (517 vs 515
+        observed), so the 512-byte palette window is auto-aligned per entry by
+        rejecting alignments where an index the bitmap actually uses decodes to
+        an impossible colour;
+      - rows are stored bottom-up, so each image is flipped to match the
+        upright convention the mod's other ext_tex PNGs use.
+    """
+    md = modeldef(m)
+    tail = core_end(m)
+    out = []
+    for t in texconfigs(m, md["numtex"]):
+        e = m.find(struct.pack(">I", t["texid"]), tail)
+        if e < 0:
+            continue
+        j = m.find(b"\x11\x73", e)
+        if j < 0:
+            continue
+        w, h = m[j - 2], m[j - 1]
+        n = int.from_bytes(m[j + 2:j + 5], "big")
+        try:
+            bits = zlib.decompress(m[j + 5:], wbits=-15)[:n]
+        except zlib.error:
+            continue
+        if len(bits) != w * h:
+            continue
+        used, best = set(bits), None
+        for shift in range(-12, 13):
+            p = j - 2 - 512 + shift
+            if p < e + 12 or p + 512 > len(m):
+                continue
+            lut = []
+            for i in range(256):
+                v = struct.unpack_from(">H", m, p + i * 2)[0]
+                lut.append((((v >> 11) & 31) * 255 // 31, ((v >> 6) & 31) * 255 // 31,
+                            ((v >> 1) & 31) * 255 // 31, 255 if v & 1 else 0))
+            bad = sum(1 for b in used if max(lut[b][:3]) - min(lut[b][:3]) > 150)
+            if best is None or bad < best[1]:
+                best = (shift, bad, lut)
+        if best is None:
+            continue
+        shift, bad, lut = best
+        rows = []
+        for y in range(h):
+            rows.append(b"".join(bytes(lut[bits[y * w + x]]) for x in range(w)))
+        rgba = b"".join(reversed(rows))           # stored bottom-up
+        out.append(dict(texid=t["texid"], width=w, height=h, rgba=rgba,
+                        shift=shift, bad=bad))
+    return out
+
+def cmd_textures(a):
+    kind, hdr, m = load(a.file)
+    remap = {}
+    if a.remap:
+        for pair in a.remap.split(","):
+            k, v = pair.split("=")
+            remap[int(k, 0)] = int(v, 0)
+    tex = extract_textures(m)
+    if not tex:
+        die("%s carries no embedded texture payload" % a.file)
+    os.makedirs(a.out, exist_ok=True)
+    for t in tex:
+        tid = remap.get(t["texid"], t["texid"])
+        path = os.path.join(a.out, "%04x.png" % tid)
+        write_png(path, t["width"], t["height"], t["rgba"])
+        print("  0x%04x -> %s  %dx%d  palette shift %+d%s"
+              % (t["texid"], os.path.basename(path), t["width"], t["height"],
+                 t["shift"], "" if not t["bad"] else "  WARNING %d odd indices" % t["bad"]))
+    print("pdhead: wrote %d textures to %s" % (len(tex), a.out))
+    return 0
+
+# ── install ──────────────────────────────────────────────────────────
+
+def cmd_install(a):
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    old = [t["texid"] for t in texconfigs(m, md["numtex"])]
+    files = os.path.join(a.mod, "files")
+    exttex = os.path.join(a.mod, "ext_tex", a.name)
+    os.makedirs(files, exist_ok=True)
+
+    # textures carry the ORIGINAL ids in their payload headers, so pull them
+    # out before any reindex renames the texconfig table underneath them
+    tex = extract_textures(m)
+
+    remap = {}
+    if not a.keep_texids:
+        base = next_free_texid(a.mod) if a.base is None else int(a.base, 0)
+        remap = {t: base + i for i, t in enumerate(old)}
+        m, ntab, ndl = rewrite_texids(m, remap)
+        for t in old:
+            print("  0x%04x -> 0x%04x" % (t, remap[t]))
+        print("  %d texconfig entries, %d display-list binds" % (ntab, ndl))
+
+    dest = os.path.join(files, a.name)
+    M.write_out(dest, M.rarezip(m))
+    print("  model  -> %s (%d bytes)" % (dest, os.path.getsize(dest)))
+
+    if tex:
+        os.makedirs(exttex, exist_ok=True)
+        for t in tex:
+            path = os.path.join(exttex, "%04x.png" % remap.get(t["texid"], t["texid"]))
+            write_png(path, t["width"], t["height"], t["rgba"])
+        print("  %d textures -> %s" % (len(tex), exttex))
+    else:
+        print("  no embedded textures; %s will need PNGs of its own" % exttex)
+
+    print()
+    print("still to do by hand:")
+    print('  1. add to %s_filetable.json:' % os.path.basename(a.mod.rstrip("/")))
+    print('       { "name": "%s", "path": "files/%s", "description": "...", "prefix": "always" }'
+          % (a.name, a.name))
+    print("  2. regenerate filetable.dat  (pdt build-mod-filetable, NOT mkfiletable)")
+    print("  3. add a HeadsAndBodies block to modconfig.txt")
+    return 0
 
 # ── reindexing ───────────────────────────────────────────────────────
 
@@ -322,6 +481,19 @@ def main():
                    help="mod directory whose ext_tex/ sets the next free id")
     p.add_argument("--map", help="explicit remap: 0xdaf=0xdbd,0xdb0=0xdbe")
     p.set_defaults(fn=cmd_reindex)
+
+    p = sub.add_parser("textures")
+    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
+    p.add_argument("--remap", help="rename outputs: 0xdaf=0xdbe,0xdb0=0xdbd")
+    p.set_defaults(fn=cmd_textures)
+
+    p = sub.add_parser("install")
+    p.add_argument("file")
+    p.add_argument("--mod", required=True, help="mod directory, e.g. .../mods/mod_fojo")
+    p.add_argument("--name", required=True, help="head file name, e.g. CheadAceZ")
+    p.add_argument("--base", help="first new texture id; default is the mod's next free")
+    p.add_argument("--keep-texids", action="store_true", help="do not reindex")
+    p.set_defaults(fn=cmd_install)
 
     p = sub.add_parser("untemplate")
     p.add_argument("file"); p.add_argument("-o", "--out", required=True)

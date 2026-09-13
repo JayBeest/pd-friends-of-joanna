@@ -140,17 +140,17 @@ Experimental dataDyne protoype unit. A composite of experiential modules harvest
 - **file** `src/game/training.c`
 - **symbol** `bios[5]`
 - **flags** `CHRBIO_FLAG_LITERAL`
-- **race** `Lorem ipsum dolor (sit amet)`
-- **age** `00 (consectetur)`
+- **race** `cI-200 Replicant (Female)`
+- **age** `23 (apparent)`
 
-### Lorem Ipsum
+### CI File #197
 
-Dolor Sit: Amet
-Consectetur: Adipiscing
-Sed Eiusmod: Tempor
-Incididunt: Ut Labore
+Training Status: N/A
+Training Grade: N/A
+Active Status: Unassigned
+Manufacturer: Carrington
 
-### Dolore Magna
+### Profile
 
 Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 

@@ -42,6 +42,7 @@ static bool g_ImGuiOverlayShowTextures = false;
 static bool g_ImGuiOverlayShowLookingAt = false;
 static bool g_ImGuiOverlayShowProportions = false;
 static bool g_ImGuiOverlayShowStance = false;
+static bool g_ImGuiOverlayShowPauseBlur = false;
 static bool g_ImGuiOverlayShowAudio = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
@@ -263,6 +264,7 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; return; }
 	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; return; }
 	if (sscanf(line, "Audio=%d", &value) == 1) { g_ImGuiOverlayShowAudio = value != 0; return; }
+	if (sscanf(line, "PauseBlur=%d", &value) == 1) { g_ImGuiOverlayShowPauseBlur = value != 0; return; }
 
 	{
 		float fvalue;
@@ -287,6 +289,7 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Proportions=%d\n", g_ImGuiOverlayShowProportions);
 	buffer->appendf("Stance=%d\n", g_ImGuiOverlayShowStance);
 	buffer->appendf("Audio=%d\n", g_ImGuiOverlayShowAudio);
+	buffer->appendf("PauseBlur=%d\n", g_ImGuiOverlayShowPauseBlur);
 	buffer->appendf("LoreScale=%.5f\n\n", g_ImGuiPropLoreScale);
 }
 
@@ -302,7 +305,8 @@ static u32 imguiOverlayGetWindowState(void)
 		| (g_ImGuiOverlayShowLookingAt ? 1u << 7 : 0)
 		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0)
 		| (g_ImGuiOverlayShowStance ? 1u << 9 : 0)
-		| (g_ImGuiOverlayShowAudio ? 1u << 10 : 0);
+		| (g_ImGuiOverlayShowAudio ? 1u << 10 : 0)
+		| (g_ImGuiOverlayShowPauseBlur ? 1u << 11 : 0);
 }
 
 static void imguiOverlaySaveWindowState(void)
@@ -3368,69 +3372,6 @@ static void imguiOverlayDrawStancePanel(void)
 				"A short character is slower standing and faster crouched.");
 	}
 
-	if (ImGui::CollapsingHeader("Drug blur", ImGuiTreeNodeFlags_DefaultOpen)) {
-		imguiOverlayStanceKnob("Seconds to the cap", &g_BlurDoseFullSecs, 1.0f, 120.0f, "%.0f s",
-				"How long in the pause menu takes the blur to its ceiling.\n"
-				"The world keeps running behind the menu, so menu time is a\n"
-				"resource you spend - this is the exchange rate.");
-
-		imguiOverlayStanceKnob("Curve", &g_BlurDoseK, 0.5f, 8.0f, "%.2f",
-				"The k of (e^kd - 1)/(e^k - 1). Higher makes the early\n"
-				"seconds cheaper and the late ones dearer; at 0.5 it is\n"
-				"nearly a straight line. At 3 the knee lands near the\n"
-				"head-sway threshold, which is what it was picked for.");
-
-		// What those two are actually worth, at this moment, rather than in
-		// the abstract: the curve is only tunable by feel and feel needs the
-		// number the shot is costing you.
-		{
-			f32 k = g_BlurDoseK;
-			f32 denom = expf(k) - 1.0f;
-			s32 cap = TICKS(5000);
-			s32 sway = TICKS(1000);
-			f32 knee = -1.0f;
-
-			if (denom > 0.0001f) {
-				// the dose at which the floor reaches the head-sway threshold,
-				// inverted straight out of the curve rather than searched for
-				f32 d = logf(((f32)sway / (f32)cap) * denom + 1.0f) / k;
-
-				if (d > 0.0f && d <= 1.0f) {
-					knee = d * g_BlurDoseFullSecs;
-				}
-			}
-
-			if (knee >= 0.0f) {
-				ImGui::Text("head sway at %.1f s in the menu", knee);
-			} else {
-				ImGui::TextDisabled("head sway is unreachable on this curve");
-			}
-		}
-
-		if (imguiOverlayCanAimInspect() && g_Vars.currentplayer->prop
-				&& g_Vars.currentplayer->prop->chr) {
-			struct chrdata *bond = g_Vars.currentplayer->prop->chr;
-			f32 dose = g_Vars.currentplayer->blurdose;
-			s32 amt = bond->blurdrugamount;
-
-			ImGui::Text("dose %.2f of 1   blur %d   %.1f s to clear",
-					dose, (s32)amt,
-					amt > 0 ? (f32)amt / (60.0f * (f32)(bond->blurnumtimesdied + 1)) : 0.0f);
-
-			if (ImGui::Button("Clear the dose")) {
-				g_Vars.currentplayer->blurdose = 0.0f;
-			}
-
-			ImGui::SameLine();
-
-			if (ImGui::Button("Clear the blur")) {
-				bond->blurdrugamount = 0;
-			}
-		} else {
-			ImGui::TextDisabled("(no live player)");
-		}
-	}
-
 	ImGui::Separator();
 
 	if (ImGui::Button("Reset to defaults")) {
@@ -4628,6 +4569,79 @@ static void imguiOverlayDrawAudioPanel(void)
 	}
 }
 
+static void imguiOverlayDrawPauseBlurPanel(void)
+{
+	ImGui::TextDisabled("Menu time is a dose. pd.ini [Blur] sets where these start.");
+	ImGui::Separator();
+
+	imguiOverlayStanceKnob("Seconds to the cap", &g_BlurDoseFullSecs, 1.0f, 120.0f, "%.0f s",
+			"How long in the pause menu takes the blur to its ceiling.\n"
+			"The world keeps running behind the menu, so menu time is a\n"
+			"resource you spend - this is the exchange rate.");
+
+	imguiOverlayStanceKnob("Curve", &g_BlurDoseK, 0.5f, 8.0f, "%.2f",
+			"The k of (e^kd - 1)/(e^k - 1). Higher makes the early\n"
+			"seconds cheaper and the late ones dearer; at 0.5 it is\n"
+			"nearly a straight line. At 3 the knee lands near the\n"
+			"head-sway threshold, which is what it was picked for.");
+
+	// What those two are actually worth, at this moment, rather than in
+	// the abstract: the curve is only tunable by feel and feel needs the
+	// number the shot is costing you.
+	{
+		f32 k = g_BlurDoseK;
+		f32 denom = expf(k) - 1.0f;
+		s32 cap = TICKS(5000);
+		s32 sway = TICKS(1000);
+		f32 knee = -1.0f;
+
+		if (denom > 0.0001f) {
+			// the dose at which the floor reaches the head-sway threshold,
+			// inverted straight out of the curve rather than searched for
+			f32 d = logf(((f32)sway / (f32)cap) * denom + 1.0f) / k;
+
+			if (d > 0.0f && d <= 1.0f) {
+				knee = d * g_BlurDoseFullSecs;
+			}
+		}
+
+		if (knee >= 0.0f) {
+			ImGui::Text("head sway at %.1f s in the menu", knee);
+		} else {
+			ImGui::TextDisabled("head sway is unreachable on this curve");
+		}
+	}
+
+	if (imguiOverlayCanAimInspect() && g_Vars.currentplayer->prop
+			&& g_Vars.currentplayer->prop->chr) {
+		struct chrdata *bond = g_Vars.currentplayer->prop->chr;
+		f32 dose = g_Vars.currentplayer->blurdose;
+		s32 amt = bond->blurdrugamount;
+
+		ImGui::Text("dose %.2f of 1   blur %d   %.1f s to clear",
+				dose, (s32)amt,
+				amt > 0 ? (f32)amt / (60.0f * (f32)(bond->blurnumtimesdied + 1)) : 0.0f);
+
+		if (ImGui::Button("Clear the dose")) {
+			g_Vars.currentplayer->blurdose = 0.0f;
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Clear the blur")) {
+			bond->blurdrugamount = 0;
+		}
+	} else {
+		ImGui::TextDisabled("(no live player)");
+	}
+
+	ImGui::Separator();
+
+	if (ImGui::Button("Reset to defaults")) {
+		stanceTuningReset();
+	}
+}
+
 static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 {
 	if (!ImGui::BeginPopupContextVoid("FojoWindowMenu", ImGuiPopupFlags_MouseButtonRight)) {
@@ -4646,6 +4660,7 @@ static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 	ImGui::MenuItem("Audio", NULL, &g_ImGuiOverlayShowAudio);
 	ImGui::MenuItem("Proportions", NULL, &g_ImGuiOverlayShowProportions);
 	ImGui::MenuItem("Stance", NULL, &g_ImGuiOverlayShowStance);
+	ImGui::MenuItem("Pause Blur", NULL, &g_ImGuiOverlayShowPauseBlur);
 	ImGui::EndPopup();
 }
 
@@ -4803,6 +4818,16 @@ void imguiOverlayRender(void)
 
 			if (ImGui::Begin("Fojo Stance", &g_ImGuiOverlayShowStance)) {
 				imguiOverlayDrawStancePanel();
+			}
+
+			ImGui::End();
+		}
+
+		if (g_ImGuiOverlayShowPauseBlur) {
+			imguiOverlaySetNextWindowDefaults(ImVec2(400.0f, 300.0f), 0.5f, 0.5f);
+
+			if (ImGui::Begin("Fojo Pause Blur", &g_ImGuiOverlayShowPauseBlur)) {
+				imguiOverlayDrawPauseBlurPanel();
 			}
 
 			ImGui::End();

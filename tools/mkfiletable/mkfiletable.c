@@ -221,7 +221,15 @@ static bool altTextureExtent(struct altRom *rom, uint32_t texId, uint32_t *outOf
 	uint8_t rec[16];
 	uint32_t cur, next;
 
-	if (!rom->fp || texId + 1 >= rom->tlistCount) {
+	/* A texture runs to wherever the next record starts, and the LAST texture
+	 * is no exception: the list carries one more record than it has textures,
+	 * whose offset is the end of the texture data. MEASURED in pd.jpn-final:
+	 * tlistCount is 3511, record 3511 reads 0x29495e, and the 1397 bytes that
+	 * gives for texture 0x0db6 are exactly what the Python writer emitted.
+	 * Record 3512 is already the next segment's 1173 header, so the terminator
+	 * is the real end of the list and not slack. Bounding on texId + 1 refused
+	 * the last texture of every source ROM, which is four of mod_fojo's. */
+	if (!rom->fp || texId >= rom->tlistCount) {
 		return false;
 	}
 

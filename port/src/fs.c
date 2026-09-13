@@ -276,17 +276,15 @@ s32 fsInit(void)
 	sysLogPrintf(LOG_NOTE, "base dir: %s", baseDir);
 	sysLogPrintf(LOG_NOTE, "save dir: %s", saveDir);
 
+	// The shipped default when no --moddir is given. A hardcoded roster, and
+	// it stays one until a mods-dir scan or --boot-mod replaces it; order here
+	// is what resolution ties break on today.
 	if (numModDirs == 0) {
-		numModDirs = 1;
+		numModDirs = 3;
 		strcpy(modDirs[0], "$B/mods/mod_fojo");
-		// strcpy(modDirs[1], "$B/mods/mod_gex_characters");
+		strcpy(modDirs[1], "$B/mods/mod_gex_characters");
+		strcpy(modDirs[2], "$B/mods/mod_aio_characters");
 	}
-	// if (numModDirs == 0) {
-	// 	numModDirs = 3;
-	// 	strcpy(modDirs[0], "$B/mods/mod_fojo");
-	// 	strcpy(modDirs[1], "$B/mods/mod_gex_characters");
-	// 	strcpy(modDirs[2], "$B/mods/mod_aio_characters");
-	// }
 	fileSlotsInit(numModDirs);
 	g_NumModDirs = numModDirs;
 

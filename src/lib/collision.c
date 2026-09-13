@@ -26,6 +26,19 @@ struct debugtri {
 union filedataptr g_TileFileData;
 s32 g_TileNumRooms;
 u32 *g_TileRooms;
+
+/**
+ * Room numbers reach the walks below from setup data and from callers' stack
+ * arrays, and the walks index g_TileRooms with them directly. RoomNum is s16
+ * and g_TileNumRooms is s32, so the vanilla "roomnum < g_TileNumRooms" test is
+ * a signed comparison with no lower bound: a negative room number passes it and
+ * reads before the array.
+ */
+#ifdef AVOID_UB
+#define ROOM_IN_RANGE(roomnum) ((roomnum) >= 0 && (roomnum) < g_TileNumRooms)
+#else
+#define ROOM_IN_RANGE(roomnum) ((roomnum) < g_TileNumRooms)
+#endif
 s32 var8009a8ac;
 f32 var8009a8b0;
 s32 var8009a8b4;
@@ -985,7 +998,7 @@ void cdFindClosestVertical(struct coord *pos, RoomNum *rooms, u16 geoflags, stru
 	roomnum = rooms[0];
 
 	while (roomnum != -1) {
-		if (roomnum < g_TileNumRooms) {
+		if (ROOM_IN_RANGE(roomnum)) {
 			start = g_TileFileData.u8 + g_TileRooms[roomnum];
 			end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 
@@ -1278,7 +1291,7 @@ void cdCollectGeoForCyl(struct coord *pos, f32 radius, RoomNum *rooms, u32 types
 		roomnum = rooms[0];
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				start = g_TileFileData.u8 + g_TileRooms[roomnum];
 				end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 
@@ -1606,7 +1619,7 @@ void cdCollectGeoForCylMove(struct coord *pos, f32 width, RoomNum *rooms, u32 ty
 		roomnum = rooms[0];
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				start = g_TileFileData.u8 + g_TileRooms[roomnum];
 				end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 
@@ -3356,7 +3369,7 @@ bool cdTestAToB(struct coord *pos, struct coord *coord2, RoomNum *rooms, u32 typ
 		roomnum = rooms[0];
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				start = g_TileFileData.u8 + g_TileRooms[roomnum];
 				end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 
@@ -3416,7 +3429,7 @@ s32 cdExamAToB(struct coord *arg0, struct coord *arg1, RoomNum *rooms, s32 types
 		roomnum = rooms[0];
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				u32 *ptr = &g_TileRooms[roomnum];
 				start = g_TileFileData.u8 + ptr[0];
 				end = g_TileFileData.u8 + ptr[1];
@@ -3827,7 +3840,7 @@ s32 cdTestBlockOverlapsAnyProp(struct geoblock *geo, RoomNum *rooms, u32 types)
 		roomnum = rooms[0];
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				start = g_TileFileData.u8 + g_TileRooms[roomnum];
 				end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 
@@ -4097,7 +4110,7 @@ bool cd0002f02c(struct geoblock *block, RoomNum *rooms, s32 types)
 		s32 roomnum = *roomsptr;
 
 		while (roomnum != -1) {
-			if (roomnum < g_TileNumRooms) {
+			if (ROOM_IN_RANGE(roomnum)) {
 				start = g_TileFileData.u8 + g_TileRooms[roomnum];
 				end = g_TileFileData.u8 + g_TileRooms[roomnum + 1];
 

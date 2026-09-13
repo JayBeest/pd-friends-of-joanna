@@ -209,6 +209,15 @@ Poplin Dark likeness
 #### Johnny Thunder
 Poplin Dark model / imported from Silvo
 
+#### Winfro
+third person camera / the stance system / jump, roll, flinch and melee
+
+#### Zaknafein
+damage reactions / hit locations / the melee kick / letting a corpse be a corpse
+
+#### JillyJane
+raw asset files
+
 #### fgsfdsfgs
 Upstream Perfect Dark PC Port: https://github.com/fgsfdsfgs/perfect_dark
 

@@ -2,6 +2,10 @@
 
 ## [friends-of-joanna-v0.4.0] - 2026-09-13
 
+This one is mostly other people's work. @Winfro built the third person camera and
+the stance system that hangs off it, @Zaknafein made getting shot and dying look
+like something actually happened, and @JillyJane made the assets. Thank you.
+
 ### New Features
 
 - **Third-person camera and a two-stance movement system** — The camera can step back behind Joanna, the body fades out when the camera is inside her, and movement splits into a hip-fire stance and an aim stance with the aim button as the door between them. Ships **off**: set `Stance.FojoMovement=1` in `pd.ini` to enable it. The camera toggle is bound to **V** by default (`CK_0400`). (Thank you @Winfro)

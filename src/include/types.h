@@ -2995,6 +2995,11 @@ struct player {
   // into account, or 0 when it could not get far enough to be worth it. Read
   // by the HUD, which draws the first person gun whenever the camera is on
   // the eye.
+  // Cumulative menu time as a dose, 0 at a fresh life and climbing while the
+  // pause menu is open. On the PLAYER and not on chrdata beside blurdrugamount:
+  // chrdata is decomp-laid-out with fixed offsets, and this is runtime-only
+  // state that nothing else reads. Reset where the player's blurdrugamount is.
+  /*ext*/ f32 blurdose;
   /*ext*/ f32 thirdpersondist;
   // Where the camera ended up on the last frame it was behind a living
   // player. Death stops the camera here and turns it to watch the body fall,

@@ -33,6 +33,9 @@ f32 g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 
 f32 g_RollImpulse = ROLL_IMPULSE;
 
+f32 g_BlurDoseFullSecs = BLUR_DOSE_FULL_SECS;
+f32 g_BlurDoseK = BLUR_DOSE_K;
+
 s32 g_BuildSpeedEnabled = true;
 f32 g_BuildSpeedRef = BUILD_SPEED_REF;
 f32 g_BuildCrouchMix = BUILD_CROUCH_MIX;
@@ -82,6 +85,9 @@ void stanceTuningReset(void)
 	g_ReloadAnimEnabled = RELOAD_ANIM_ENABLED;
 	g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 	g_RollImpulse = ROLL_IMPULSE;
+
+	g_BlurDoseFullSecs = BLUR_DOSE_FULL_SECS;
+	g_BlurDoseK = BLUR_DOSE_K;
 
 	g_BuildSpeedEnabled = true;
 	g_BuildSpeedRef = BUILD_SPEED_REF;

@@ -531,6 +531,7 @@ void playerStartNewLife(void)
 #ifndef PLATFORM_N64
 	g_Vars.currentplayer->prop->chr->blurdrugamount = 0;
 	g_Vars.currentplayer->prop->chr->poisoncounter = 0;
+	g_Vars.currentplayer->blurdose = 0;
 #endif
 
 	hudmsgsSetOn(0xffffffff);
@@ -1133,6 +1134,8 @@ void playerSpawn(void)
 				g_Vars.currentplayer->prop->chr->blurdrugamount = 0;
 				g_Vars.currentplayer->prop->chr->blurnumtimesdied = 0;
 			}
+
+			g_Vars.currentplayer->blurdose = 0;
 		} else {
 #ifndef PLATFORM_N64
 			if (cheatIsActive(CHEAT_CLOAKINGDEVICE)) {
@@ -2571,6 +2574,90 @@ void playerStopAudioForPause(void)
 u32 var8007083c = 0;
 u32 g_GlobalMenuRoot = 0;
 
+#ifndef PLATFORM_N64
+/**
+ * What an accumulated dose is worth, in blurdrugamount units.
+ *
+ * `(e^(k*d) - 1) / (e^k - 1)` scaled to the cap - the curve from
+ * menu-healing-and-addiction-plan.md, drawn at tools/drug-blur-curves.html.
+ * Exponential rather than linear so that a glance at the menu is nearly free
+ * and a long sit is not: the first seconds buy almost nothing and the last ones
+ * are most of the cost, which is what makes staying in there a decision.
+ */
+static s32 playerBlurDoseTarget(f32 dose)
+{
+	f32 k = g_BlurDoseK;
+	f32 denom;
+
+	if (dose <= 0.0f) {
+		return 0;
+	}
+
+	if (dose > 1.0f) {
+		dose = 1.0f;
+	}
+
+	denom = expf(k) - 1.0f;
+
+	if (denom < 0.0001f) {
+		// k at zero is the linear case, and the expression above is 0/0 there.
+		return (s32)(TICKS(5000) * dose);
+	}
+
+	return (s32)(TICKS(5000) * ((expf(k * dose) - 1.0f) / denom));
+}
+
+/**
+ * Menu time costs vision, charged once a frame while the menu is fully open.
+ *
+ * THE BLUR IS A FLOOR, NOT AN ACCUMULATOR. The target is recomputed from the
+ * cumulative dose every frame and only ever raises blurdrugamount, so it cannot
+ * race lv.c's decay - which is still running underneath, because with pausing
+ * off the world does not stop behind the menu. Cost therefore depends on how
+ * long you have spent in the menu this life and not on how you spaced it.
+ *
+ * The dose is a PER-LIFE budget and is deliberately not cleared when the blur
+ * wears off. Clearing it there would make four short visits cheaper than one
+ * long one, which the design's own simulation showed inverts the trade it is
+ * trying to create.
+ */
+static void playerTickBlurDose(void)
+{
+	struct chrdata *chr;
+	s32 target;
+	f32 secs;
+
+	if (!g_Vars.currentplayer->prop || !g_Vars.currentplayer->prop->chr) {
+		return;
+	}
+
+	if (g_Vars.currentplayer->invincible) {
+		return;
+	}
+
+	chr = g_Vars.currentplayer->prop->chr;
+	secs = g_BlurDoseFullSecs;
+
+	if (secs < 0.0001f) {
+		secs = 0.0001f;
+	}
+
+	// diffframe60, not lvupdate60: the level clock is what stops when pausing
+	// is allowed, and a paused world should not be charging anyone.
+	g_Vars.currentplayer->blurdose += g_Vars.diffframe60 / (secs * 60.0f);
+
+	if (g_Vars.currentplayer->blurdose > 1.0f) {
+		g_Vars.currentplayer->blurdose = 1.0f;
+	}
+
+	target = playerBlurDoseTarget(g_Vars.currentplayer->blurdose);
+
+	if (chr->blurdrugamount < target) {
+		chr->blurdrugamount = target;
+	}
+}
+#endif
+
 void playerTickPauseMenu(void)
 {
 	bool opened = false;
@@ -2604,15 +2691,6 @@ void playerTickPauseMenu(void)
 				lvSetPaused(true);
 			}
 
-			// fojo, TEMPORARY: peg the drug blur on every menu open so the wear-off
-			// can be exercised without hunting a drug source. stands in for the
-			// dose model in menu-healing-and-addiction-plan.md, where the blur is
-			// a function of how long you heal rather than a flat max. delete this
-			// when that lands.
-			if (g_Vars.currentplayer->prop && g_Vars.currentplayer->prop->chr) {
-				g_Vars.currentplayer->prop->chr->blurdrugamount = TICKS(5000);
-			}
-
 			g_Vars.currentplayer->pausemode = PAUSEMODE_PAUSED;
 
 			if ((g_GlobalMenuRoot == MENUROOT_MAINMENU || g_GlobalMenuRoot == MENUROOT_TRAINING)
@@ -2632,6 +2710,9 @@ void playerTickPauseMenu(void)
 		break;
 	case PAUSEMODE_PAUSED:
 		// Pause menu is fully open
+#ifndef PLATFORM_N64
+		playerTickBlurDose();
+#endif
 		break;
 	case PAUSEMODE_UNPAUSING:
 		// Pause menu is closing

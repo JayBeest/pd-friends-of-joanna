@@ -519,6 +519,24 @@
 #define BUILD_SPEED_SLOPE 0.002830188954249f
 #define BUILD_CROUCH_MIX  1.0f
 
+// Menu time as a dose. The pause menu is a place you spend a resource in, and
+// the resource is vision: sit in it and the drug blur climbs.
+//
+// The shape is the one in menu-healing-and-addiction-plan.md and the curve page
+// at tools/drug-blur-curves.html, with menu SECONDS standing in for the health
+// restored there - the healing and tolerance halves of that design are not
+// built. The blur is a FLOOR recomputed from cumulative dose each frame, never
+// an accumulator, so it cannot race lv.c's decay: what it costs depends only on
+// how long you have spent in there, not on how you spaced the visits.
+//
+// f(d) = (e^(k*d) - 1) / (e^k - 1), and the target is BLUR_CAP * f(d). At k = 3
+// the knee lands near chr.c's TICKS(1000) head-sway threshold, which is the
+// accident the design was built around. BLUR_DOSE_FULL_SECS is how long in the
+// menu takes d to 1 and so the blur to the cap; 20 s is the curve page's own
+// default for a full heal.
+#define BLUR_DOSE_FULL_SECS 20.0f
+#define BLUR_DOSE_K         3.0f
+
 #define THIRDPERSON_BODYFADE_START 130.0f
 #define THIRDPERSON_BODYFADE_MAX   127
 // How much of her alpha the fade takes at its deepest. 1 would remove her.

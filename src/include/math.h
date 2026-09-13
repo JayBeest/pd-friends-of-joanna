@@ -8,6 +8,7 @@
 // HACK: for some reason the #include_next above doesn't really do anything, so
 float fabsf(float x);
 float roundf(float x);
+float expf(float x);
 #endif
 
 // @bug?

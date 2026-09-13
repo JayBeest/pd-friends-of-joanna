@@ -68,6 +68,11 @@ extern f32 g_ReloadAnimSpeed;
 // The combat roll's push.
 extern f32 g_RollImpulse;
 
+// Menu time as a dose: how long in the pause menu takes the drug blur to its
+// cap, and the exponent of the curve on the way there. See constants.h.
+extern f32 g_BlurDoseFullSecs;
+extern f32 g_BlurDoseK;
+
 // Build and movement: the master switch, and the body height that walks at
 // exactly 1. Everything scales as a delta from the reference, so a vanilla
 // roster is untouched however the rest of this moves. The mix is how much of

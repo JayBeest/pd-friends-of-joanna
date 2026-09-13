@@ -4,6 +4,7 @@
 #include "game/mainmenu.h"
 #include "game/music.h"
 #include "game/options.h"
+#include "game/stancetuning.h"
 #include "bss.h"
 #include "data.h"
 #include "types.h"
@@ -80,15 +81,19 @@ s32 optionsGetLookAhead(s32 mpchrnum)
 s32 optionsGetAimControl(s32 mpchrnum)
 {
 #ifndef PLATFORM_N64
-	// The aim button is the stance switch now, so it is a toggle for everyone
-	// and there is nothing to choose. Answered here rather than at the six
-	// places that ask, so no reader can disagree with another about which
-	// stance the player is in. OPTION_AIMCONTROL is still written and still
-	// saved, so a build without this reads its own setting back unharmed.
-	return AIMCONTROL_TOGGLE;
-#else
-	return (g_PlayerConfigsArray[mpchrnum].options & OPTION_AIMCONTROL) != 0;
+	// With fojo movement on the aim button is the stance switch, so it is a
+	// toggle for everyone and there is nothing to choose. Answered here rather
+	// than at the six places that ask, so no reader can disagree with another
+	// about which stance the player is in.
+	//
+	// With it off the saved bit decides, as it always did. It was never stopped
+	// being written, so nothing had to be migrated to give it back.
+	if (fojoMovementEnabled()) {
+		return AIMCONTROL_TOGGLE;
+	}
 #endif
+
+	return (g_PlayerConfigsArray[mpchrnum].options & OPTION_AIMCONTROL) != 0;
 }
 
 s32 optionsGetSightOnScreen(s32 mpchrnum)

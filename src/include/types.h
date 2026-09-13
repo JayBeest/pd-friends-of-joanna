@@ -2975,6 +2975,11 @@ struct player {
   // carries the simulant side of the same move.
   struct coord rollspeed;
   s32 rolltime60;
+  // Whether this player is watching the match from behind themselves. It is
+  // how one player is looking at the arena rather than a rule of it, so it
+  // lives here and not in mpsetup.options, and is not saved. Read with fojo
+  // movement OFF; with it on the stance is forced and this is ignored.
+  /*ext*/ bool thirdperson;
   // How far into the cloak's own look her body has been taken because the
   // camera is close enough to be inside it, 0 to 127 on the same scale as a
   // chr's cloakfadefrac. It is a fade of the PICTURE and never of the cloak:

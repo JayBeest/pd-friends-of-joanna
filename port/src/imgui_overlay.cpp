@@ -174,6 +174,7 @@ extern "C" void playerSetHeight(s32 eyeheight, s32 headnum);
 // The stance knobs, defined in src/game/stancetuning.c. Declared by hand for
 // the same reason as everything above: the game headers are not extern "C"
 // wrapped. stance-tuning.md says what each one does.
+extern "C" s32 g_FojoMovement;
 extern "C" f32 g_AimStanceSpeed;
 extern "C" f32 g_FlinchSpeed;
 extern "C" s32 g_FlinchBusy;
@@ -3122,6 +3123,33 @@ static void imguiOverlayDrawStancePanel(void)
 	f32 degrees;
 
 	ImGui::TextDisabled("Defaults live in constants.h. pd.ini [Stance] sets where these start.");
+	ImGui::Separator();
+
+	{
+		bool fojo = g_FojoMovement != 0;
+
+		if (ImGui::Checkbox("Fojo movement", &fojo)) {
+			g_FojoMovement = fojo ? 1 : 0;
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("The two-stance system, and only that: third person forced,\n"
+					"the aim button as the door into the low ready, the low ready\n"
+					"and reload speed penalties, and the stance lock.\n"
+					"\n"
+					"Off is the port's shape - third person is a view on its own\n"
+					"bind and aiming is free. Jump, the roll, the flinch and the\n"
+					"melee combos are not part of this and are always on.\n"
+					"\n"
+					"Off by default. Takes effect on the next frame; a body that\n"
+					"exists already is taken down the way it was built.");
+		}
+
+		if (!fojo) {
+			ImGui::TextDisabled("(stance knobs below do nothing while this is off)");
+		}
+	}
+
 	ImGui::Separator();
 
 	if (ImGui::CollapsingHeader("Stances", ImGuiTreeNodeFlags_DefaultOpen)) {

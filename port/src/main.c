@@ -233,6 +233,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	// Stance panel in the overlay for moving them while the game is running.
 	// stance-tuning.md says what each one does; constants.h holds the defaults
 	// these fall back to.
+	configRegisterInt("Stance.FojoMovement", &g_FojoMovement, 0, 1);
 	configRegisterFloat("Stance.AimSpeed", &g_AimStanceSpeed, 0.1f, 1.f);
 	configRegisterFloat("Stance.FlinchSpeed", &g_FlinchSpeed, 0.1f, 1.f);
 	configRegisterInt("Stance.FlinchTicks", &g_FlinchBusy, 0, 600);

@@ -2105,6 +2105,14 @@ struct menuitem g_MpControlMenuItems[] = {
         menuhandlerMpControlCheckbox,
     },
     {
+        MENUITEMTYPE_DROPDOWN,
+        0,
+        0,
+        L_MPMENU_205, // "Aim Control"
+        0,
+        menuhandlerMpAimControl,
+    },
+    {
         MENUITEMTYPE_SEPARATOR,
         0,
         0,

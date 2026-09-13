@@ -5,6 +5,7 @@
 #include "game/bondgrab.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/stancetuning.h"
 #include "game/cheats.h"
 #include "game/modspectate.h"
 #include "game/chraction.h"
@@ -1771,6 +1772,23 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 							}
 						}
 
+						// Third person, on the button's edge rather than while
+						// it is held. playerIsThirdPerson() is what decides;
+						// this only carries the request, and solo play acts on
+						// it by building the body it needs to look at.
+						//
+						// Only with fojo movement off. With it on the stance is
+						// forced and the button has nothing to say, so the
+						// press is dropped rather than silently flipping a flag
+						// nothing reads.
+						if (!fojoMovementEnabled()) {
+							for (i = 0; i < numsamples; i++) {
+								if (joyGetButtonsPressedOnSample(i, contpad1, c1allowedbuttons) & BUTTON_THIRDPERSON) {
+									g_Vars.currentplayer->thirdperson = !g_Vars.currentplayer->thirdperson;
+									break;
+								}
+							}
+						}
 					}
 #endif
 

@@ -481,6 +481,13 @@
 
 #define RELOAD_ANIMSPEED 1.0f
 
+// Whether the body plays a reload animation at all. OFF for now, by her call
+// while preparing the release: the animation stays in, nobody sees it unless
+// they ask. Only the player's own body is gated - the guards that the setup
+// scripts put on ANIM_RELOAD_0209 are vanilla behaviour and are not ours to
+// silence.
+#define RELOAD_ANIM_ENABLED 0
+
 #define MELEE_BODY_REACH 60.0f
 #define MELEE_CONE_COS   0.7071f
 

@@ -27,6 +27,7 @@
 #include "game/mtxf2lbulk.h"
 #include "game/gfxmemory.h"
 #include "game/sight.h"
+#include "game/stancetuning.h"
 #include "game/inv.h"
 #include "game/playermgr.h"
 #include "game/smoke.h"
@@ -1573,7 +1574,15 @@ s32 bgunTickIncReload(struct handweaponinfo *info, s32 handnum, struct hand *han
 					// gun's from beginning to end, and a body that cannot play
 					// it - first person with no body, or one already swinging -
 					// changes nothing about it.
-					chrPlayReloadAnimation(g_Vars.currentplayer->prop->chr);
+					//
+					// Off by default, Stance.ReloadAnim. Gating it HERE and not
+					// inside chrPlayReloadAnimation() keeps the flag to the
+					// player: the same function is what a simulant would call
+					// if it ever got one, and the guards that reload in the
+					// setup scripts are vanilla and are not ours to silence.
+					if (g_ReloadAnimEnabled) {
+						chrPlayReloadAnimation(g_Vars.currentplayer->prop->chr);
+					}
 #endif
 
 					hand->unk0d0e_07 = true;

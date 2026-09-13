@@ -26,6 +26,7 @@ f32 g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
 s32 g_AnimSplitLowerMask = ANIMSPLIT_LOWERBODY;
 
 f32 g_ReloadSpeed = RELOAD_SPEED;
+s32 g_ReloadAnimEnabled = RELOAD_ANIM_ENABLED;
 f32 g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 
 f32 g_RollImpulse = ROLL_IMPULSE;
@@ -60,6 +61,7 @@ void stanceTuningReset(void)
 
 	g_AnimSplitLowerMask = ANIMSPLIT_LOWERBODY;
 	g_ReloadSpeed = RELOAD_SPEED;
+	g_ReloadAnimEnabled = RELOAD_ANIM_ENABLED;
 	g_ReloadAnimSpeed = RELOAD_ANIMSPEED;
 	g_RollImpulse = ROLL_IMPULSE;
 

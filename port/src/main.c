@@ -246,6 +246,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
 	configRegisterInt("Stance.LowerBodyMask", &g_AnimSplitLowerMask, 0, 0x7fff);
 	configRegisterFloat("Stance.ReloadSpeed", &g_ReloadSpeed, 0.01f, 1.f);
+	configRegisterInt("Stance.ReloadAnim", &g_ReloadAnimEnabled, 0, 1);
 	configRegisterFloat("Stance.ReloadAnimSpeed", &g_ReloadAnimSpeed, 0.1f, 4.f);
 	configRegisterFloat("Stance.RollImpulse", &g_RollImpulse, 0.f, 200.f);
 	configRegisterInt("Stance.BuildSpeed", &g_BuildSpeedEnabled, 0, 1);

@@ -187,6 +187,7 @@ extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
 extern "C" s32 g_AnimSplitLowerMask;
 extern "C" f32 g_ReloadSpeed;
+extern "C" s32 g_ReloadAnimEnabled;
 extern "C" f32 g_ReloadAnimSpeed;
 extern "C" f32 g_RollImpulse;
 extern "C" s32 g_BuildSpeedEnabled;
@@ -3257,6 +3258,20 @@ static void imguiOverlayDrawStancePanel(void)
 				"The heaviest of the four multipliers on purpose - a reload\n"
 				"already costs the stance and the trigger, and this is what\n"
 				"makes choosing when to do one a decision. Stacks with the rest.");
+
+		bool reloadAnim = g_ReloadAnimEnabled != 0;
+
+		if (ImGui::Checkbox("Play the reload animation", &reloadAnim)) {
+			g_ReloadAnimEnabled = reloadAnim ? 1 : 0;
+		}
+
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Off by default. The animation is stock and already in\n"
+					"the ROM; what is new is a player body to play it on, and\n"
+					"it is off until it has been looked at against each gun.\n"
+					"Turning it off mid-reload is safe - the reload is the\n"
+					"gun's, and the body was never being waited on.");
+		}
 
 		imguiOverlayStanceKnob("Reload anim speed", &g_ReloadAnimSpeed, 0.1f, 4.0f, "%.2f",
 				"How fast the body plays its reload animation.\n"

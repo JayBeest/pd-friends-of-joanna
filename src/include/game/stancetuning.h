@@ -53,7 +53,8 @@ extern s32 g_AnimSplitLowerMask;
 // What is left of her walk while she is reloading.
 extern f32 g_ReloadSpeed;
 
-// How fast the body plays its reload animation.
+// Whether the body reaches for the magazine at all, and how fast it does it.
+extern s32 g_ReloadAnimEnabled;
 extern f32 g_ReloadAnimSpeed;
 
 // The combat roll's push.

@@ -1494,11 +1494,19 @@ static bool playerWantsThirdPerson(struct player *player)
 #ifdef PLATFORM_N64
 	return false;
 #else
-	// Always, now. Third person is the stance she stands in and the aim button
-	// is the only way out of it - see playerIsThirdPerson(), which is this
-	// answer minus insightaimmode. There is no toggle and no option, so there
-	// is nothing to ask: a body is built for every life and kept.
-	return true;
+	// With fojo movement on: always. Third person is the stance she stands in
+	// and the aim button is the only way out of it - see playerIsThirdPerson(),
+	// which is this answer minus insightaimmode. Nothing to ask, and a body is
+	// built for every life and kept.
+	if (fojoMovementEnabled()) {
+		return true;
+	}
+
+	// With it off: a view she asked for, on BUTTON_THIRDPERSON, which is where
+	// this arrived and is what the port ships. Solo then keeps stock's bargain
+	// - no body unless something wants one - so the mission costs nothing until
+	// she presses V.
+	return player->thirdperson;
 #endif
 }
 

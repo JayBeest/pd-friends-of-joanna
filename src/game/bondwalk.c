@@ -1475,6 +1475,14 @@ bool bwalkIsFlinching(void)
  */
 bool bwalkStanceIsLocked(void)
 {
+	// Nothing to lock when the aim button is just the aim button: without the
+	// stance there is no commitment for a lock to protect, and taking the
+	// player's aim away mid-reload in a vanilla-shaped build would read as the
+	// controls dropping inputs.
+	if (!fojoMovementEnabled()) {
+		return false;
+	}
+
 	if (bwalkIsFlinching()) {
 		return true;
 	}
@@ -1509,6 +1517,10 @@ bool bwalkIsReloading(void)
  */
 void bwalkApplyReloadSpeed(void)
 {
+	if (!fojoMovementEnabled()) {
+		return;
+	}
+
 	if (bwalkIsReloading()) {
 		g_Vars.currentplayer->speedforwards *= g_ReloadSpeed;
 		g_Vars.currentplayer->speedsideways *= g_ReloadSpeed;
@@ -1549,6 +1561,12 @@ void bwalkApplyFlinchSpeed(void)
  */
 void bwalkApplyAimSpeed(void)
 {
+	// The charge is for leaving a stance, so it goes with the stance. Aiming in
+	// a vanilla-shaped build costs what it always cost, which is nothing.
+	if (!fojoMovementEnabled()) {
+		return;
+	}
+
 	if (g_Vars.currentplayer->insightaimmode) {
 		g_Vars.currentplayer->speedforwards *= g_AimStanceSpeed;
 		g_Vars.currentplayer->speedsideways *= g_AimStanceSpeed;

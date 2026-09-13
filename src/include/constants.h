@@ -497,6 +497,17 @@
 
 #define AIMSTANCE_SPEED 0.6f
 
+// Whether fojo movement is on at all: the two-stance system, and only that.
+// OFF by default, so a fresh install moves the way the port does and third
+// person is a view you turn on, which is the shape it arrived in.
+//
+// What this switch covers is the STANCE and nothing else - the forced third
+// person, the aim button as the door between stances, the low ready and reload
+// speed penalties, and the stance lock. Jump, the combat roll, the flinch and
+// the melee combos are NOT here: they are their own features, they are on
+// unconditionally, and they were never part of the stance.
+#define FOJO_MOVEMENT_ENABLED 0
+
 // How her build changes her walk. The reference body is the one that walks at
 // exactly 1: everything is a delta from it, in the same height units the body
 // table uses, times the slope. The slope is vanilla's own -- botCalculateMaxSpeed
@@ -5069,6 +5080,7 @@ enum weaponnum {
 #define BUTTON_HALF_CROUCH    CONT_4000
 #define BUTTON_FULL_CROUCH    CONT_2000
 #define BUTTON_JUMP           CONT_1000
+#define BUTTON_THIRDPERSON    CONT_0400
 
 #define BUTTON_UI_ACCEPT      CONT_0010
 #define BUTTON_UI_CANCEL      CONT_0020

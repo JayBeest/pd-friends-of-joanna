@@ -50,6 +50,14 @@ extern f32 g_BodyFadeFloor;
 // Which animation parts keep walking while a one shot plays on the arms.
 extern s32 g_AnimSplitLowerMask;
 
+// The master switch for fojo movement - the two-stance system and nothing
+// else. Read it through fojoMovementEnabled() rather than directly: when an
+// arena can ask for fojo movement per match, that function is the one place
+// that has to learn how to answer.
+extern s32 g_FojoMovement;
+
+bool fojoMovementEnabled(void);
+
 // What is left of her walk while she is reloading.
 extern f32 g_ReloadSpeed;
 

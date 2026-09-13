@@ -7,6 +7,8 @@
 
 #ifndef PLATFORM_N64
 
+s32 g_FojoMovement = FOJO_MOVEMENT_ENABLED;
+
 f32 g_AimStanceSpeed = AIMSTANCE_SPEED;
 
 f32 g_FlinchSpeed = FLINCH_SPEED;
@@ -36,6 +38,20 @@ f32 g_BuildSpeedRef = BUILD_SPEED_REF;
 f32 g_BuildCrouchMix = BUILD_CROUCH_MIX;
 
 /**
+ * Whether fojo movement is on.
+ *
+ * A global today, and deliberately a function: an arena rule is the shape this
+ * wants eventually - a Combat Sim match either runs fojo's movement or the
+ * port's - and when that lands, this is the only place that has to start asking
+ * g_MpSetup as well. Every stance site already goes through here, so none of
+ * them will need touching for it.
+ */
+bool fojoMovementEnabled(void)
+{
+	return g_FojoMovement != 0;
+}
+
+/**
  * Put every knob back where it shipped.
  *
  * The defines are the defaults, so this is the whole of it - there is no second
@@ -43,6 +59,8 @@ f32 g_BuildCrouchMix = BUILD_CROUCH_MIX;
  */
 void stanceTuningReset(void)
 {
+	g_FojoMovement = FOJO_MOVEMENT_ENABLED;
+
 	g_AimStanceSpeed = AIMSTANCE_SPEED;
 
 	g_FlinchSpeed = FLINCH_SPEED;

@@ -131,7 +131,16 @@ void clearAntiPlayers(void) {
 void playerReset(void)
 {
 	struct coord pos = {0, 0, 0};
+#ifdef AVOID_UB
+	// Only the g_NumSpawnPoints > 0 branch below fills this, but it is handed
+	// to cdFindGroundInfoAtCyl unconditionally. A stage whose intro list carries
+	// no INTROCMD_SPAWN therefore passes uninitialised stack to the room walk in
+	// cdCollectGeoForCyl, which indexes g_TileRooms with it. Terminate it so the
+	// walk stops on the first entry instead.
+	RoomNum rooms[8] = { -1 };
+#else
 	RoomNum rooms[8];
+#endif
 	f32 turnanglerad = 0;
 	f32 groundy;
 	bool hasdefaultweapon = false;
@@ -189,7 +198,12 @@ void playerReset(void)
 		while (cmd->type != INTROCMD_END) {
 			switch (cmd->type) {
 			case INTROCMD_SPAWN:
-				if (cmd->param2 == 0) {
+				if (cmd->param2 == 0
+#ifdef AVOID_UB
+						// g_SpawnPoints is 24 long and nothing else bounds this
+						&& g_NumSpawnPoints < ARRAYCOUNT(g_SpawnPoints)
+#endif
+						) {
 					g_SpawnPoints[g_NumSpawnPoints++] = cmd->param1;
 				}
 				cmd = (struct cmd32 *)((uintptr_t)cmd + 12);

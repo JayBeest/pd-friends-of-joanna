@@ -472,6 +472,17 @@ f32 playerChooseSpawnLocation(f32 chrradius, struct coord *dstpos, RoomNum *dstr
 
 		dstangle = slangles[p];
 	} else {
+#ifdef AVOID_UB
+		if (numpads <= 0) {
+			// Nothing to choose from, and the modulo below would divide by zero.
+			// Leave the caller a terminated room list rather than a torn one.
+			dstrooms[0] = -1;
+			dstpos->x = 0;
+			dstpos->y = 0;
+			dstpos->z = 0;
+			return 0;
+		}
+#endif
 		// No shortlisted pads, so pick a random one from the full selection
 		padUnpack(pads[rngRandom() % numpads], PADFIELD_POS | PADFIELD_LOOK | PADFIELD_ROOM, &pad);
 
@@ -496,7 +507,13 @@ f32 playerChooseGeneralSpawnLocation(f32 chrradius, struct coord *pos, RoomNum *
 void playerStartNewLife(void)
 {
 	struct coord pos = {0, 0, 0};
+#ifdef AVOID_UB
+	// See playerReset - scenarioChooseSpawnLocation leaves this untouched when the
+	// stage has no spawn pads, and it is read afterwards regardless.
+	RoomNum rooms[8] = { -1 };
+#else
 	RoomNum rooms[8];
+#endif
 	f32 angle;
 	s32 *cmd = g_StageSetup.intro;
 	f32 groundy;

@@ -164,7 +164,7 @@ extern s16 g_CutsceneAnimNum;
 extern s32 g_CutsceneFrameOverrun240;
 extern bool g_CutsceneSkipRequested;
 extern f32 g_CutsceneCurTotalFrame60f;
-extern s16 g_SpawnPoints[];
+extern s16 g_SpawnPoints[24];
 extern s32 g_NumSpawnPoints;
 extern s32 var8009de90;
 extern s32 var8009de94;

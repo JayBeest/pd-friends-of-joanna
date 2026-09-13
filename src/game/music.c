@@ -106,6 +106,29 @@ u16 musicGetVolume(void)
 #endif
 }
 
+/**
+ * fojo: the pause menu track plays under the game's music setting rather than
+ * at it. runtime so the imgui audio panel can tune it live; registered as
+ * Game.MenuMusicDivisor.
+ */
+s32 g_MusicMenuVolumeDivisor = 5;
+
+u16 musicApplyMenuDivisor(u16 volume)
+{
+	s32 divisor = g_MusicMenuVolumeDivisor;
+
+	if (divisor < 1) {
+		divisor = 1;
+	}
+
+	return (u16)(volume / divisor);
+}
+
+u16 musicGetMenuVolume(void)
+{
+	return musicApplyMenuDivisor(musicGetVolume());
+}
+
 void musicSetVolume(u16 volume)
 {
 	s32 i;
@@ -118,7 +141,17 @@ void musicSetVolume(u16 volume)
 
 	for (i = 0; i < ARRAYCOUNT(g_SeqChannels); i++) {
 		if (g_SeqChannels[i].tracktype != TRACKTYPE_NONE && g_SeqChannels[i].tracktype != TRACKTYPE_AMBIENT) {
-			seqSetVolume(&g_SeqInstances[i], volume);
+			// fojo: the menu track keeps its reduced level. the music slider
+			// lives inside the pause menu, so this path runs while the menu
+			// track is playing and would otherwise snap it to full.
+			if (g_SeqChannels[i].tracktype == TRACKTYPE_MENU) {
+				// scale the incoming value, not musicGetMenuVolume(): g_MusicVolume
+				// is not assigned until after this loop, so the getter would still
+				// be reading the previous setting.
+				seqSetVolume(&g_SeqInstances[i], musicApplyMenuDivisor(volume));
+			} else {
+				seqSetVolume(&g_SeqInstances[i], volume);
+			}
 		}
 	}
 
@@ -390,7 +423,7 @@ void musicStartTrackAsMenu(s32 tracknum)
 		musicQueueFadeEvent(TRACKTYPE_PRIMARY, 0.5f, FADETYPE_PAUSE);
 		musicQueueFadeEvent(TRACKTYPE_NRG, 0.5f, FADETYPE_PAUSE);
 		musicQueueFadeEvent(TRACKTYPE_AMBIENT, 0.5f, FADETYPE_PAUSE);
-		musicQueueStartEvent(TRACKTYPE_MENU, tracknum, 0, musicGetVolume());
+		musicQueueStartEvent(TRACKTYPE_MENU, tracknum, 0, musicGetMenuVolume());
 	}
 
 	g_MenuTrack = tracknum;

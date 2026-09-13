@@ -6328,6 +6328,71 @@ struct menuitem g_TeamMissionsPlayerSetupMenuItems[] = {
     {MENUITEMTYPE_END},
 };
 
+// fojo: the same hub minus Load Player, for when config has already pinned
+// the profile. every selectable row here carries
+// MENUITEMFLAG_SELECTABLE_OPENSDIALOG, whose sixth field is a menudialogdef*
+// rather than a handler -- so nothing answers MENUOP_CHECKHIDDEN and they
+// cannot be hidden in place. a parallel array is the only way to drop one.
+struct menuitem g_TeamMissionsPlayerSetupPinnedMenuItems[] = {
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        MENUITEMFLAG_SELECTABLE_OPENSDIALOG,
+        L_MPMENU_030, // "Name"
+        (uintptr_t)&mpGetCurrentPlayerName,
+        (void *)&g_MpPlayerNameMenuDialog,
+    },
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        MENUITEMFLAG_SELECTABLE_OPENSDIALOG | MENUITEMFLAG_LITERAL_TEXT,
+        (uintptr_t)"Operative Model",
+        0,
+        (void *)&g_TeamMissionsOperativeModelMenuDialog,
+    },
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        MENUITEMFLAG_SELECTABLE_OPENSDIALOG,
+        L_MPMENU_031, // "Character"
+        0,
+        (void *)&g_MpCharacterMenuDialog,
+    },
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        MENUITEMFLAG_SELECTABLE_OPENSDIALOG,
+        L_MPMENU_033, // "Control"
+        0,
+        (void *)&g_MpControlMenuDialog,
+    },
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        MENUITEMFLAG_SELECTABLE_OPENSDIALOG,
+        L_OPTIONS_184, // "Display"
+        0,
+        (void *)&g_MpPlayerSetupDisplayMenuDialog,
+    },
+    {
+        MENUITEMTYPE_SEPARATOR,
+        0,
+        0,
+        0,
+        0,
+        NULL,
+    },
+    {
+        MENUITEMTYPE_SELECTABLE,
+        0,
+        0,
+        (uintptr_t)&mpMenuTextSavePlayerOrCopy,
+        0,
+        menuhandlerMpSavePlayer,
+    },
+    {MENUITEMTYPE_END},
+};
+
 struct menudialogdef g_MpPlayerSetupViaAdvMenuDialog = {
     MENUDIALOGTYPE_DEFAULT,
     L_MPMENU_028, // "Player Setup"
@@ -6822,7 +6887,7 @@ void mpDecidePlayerMenuAndPush(s32 silent, s32 playernum) {
   if (g_MenuData.root == MENUROOT_TEAMMISSIONS ||
       g_Vars.mpsetupmenu == MPSETUPMENU_TEAMMISSIONS) {
     if (g_Vars.bondplayernum != playernum)
-      menuPushRootDialog(&g_TeamMissionPlayerProfilesHubMenu,
+      menuPushRootDialog(teamPlayerProfilesHubDialog(playernum),
                          MENUROOT_TEAMMISSIONS);
     else
       menuPushRootDialog(&g_TeamMissionsHubMenuDialog, MENUROOT_TEAMMISSIONS);

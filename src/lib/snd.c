@@ -19,6 +19,7 @@
 #include "lib/lib_317f0.h"
 #include "lib/mp3.h"
 #include "lib/lib_39c80.h"
+#include "lib/lib_3e3e0.h"
 #include "lib/speaker.h"
 #include "data.h"
 #include "types.h"
@@ -2433,4 +2434,169 @@ void sndTickUfo(void)
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// fojo: audio debug accessors for the imgui panel.
+//
+// The panel is C++ and pulling PR/n_libaudio.h in there is more trouble than
+// it is worth, so every naudio-internal reach lives on this side of the seam.
+// Slot indices are into g_SeqInstances / g_SeqChannels, 0..2.
+// ---------------------------------------------------------------------------
+
+// defined in naudio/n_csplayer.c:1250 and declared in no header; without this
+// it is an implicit declaration, which the build warns about.
+void func00037634(N_ALCSPlayer *seqp, u8 value);
+
+#define SNDDEBUG_NUM_SLOTS ARRAYCOUNT(g_SeqInstances)
+
+static bool snddebugSlotIsLive(s32 slot)
+{
+	return slot >= 0
+		&& slot < (s32)SNDDEBUG_NUM_SLOTS
+		&& g_SeqInstances[slot].seqp != NULL;
+}
+
+s32 snddebugNumSlots(void)
+{
+	return (s32)SNDDEBUG_NUM_SLOTS;
+}
+
+bool snddebugGetSlot(s32 slot, s32 *tracktype, s32 *tracknum, s32 *volume, s32 *state)
+{
+	if (!snddebugSlotIsLive(slot)) {
+		return false;
+	}
+
+	*tracktype = g_SeqChannels[slot].tracktype;
+	*tracknum = g_SeqInstances[slot].tracknum;
+	*volume = g_SeqInstances[slot].volume;
+	*state = n_alCSPGetState(g_SeqInstances[slot].seqp);
+
+	return true;
+}
+
+/**
+ * Microseconds per MIDI tick. Lower is faster; 488 is the init value.
+ *
+ * Writing this only affects events posted after the write -- already-queued
+ * ones keep their old timing until the sequence catches up. The meta-tempo
+ * path in n_csplayer.c reposts the queue to avoid that; this deliberately does
+ * not, because the repost helper is static there.
+ */
+s32 snddebugGetUspt(s32 slot)
+{
+	return snddebugSlotIsLive(slot) ? g_SeqInstances[slot].seqp->uspt : 0;
+}
+
+void snddebugSetUspt(s32 slot, s32 uspt)
+{
+	if (snddebugSlotIsLive(slot) && uspt > 0) {
+		g_SeqInstances[slot].seqp->uspt = uspt;
+	}
+}
+
+u16 snddebugGetChanMask(s32 slot)
+{
+	return snddebugSlotIsLive(slot) ? g_SeqInstances[slot].seqp->chanMask : 0;
+}
+
+void snddebugSetChanMask(s32 slot, u16 mask)
+{
+	if (snddebugSlotIsLive(slot)) {
+		g_SeqInstances[slot].seqp->chanMask = mask;
+	}
+}
+
+/**
+ * Per-channel volume, sent as a MIDI CC pair. rate is the ramp speed; 0xff is
+ * effectively immediate.
+ */
+void snddebugSetChanVolume(s32 slot, s32 chan, s32 volume, s32 rate)
+{
+	if (snddebugSlotIsLive(slot) && chan >= 0 && chan < 16) {
+		func00039e5c(g_SeqInstances[slot].seqp, chan, (u8)volume, (u8)rate);
+	}
+}
+
+s32 snddebugGetChanVolume(s32 slot, s32 chan)
+{
+	if (snddebugSlotIsLive(slot) && chan >= 0 && chan < 16) {
+		return g_SeqInstances[slot].seqp->chanState[chan].vol;
+	}
+
+	return 0;
+}
+
+/**
+ * Wet-mix bias and scale over the whole sequence player. The per-voice fx mix
+ * is ((chan fxmix & 0x7f) + bias * 127) * scale.
+ */
+f32 snddebugGetWetBias(s32 slot)
+{
+	return snddebugSlotIsLive(slot) ? g_SeqInstances[slot].seqp->unk7c : 0.0f;
+}
+
+void snddebugSetWetBias(s32 slot, f32 bias)
+{
+	if (snddebugSlotIsLive(slot)) {
+		g_SeqInstances[slot].seqp->unk7c = bias;
+	}
+}
+
+f32 snddebugGetWetScale(s32 slot)
+{
+	return snddebugSlotIsLive(slot) ? g_SeqInstances[slot].seqp->unk80 : 1.0f;
+}
+
+void snddebugSetWetScale(s32 slot, f32 scale)
+{
+	if (snddebugSlotIsLive(slot)) {
+		g_SeqInstances[slot].seqp->unk80 = scale;
+	}
+}
+
+/**
+ * Reverb. paramID is (section << 3) | param, params being input, output,
+ * fbcoef, ffcoef, gain, chorusrate, chorusdepth (dead), lpfilt. bus is 0 or 1;
+ * bus 0 is the eight-section reverb, bus 1 has one section.
+ */
+bool snddebugSetFxParam(s32 bus, s32 section, s32 param, s32 value)
+{
+	ALFxRef fx = func0003e540((s16)bus);
+
+	if (fx == NULL || section < 0 || param < 0 || param > 7) {
+		return false;
+	}
+
+	n_alSynSetFXParam(fx, (s16)((section << 3) | param), &value);
+
+	return true;
+}
+
+/**
+ * Cap on simultaneous sequence voices. Compiled but never called by the game.
+ */
+void snddebugSetVoiceCap(s32 slot, s32 cap)
+{
+	if (snddebugSlotIsLive(slot) && cap >= 0 && cap <= 255) {
+		func00037634(g_SeqInstances[slot].seqp, (u8)cap);
+	}
+}
+
+u16 snddebugGetSfxVolume(void)
+{
+	return g_SfxVolume;
+}
+
+s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced)
+{
+	s16 free = 0;
+	s16 alloced = 0;
+	u16 total = sndpCountStates(&free, &alloced);
+
+	*numfree = free;
+	*numalloced = alloced;
+
+	return total;
 }

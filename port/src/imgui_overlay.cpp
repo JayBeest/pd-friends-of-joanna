@@ -42,6 +42,7 @@ static bool g_ImGuiOverlayShowTextures = false;
 static bool g_ImGuiOverlayShowLookingAt = false;
 static bool g_ImGuiOverlayShowProportions = false;
 static bool g_ImGuiOverlayShowStance = false;
+static bool g_ImGuiOverlayShowAudio = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
@@ -168,6 +169,30 @@ extern "C" void texLoad(texnum_t *updateword, struct texpool *pool, bool unuseda
 extern "C" struct tex *texFindInPool(s32 texturenum, struct texpool *pool);
 extern "C" Gfx *texBuildDebugLoadGdl(Gfx *gdl, struct tex *tex);
 extern "C" s32 texGetSizeInBytes(struct tex *tex, s32 lod);
+
+// fojo audio panel. every naudio reach lives behind snddebug* in src/lib/snd.c
+// so this file does not have to include PR/n_libaudio.h.
+extern "C" s32 snddebugNumSlots(void);
+extern "C" bool snddebugGetSlot(s32 slot, s32 *tracktype, s32 *tracknum, s32 *volume, s32 *state);
+extern "C" s32 snddebugGetUspt(s32 slot);
+extern "C" void snddebugSetUspt(s32 slot, s32 uspt);
+extern "C" u16 snddebugGetChanMask(s32 slot);
+extern "C" void snddebugSetChanMask(s32 slot, u16 mask);
+extern "C" void snddebugSetChanVolume(s32 slot, s32 chan, s32 volume, s32 rate);
+extern "C" s32 snddebugGetChanVolume(s32 slot, s32 chan);
+extern "C" f32 snddebugGetWetBias(s32 slot);
+extern "C" void snddebugSetWetBias(s32 slot, f32 bias);
+extern "C" f32 snddebugGetWetScale(s32 slot);
+extern "C" void snddebugSetWetScale(s32 slot, f32 scale);
+extern "C" bool snddebugSetFxParam(s32 bus, s32 section, s32 param, s32 value);
+extern "C" void snddebugSetVoiceCap(s32 slot, s32 cap);
+extern "C" s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced);
+extern "C" u16 snddebugGetSfxVolume(void);
+extern "C" void sndSetSfxVolume(u16 volume);
+extern "C" void musicSetVolume(u16 volume);
+extern "C" u16 musicGetVolume(void);
+extern "C" u16 musicGetMenuVolume(void);
+extern "C" s32 g_MusicMenuVolumeDivisor;
 extern "C" void modelSetScale(struct model *model, f32 scale);
 extern "C" void playerSetHeight(s32 eyeheight, s32 headnum);
 
@@ -235,6 +260,7 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "LookingAt=%d", &value) == 1) { g_ImGuiOverlayShowLookingAt = value != 0; return; }
 	if (sscanf(line, "Proportions=%d", &value) == 1) { g_ImGuiOverlayShowProportions = value != 0; return; }
 	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; return; }
+	if (sscanf(line, "Audio=%d", &value) == 1) { g_ImGuiOverlayShowAudio = value != 0; return; }
 
 	{
 		float fvalue;
@@ -258,6 +284,7 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("LookingAt=%d\n", g_ImGuiOverlayShowLookingAt);
 	buffer->appendf("Proportions=%d\n", g_ImGuiOverlayShowProportions);
 	buffer->appendf("Stance=%d\n", g_ImGuiOverlayShowStance);
+	buffer->appendf("Audio=%d\n", g_ImGuiOverlayShowAudio);
 	buffer->appendf("LoreScale=%.5f\n\n", g_ImGuiPropLoreScale);
 }
 
@@ -272,7 +299,8 @@ static u32 imguiOverlayGetWindowState(void)
 		| (g_ImGuiOverlayShowProfiler ? 1u << 6 : 0)
 		| (g_ImGuiOverlayShowLookingAt ? 1u << 7 : 0)
 		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0)
-		| (g_ImGuiOverlayShowStance ? 1u << 9 : 0);
+		| (g_ImGuiOverlayShowStance ? 1u << 9 : 0)
+		| (g_ImGuiOverlayShowAudio ? 1u << 10 : 0);
 }
 
 static void imguiOverlaySaveWindowState(void)
@@ -4314,6 +4342,227 @@ static void imguiOverlaySetNextWindowDefaults(const ImVec2 &size, float xAnchor,
 	ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
 }
 
+static const char *imguiOverlayTrackTypeName(s32 tracktype)
+{
+	switch (tracktype) {
+	case 0:  return "none";
+	case 1:  return "primary";
+	case 2:  return "nrg";
+	case 3:  return "menu";
+	case 4:  return "death";
+	case 5:  return "ambient";
+	default: return "?";
+	}
+}
+
+static void imguiOverlayDrawAudioPanel(void)
+{
+	static int fxbus = 0;
+	static int fxsection = 0;
+	static int fxparam = 2;
+	static int fxvalue = 0;
+	static int chanrate = 255;
+	static int sfxvol = -1;
+	static int voicecap[4] = { 0, 0, 0, 0 };
+	static bool fxsent = false;
+	static bool fxok = false;
+
+	static const char *fxparamnames[8] = {
+		"input (ms)", "output (ms)", "fbcoef", "ffcoef",
+		"gain", "chorusrate", "chorusdepth (dead)", "lpfilt",
+	};
+
+	if (ImGui::CollapsingHeader("Master", ImGuiTreeNodeFlags_DefaultOpen)) {
+		bool muted = g_SndDisabled;
+
+		if (ImGui::Checkbox("Mute everything", &muted)) {
+			g_SndDisabled = muted;
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("g_SndDisabled");
+
+		int musicvol = (int)musicGetVolume();
+
+		if (ImGui::SliderInt("Music", &musicvol, 0, 0x5000)) {
+			musicSetVolume((u16)musicvol);
+		}
+
+		if (sfxvol < 0) {
+			sfxvol = (int)snddebugGetSfxVolume();
+		}
+
+		if (ImGui::SliderInt("SFX", &sfxvol, 0, 0x5000)) {
+			sndSetSfxVolume((u16)sfxvol);
+		}
+
+		int divisor = (int)g_MusicMenuVolumeDivisor;
+
+		if (ImGui::SliderInt("Menu music divisor", &divisor, 1, 32)) {
+			g_MusicMenuVolumeDivisor = (s32)divisor;
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("-> %d", (int)musicGetMenuVolume());
+
+		s32 numfree = 0;
+		s32 numalloced = 0;
+		s32 total = snddebugCountSfxVoices(&numfree, &numalloced);
+		ImGui::Text("sfx voices: %d alloced, %d free, %d total",
+				(int)numalloced, (int)numfree, (int)total);
+	}
+
+	if (ImGui::CollapsingHeader("Music tracks", ImGuiTreeNodeFlags_DefaultOpen)) {
+		int numslots = (int)snddebugNumSlots();
+
+		for (int slot = 0; slot < numslots; slot++) {
+			s32 tracktype = 0;
+			s32 tracknum = 0;
+			s32 volume = 0;
+			s32 state = 0;
+
+			ImGui::PushID(slot);
+
+			if (!snddebugGetSlot((s32)slot, &tracktype, &tracknum, &volume, &state)) {
+				ImGui::TextDisabled("slot %d - empty", slot);
+				ImGui::PopID();
+				continue;
+			}
+
+			ImGui::Separator();
+			ImGui::Text("slot %d - %s, track %d, vol %d, state %d",
+					slot, imguiOverlayTrackTypeName(tracktype),
+					(int)tracknum, (int)volume, (int)state);
+
+			// uspt is microseconds per tick, so speed is its reciprocal. show
+			// the multiplier and store the raw value. 488 is the init value.
+			int uspt = (int)snddebugGetUspt((s32)slot);
+
+			if (uspt > 0) {
+				float speed = 488.0f / (float)uspt;
+
+				if (ImGui::SliderFloat("speed", &speed, 0.25f, 4.0f, "%.2fx")) {
+					if (speed > 0.01f) {
+						snddebugSetUspt((s32)slot, (s32)(488.0f / speed));
+					}
+				}
+
+				ImGui::SameLine();
+				ImGui::TextDisabled("uspt %d", uspt);
+			}
+
+			float bias = snddebugGetWetBias((s32)slot);
+
+			if (ImGui::SliderFloat("reverb bias", &bias, 0.0f, 1.0f)) {
+				snddebugSetWetBias((s32)slot, bias);
+			}
+
+			float scale = snddebugGetWetScale((s32)slot);
+
+			if (ImGui::SliderFloat("reverb scale", &scale, 0.0f, 2.0f)) {
+				snddebugSetWetScale((s32)slot, scale);
+			}
+
+			if (slot < 4) {
+				if (ImGui::SliderInt("voice cap", &voicecap[slot], 0, 32)) {
+					snddebugSetVoiceCap((s32)slot, (s32)voicecap[slot]);
+				}
+			}
+
+			if (ImGui::TreeNode("MIDI channels")) {
+				u16 mask = snddebugGetChanMask((s32)slot);
+				u16 newmask = mask;
+
+				for (int chan = 0; chan < 16; chan++) {
+					bool on = (mask & (1 << chan)) != 0;
+					char label[8];
+					snprintf(label, sizeof(label), "%d", chan);
+
+					ImGui::PushID(chan);
+
+					if (ImGui::Checkbox(label, &on)) {
+						if (on) {
+							newmask = (u16)(newmask | (1 << chan));
+						} else {
+							newmask = (u16)(newmask & ~(1 << chan));
+						}
+					}
+
+					if ((chan % 8) != 7) {
+						ImGui::SameLine();
+					}
+
+					ImGui::PopID();
+				}
+
+				if (newmask != mask) {
+					snddebugSetChanMask((s32)slot, newmask);
+				}
+
+				ImGui::SliderInt("ramp rate", &chanrate, 1, 255);
+
+				for (int chan = 0; chan < 16; chan++) {
+					int vol = (int)snddebugGetChanVolume((s32)slot, (s32)chan);
+					char label[24];
+					snprintf(label, sizeof(label), "ch %d vol", chan);
+
+					ImGui::PushID(256 + chan);
+
+					if (ImGui::SliderInt(label, &vol, 0, 255)) {
+						snddebugSetChanVolume((s32)slot, (s32)chan, (s32)vol, (s32)chanrate);
+					}
+
+					ImGui::PopID();
+				}
+
+				ImGui::TreePop();
+			}
+
+			ImGui::PopID();
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Reverb")) {
+		ImGui::TextWrapped(
+				"Aux bus 0 is the eight-section reverb, bus 1 has one section. "
+				"naudio keeps no getter, so this is send-on-press rather than a "
+				"readback, and the values do not reflect what is currently set.");
+
+		ImGui::SliderInt("bus", &fxbus, 0, 1);
+
+		int maxsection = (fxbus == 0) ? 7 : 0;
+
+		// bus 1 has one section. n_alFxParamHdl refuses s >= section_count
+		// silently, so clamp here rather than let Send look like it worked.
+		if (fxsection > maxsection) {
+			fxsection = maxsection;
+		}
+
+		ImGui::SliderInt("section", &fxsection, 0, maxsection);
+		ImGui::Combo("param", &fxparam, fxparamnames, 8);
+		ImGui::InputInt("value", &fxvalue);
+
+		if (ImGui::Button("Send")) {
+			fxok = snddebugSetFxParam((s32)fxbus, (s32)fxsection, (s32)fxparam, (s32)fxvalue);
+			fxsent = true;
+		}
+
+		if (fxsent) {
+			ImGui::SameLine();
+
+			if (fxok) {
+				ImGui::TextDisabled("sent");
+			} else {
+				ImGui::TextDisabled("no fx on that bus");
+			}
+		}
+
+		if (fxparam == 6) {
+			ImGui::TextDisabled("chorusdepth writes a discarded local in n_reverb.c - no effect");
+		}
+	}
+}
+
 static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 {
 	if (!ImGui::BeginPopupContextVoid("FojoWindowMenu", ImGuiPopupFlags_MouseButtonRight)) {
@@ -4329,6 +4578,7 @@ static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 	ImGui::MenuItem("Memory", NULL, &g_ImGuiOverlayShowMemory);
 	ImGui::MenuItem("Profiler", NULL, &g_ImGuiOverlayShowProfiler);
 	ImGui::MenuItem("Looking At", NULL, &g_ImGuiOverlayShowLookingAt, canOpenLookingAt);
+	ImGui::MenuItem("Audio", NULL, &g_ImGuiOverlayShowAudio);
 	ImGui::MenuItem("Proportions", NULL, &g_ImGuiOverlayShowProportions);
 	ImGui::MenuItem("Stance", NULL, &g_ImGuiOverlayShowStance);
 	ImGui::EndPopup();
@@ -4490,6 +4740,14 @@ void imguiOverlayRender(void)
 				imguiOverlayDrawStancePanel();
 			}
 
+			ImGui::End();
+		}
+
+		if (g_ImGuiOverlayShowAudio) {
+			imguiOverlaySetNextWindowDefaults(ImVec2(440.0f, 560.0f), 0.5f, 0.5f);
+			if (ImGui::Begin("Fojo Audio", &g_ImGuiOverlayShowAudio)) {
+				imguiOverlayDrawAudioPanel();
+			}
 			ImGui::End();
 		}
 

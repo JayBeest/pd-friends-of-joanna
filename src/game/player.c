@@ -2603,6 +2603,16 @@ void playerTickPauseMenu(void)
 			if (pauseIsAllowed()) {
 				lvSetPaused(true);
 			}
+
+			// fojo, TEMPORARY: peg the drug blur on every menu open so the wear-off
+			// can be exercised without hunting a drug source. stands in for the
+			// dose model in menu-healing-and-addiction-plan.md, where the blur is
+			// a function of how long you heal rather than a flat max. delete this
+			// when that lands.
+			if (g_Vars.currentplayer->prop && g_Vars.currentplayer->prop->chr) {
+				g_Vars.currentplayer->prop->chr->blurdrugamount = TICKS(5000);
+			}
+
 			g_Vars.currentplayer->pausemode = PAUSEMODE_PAUSED;
 
 			if ((g_GlobalMenuRoot == MENUROOT_MAINMENU || g_GlobalMenuRoot == MENUROOT_TRAINING)

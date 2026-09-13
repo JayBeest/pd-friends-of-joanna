@@ -1868,6 +1868,38 @@ struct menudialogdef g_TeamMissionPlayerProfilesHubMenu = {
     NULL,
 };
 
+extern struct menuitem g_TeamMissionsPlayerSetupPinnedMenuItems[];
+
+// same dialog with Load Player dropped. flags are the same value as above --
+// MENUITEMFLAG_SELECTABLE_OPENSDIALOG is 0x0004, the same bit as
+// MENUDIALOGFLAG_STARTSELECTS, so its appearance in a dialog flags field is a
+// no-op alias rather than a third flag.
+struct menudialogdef g_TeamMissionPlayerProfilesHubPinnedMenu = {
+    MENUDIALOGTYPE_DEFAULT,
+    (uintptr_t)"Be Your Perfect Self",
+    g_TeamMissionsPlayerSetupPinnedMenuItems,
+    menudialogTeamPlayerProfiles,
+    MENUDIALOGFLAG_STARTSELECTS | MENUDIALOGFLAG_LITERAL_TEXT,
+    NULL,
+};
+
+/**
+ * Pick the profile hub to push.
+ *
+ * fojo: when a default profile has been loaded from config, the profile is not
+ * the player's to change, so don't offer a control that cannot change it. keyed
+ * on actually loaded rather than merely configured -- a default naming a file
+ * that isn't there leaves the choice open, which is what you want.
+ */
+struct menudialogdef *teamPlayerProfilesHubDialog(s32 playernum)
+{
+	if (filemgrDefaultProfileLoaded(playernum)) {
+		return &g_TeamMissionPlayerProfilesHubPinnedMenu;
+	}
+
+	return &g_TeamMissionPlayerProfilesHubMenu;
+}
+
 /* intro profile picker
  */
 
@@ -2496,7 +2528,7 @@ menuhandlerBuddyOptionsPlayerMenuHub(s32 operation, struct menuitem *item,
     for (int i = 0; i < MAX_PLAYERS; i++) {
       updatePlayerName(i);
     }
-    menuPushDialog(&g_TeamMissionPlayerProfilesHubMenu);
+    menuPushDialog(teamPlayerProfilesHubDialog(g_MpPlayerNum));
   } break;
   }
   return 0;

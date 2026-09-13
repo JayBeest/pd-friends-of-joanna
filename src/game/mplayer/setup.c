@@ -160,24 +160,30 @@ s16 mpChooseRandomStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
-
 #ifdef PLATFORM_N64
-  for (i = 0; i < 16; i++) {
-#else // All Solos in Multi Mod
-  for (i = 0; i < 71; i++) {
+  const s32 numarenas = 16;
+#else
+  // The active list's own length. The bound here used to be a literal 71,
+  // written for the 71-entry All-Solos list - which nothing selects, because
+  // every mpSetArenaMode() call site is commented out, so g_MpArenas is the
+  // 17-row vanilla table and this walked 54 entries past its end.
+  const s32 numarenas = mpGetNumStages();
 #endif
+
+  for (i = 0; i < numarenas; i++) {
     if (challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       numchallengescomplete++;
     }
   }
 
+  // Nothing unlocked in range: rngRandom() % 0 is a divide by zero.
+  if (numchallengescomplete <= 0) {
+    return STAGE_MP_SKEDAR;
+  }
+
   index = rngRandom() % numchallengescomplete;
 
-#ifdef PLATFORM_N64
-  for (i = 0; i < 16; i++) {
-#else // All Solos in Multi Mod
-  for (i = 0; i < 71; i++) {
-#endif
+  for (i = 0; i < numarenas; i++) {
     if (challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       if (index == 0) {
         return g_MpArenas[i].stagenum;
@@ -195,17 +201,26 @@ s16 mpChooseRandomMultiStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
+  // Was a literal 32, an index into the 71-entry All-Solos list. The window
+  // below is positional in that same list, so both are only meaningful once
+  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
+  // read past its end. Clamped to the active list's own length.
+  const s32 numarenas = mpGetNumStages() < 32 ? mpGetNumStages() : 32;
 
-  for (i = 0; i < 32; i++) {
+  for (i = 0; i < numarenas; i++) {
     if ((i <= 12 || i >= 27) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       numchallengescomplete++;
     }
   }
 
+  if (numchallengescomplete <= 0) {
+    return STAGE_MP_SKEDAR;
+  }
+
   index = rngRandom() % numchallengescomplete;
 
-  for (i = 0; i < 32; i++) {
+  for (i = 0; i < numarenas; i++) {
     if ((i <= 12 || i >= 27) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       if (index == 0) {
@@ -223,17 +238,26 @@ s16 mpChooseRandomSoloStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
+  // Was a literal 27, an index into the 71-entry All-Solos list. The window
+  // below is positional in that same list, so both are only meaningful once
+  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
+  // read past its end. Clamped to the active list's own length.
+  const s32 numarenas = mpGetNumStages() < 27 ? mpGetNumStages() : 27;
 
-  for (i = 0; i < 27; i++) {
+  for (i = 0; i < numarenas; i++) {
     if ((i >= 13 && i <= 26) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       numchallengescomplete++;
     }
   }
 
+  if (numchallengescomplete <= 0) {
+    return STAGE_DEFECTION;
+  }
+
   index = rngRandom() % numchallengescomplete;
 
-  for (i = 0; i < 27; i++) {
+  for (i = 0; i < numarenas; i++) {
     if ((i >= 13 && i <= 26) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       if (index == 0) {
@@ -251,17 +275,26 @@ s16 mpChooseRandomGexStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
+  // Was a literal 61, an index into the 71-entry All-Solos list. The window
+  // below is positional in that same list, so both are only meaningful once
+  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
+  // read past its end. Clamped to the active list's own length.
+  const s32 numarenas = mpGetNumStages() < 61 ? mpGetNumStages() : 61;
 
-  for (i = 0; i < 61; i++) {
+  for (i = 0; i < numarenas; i++) {
     if (((i >= 32 && i <= 54) || (i >= 59 && i <= 60)) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       numchallengescomplete++;
     }
   }
 
+  if (numchallengescomplete <= 0) {
+    return STAGE_EXTRA6; // Temple
+  }
+
   index = rngRandom() % numchallengescomplete;
 
-  for (i = 0; i < 61; i++) {
+  for (i = 0; i < numarenas; i++) {
     if (((i >= 32 && i <= 54) || (i >= 59 && i <= 60)) &&
         challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
       if (index == 0) {

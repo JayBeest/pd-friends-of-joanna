@@ -82,6 +82,26 @@ static void crashStackTrace(char *msg, PEXCEPTION_POINTERS exinfo)
 	}
 	CRASH_MSG("\nMODULE: [%p]\n", crashGetModuleBase(exinfo->ExceptionRecord->ExceptionAddress));
 	CRASH_MSG("MAIN MODULE: [%p]\n", crashGetModuleBase(crashInit));
+
+	// with no PDB the frames below are bare offsets, and offsets only tell
+	// the truth when they are read against the exact executable that produced
+	// them -- a different build of the same source resolves all of them and
+	// lies about all of them. the linker timestamp and mapped size are per
+	// build and can be read back out of the .exe, so printing them here is
+	// enough to match a report to a binary. tools/pdsym checks this line.
+	{
+		const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)crashGetModuleBase(crashInit);
+		if (dos && dos->e_magic == IMAGE_DOS_SIGNATURE) {
+			const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const u8 *)dos + dos->e_lfanew);
+			if (nt->Signature == IMAGE_NT_SIGNATURE) {
+				CRASH_MSG("IMAGE: link=%08lx size=%08lx sum=%08lx\n",
+						(unsigned long)nt->FileHeader.TimeDateStamp,
+						(unsigned long)nt->OptionalHeader.SizeOfImage,
+						(unsigned long)nt->OptionalHeader.CheckSum);
+			}
+		}
+	}
+
 	CRASH_MSG("\nBACKTRACE:\n");
 
 	char symbuf[sizeof(SYMBOL_INFO) + CRASH_MAX_SYM * sizeof(TCHAR)];

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <zlib.h>
 #include "pdft_write.h"
 #include "vendor/parson/parson.h"
 
@@ -162,8 +163,10 @@ static long vanillaLookup(const struct vanillaMap *vm, const char *name)
  * which file and, for textures, where that ROM's texture list lives; the
  * entries say what to take. `byOffset` says it outright. `byId` names a
  * texture and we work the offset out from the ROM's own tlist. `byName` names
- * a file, which needs that ROM's file table and is not done yet.
+ * a file, and we read that ROM's own file table to find it.
  */
+struct altFile;
+
 struct altRom {
 	char id[PDFT_ROMSOURCE_ID];
 	char filename[PDFT_ROMSOURCE_FILE];
@@ -177,6 +180,19 @@ struct altRom {
 	FILE *fp;          /* opened lazily, only when something needs bytes */
 	bool tried;
 	char path[PATHMAX];
+
+	/* byName only: the whole image, its inflated data segment and the file
+	 * index read out of it. Built once, on the first name that needs it. */
+	uint32_t dataOffset;   /* declared in the manifest, 0 = work it out */
+	uint32_t tableOffset;  /* declared in the manifest, 0 = work it out */
+	uint8_t *image;
+	size_t imageLen;
+	uint8_t *dataSeg;
+	uint32_t dataSegLen;
+	struct altFile *files;
+	uint32_t numFiles;
+	bool filesTried;
+	const char *variant;
 };
 
 static bool altOpen(struct altRom *rom, const char *const *dirs, int numDirs)
@@ -251,6 +267,433 @@ static bool altTextureExtent(struct altRom *rom, uint32_t texId, uint32_t *outOf
 	*outOfs = rom->texdataOffset + cur;
 	*outSize = next - cur;
 	return true;
+}
+
+/* -- a ROM's own file table ------------------------------------------------
+ *
+ * `byName` needs to turn a name into an offset and a size in another ROM,
+ * which means reading that ROM's file table. The parse below is the engine's
+ * own, not a second one invented here: `romdataInitFiles()`
+ * (port/src/romdata.c) inflates the ROM's compressed data segment, reads a big
+ * endian u32 offset table at the segment's file-table offset, and treats the
+ * last non-zero entry as the ROM address of the NAME table, whose entries are
+ * offsets relative to its own start. Index 0 is a file in neither table, so
+ * both walks begin at 1 exactly as the engine's do.
+ *
+ * The per-variant segment offsets are Ryan Dwyer's, from the pd-extract
+ * scripts in the decomp tooling, by way of leylinelib's pd_rom_driver.py.
+ */
+struct altFile {
+	const char *name;
+	uint32_t offset;
+	uint32_t size;
+};
+
+struct romVariant {
+	const char *name;
+	const char *cartId;   /* bytes 0x3b..0x3e of the header */
+	uint32_t dataOffset;
+	uint32_t tableOffset;
+};
+
+/* ntsc-1.0 and ntsc-final share both offsets, so one row covers them. */
+static const struct romVariant g_RomVariants[] = {
+	{ "ntsc-final", "NPDE", 0x39850, 0x28080 },
+	{ "ntsc-beta",  "NPDE", 0x30850, 0x29160 },
+	{ "pal-final",  "NPDP", 0x39850, 0x28910 },
+	{ "pal-beta",   "NPDP", 0x39850, 0x29b90 },
+	{ "jpn-final",  "NPDJ", 0x39850, 0x28800 },
+};
+
+#define NUM_ROM_VARIANTS ((int)(sizeof(g_RomVariants) / sizeof(g_RomVariants[0])))
+
+/* A file table with fewer entries than this is not a file table; it is a wrong
+ * offset that happened to decode. The three retail ROMs carry about 1800. */
+#define ALT_MIN_FILES 256
+
+static uint32_t be32at(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+/**
+ * Read the whole ROM once. A name lookup walks two tables in it and the name
+ * strings live in a third place, so seeking around a FILE * for each would be
+ * both slower and harder to bounds check than 32 MB of malloc.
+ */
+static bool altImage(struct altRom *rom)
+{
+	long len;
+
+	if (rom->image) {
+		return true;
+	}
+
+	if (!rom->fp || fseek(rom->fp, 0, SEEK_END) != 0) {
+		return false;
+	}
+
+	len = ftell(rom->fp);
+
+	if (len <= 0x1000 || fseek(rom->fp, 0, SEEK_SET) != 0) {
+		return false;
+	}
+
+	rom->image = malloc((size_t)len);
+
+	if (!rom->image) {
+		die("could not allocate %ld bytes for %s", len, rom->path);
+	}
+
+	if (fread(rom->image, 1, (size_t)len, rom->fp) != (size_t)len) {
+		free(rom->image);
+		rom->image = NULL;
+		return false;
+	}
+
+	rom->imageLen = (size_t)len;
+	return true;
+}
+
+/**
+ * Inflate a 1173 segment. The length is declared in the three bytes after the
+ * magic, the same way the engine reads it, so a wrong offset usually fails on
+ * the magic and an implausible length fails here rather than in zlib.
+ */
+static bool altInflate(struct altRom *rom, uint32_t ofs, uint8_t **outSeg, uint32_t *outLen)
+{
+	z_stream zs;
+	uint8_t *seg;
+	uint32_t len;
+	int rc;
+
+	if ((size_t)ofs + 5 > rom->imageLen) {
+		return false;
+	}
+
+	if (rom->image[ofs] != 0x11 || rom->image[ofs + 1] != 0x73) {
+		return false;
+	}
+
+	len = ((uint32_t)rom->image[ofs + 2] << 16) | ((uint32_t)rom->image[ofs + 3] << 8)
+			| (uint32_t)rom->image[ofs + 4];
+
+	if (len < 0x1000 || len > 0x800000) {
+		return false;
+	}
+
+	seg = malloc(len);
+
+	if (!seg) {
+		die("could not allocate %u bytes for the data segment of %s", len, rom->path);
+	}
+
+	memset(&zs, 0, sizeof(zs));
+	zs.next_in = rom->image + ofs + 5;
+	zs.avail_in = (unsigned)(rom->imageLen - ofs - 5);
+	zs.next_out = seg;
+	zs.avail_out = len;
+
+	/* -15: raw deflate, no zlib or gzip wrapper, which is what 1173 holds. */
+	if (inflateInit2(&zs, -15) != Z_OK) {
+		free(seg);
+		return false;
+	}
+
+	rc = inflate(&zs, Z_FINISH);
+	inflateEnd(&zs);
+
+	if ((rc != Z_OK && rc != Z_STREAM_END && rc != Z_BUF_ERROR) || zs.total_out < len) {
+		free(seg);
+		return false;
+	}
+
+	*outSeg = seg;
+	*outLen = len;
+	return true;
+}
+
+static bool plainName(const char *s, size_t max)
+{
+	size_t i;
+
+	for (i = 0; i < max; ++i) {
+		if (!s[i]) {
+			return i > 0;
+		}
+
+		if ((unsigned char)s[i] < 0x20 || (unsigned char)s[i] > 0x7e) {
+			return false;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Decode the offset and name tables at a candidate table offset. Returns false
+ * rather than dying, because this doubles as the test that a candidate offset
+ * is the right one: a wrong offset decodes to offsets outside the ROM or to
+ * names that are not text, and it fails here.
+ */
+static bool altDecodeTable(struct altRom *rom, const uint8_t *seg, uint32_t segLen,
+		uint32_t tableOffset, struct altFile **outFiles, uint32_t *outNum)
+{
+	struct altFile *files;
+	const uint8_t *nameTable;
+	uint32_t nameTableOfs = 0;
+	uint32_t count = 0, named = 0, i;
+
+	if (tableOffset + 8 > segLen) {
+		return false;
+	}
+
+	/* How many offsets there are, and that they are ordered and inside the ROM. */
+	for (i = 1; (tableOffset + (i + 1) * 4) <= segLen; ++i) {
+		uint32_t ofs = be32at(seg + tableOffset + i * 4);
+		uint32_t prev = be32at(seg + tableOffset + (i - 1) * 4);
+
+		if (!ofs) {
+			break;
+		}
+
+		if (ofs >= rom->imageLen || (i > 1 && ofs < prev)) {
+			return false;
+		}
+
+		nameTableOfs = ofs;
+		++count;
+	}
+
+	/* The last entry is the name table, so it is not a file. */
+	if (count < ALT_MIN_FILES || !nameTableOfs) {
+		return false;
+	}
+
+	nameTable = rom->image + nameTableOfs;
+	files = calloc(count, sizeof(*files));
+
+	if (!files) {
+		die("could not allocate the file index for %s", rom->path);
+	}
+
+	for (i = 1; i < count; ++i) {
+		uint32_t ofs = be32at(seg + tableOffset + i * 4);
+		uint32_t next = be32at(seg + tableOffset + (i + 1) * 4);
+		size_t nameSlot = nameTableOfs + (size_t)i * 4;
+		uint32_t nameOfs;
+
+		if (nameSlot + 4 > rom->imageLen) {
+			break;
+		}
+
+		nameOfs = be32at(rom->image + nameSlot);
+
+		if (!nameOfs) {
+			break;
+		}
+
+		if (nameTableOfs + (size_t)nameOfs >= rom->imageLen) {
+			free(files);
+			return false;
+		}
+
+		if (!plainName((const char *)nameTable + nameOfs, rom->imageLen - nameTableOfs - nameOfs)) {
+			free(files);
+			return false;
+		}
+
+		files[named].name = (const char *)nameTable + nameOfs;
+		files[named].offset = ofs;
+		files[named].size = next > ofs ? next - ofs : 0;
+		++named;
+	}
+
+	if (named < ALT_MIN_FILES) {
+		free(files);
+		return false;
+	}
+
+	*outFiles = files;
+	*outNum = named;
+	return true;
+}
+
+/**
+ * Build the ROM's file index, once. The manifest may declare the two offsets;
+ * otherwise every known variant is tried, header match first, and the one
+ * whose table actually decodes wins. Guessing is not involved: a candidate is
+ * accepted only by decoding to an ordered table of plausibly named files.
+ */
+static bool altFileIndex(struct altRom *rom)
+{
+	int order[NUM_ROM_VARIANTS];
+	int n = 0, i;
+
+	if (rom->filesTried) {
+		return rom->files != NULL;
+	}
+
+	rom->filesTried = true;
+
+	if (!altImage(rom)) {
+		return false;
+	}
+
+	if (rom->dataOffset && rom->tableOffset) {
+		uint8_t *seg = NULL;
+		uint32_t segLen = 0;
+
+		if (!altInflate(rom, rom->dataOffset, &seg, &segLen)) {
+			die("romSource '%s': no 1173 data segment at the declared dataOffset 0x%x in %s",
+					rom->id, rom->dataOffset, rom->path);
+		}
+
+		if (!altDecodeTable(rom, seg, segLen, rom->tableOffset, &rom->files, &rom->numFiles)) {
+			free(seg);
+			die("romSource '%s': no file table at the declared tableOffset 0x%x in %s",
+					rom->id, rom->tableOffset, rom->path);
+		}
+
+		rom->dataSeg = seg;
+		rom->dataSegLen = segLen;
+		rom->variant = "declared";
+		return true;
+	}
+
+	/* Variants whose cartridge id matches the header go first. */
+	for (i = 0; i < NUM_ROM_VARIANTS; ++i) {
+		if (rom->imageLen > 0x3f && !memcmp(rom->image + 0x3b, g_RomVariants[i].cartId, 4)) {
+			order[n++] = i;
+		}
+	}
+
+	for (i = 0; i < NUM_ROM_VARIANTS; ++i) {
+		int k, seen = 0;
+
+		for (k = 0; k < n; ++k) {
+			if (order[k] == i) {
+				seen = 1;
+			}
+		}
+
+		if (!seen) {
+			order[n++] = i;
+		}
+	}
+
+	for (i = 0; i < n; ++i) {
+		const struct romVariant *rv = &g_RomVariants[order[i]];
+		uint8_t *seg = NULL;
+		uint32_t segLen = 0;
+
+		if (!altInflate(rom, rv->dataOffset, &seg, &segLen)) {
+			continue;
+		}
+
+		if (altDecodeTable(rom, seg, segLen, rv->tableOffset, &rom->files, &rom->numFiles)) {
+			rom->dataSeg = seg;
+			rom->dataSegLen = segLen;
+			rom->variant = rv->name;
+
+			/* Said out loud, because which variant's offsets fit is the one
+			 * thing about a byName resolution that was worked out rather than
+			 * declared - and for a modded ROM it is worth seeing. */
+			printf("romSource '%s': %s reads as %s, %u files\n",
+					rom->id, rom->path, rom->variant, rom->numFiles);
+			return true;
+		}
+
+		free(seg);
+	}
+
+	return false;
+}
+
+/**
+ * How long a file in a ROM really is, as against how much room it was given.
+ *
+ * The offset table says where the next file starts, not where this one ends,
+ * and a 1173 file is followed by slack up to that boundary. The deflate stream
+ * itself knows where it stops, so inflating it and counting the input consumed
+ * gives the true length: five header bytes plus the compressed data. This is
+ * what the Python writer emitted, by way of zlib's unused_data, and matching it
+ * is how a rebuilt table can be compared against the one that shipped.
+ *
+ * An uncompressed file, or one whose stream will not inflate, keeps the whole
+ * span - the same fallback the Python takes.
+ */
+static uint32_t altTrueSize(struct altRom *rom, uint32_t ofs, uint32_t span)
+{
+	z_stream zs;
+	uint8_t *scratch;
+	uint32_t declared;
+	int rc;
+
+	if (span < 6 || (size_t)ofs + span > rom->imageLen) {
+		return span;
+	}
+
+	if (rom->image[ofs] != 0x11 || rom->image[ofs + 1] != 0x73) {
+		return span;
+	}
+
+	declared = ((uint32_t)rom->image[ofs + 2] << 16) | ((uint32_t)rom->image[ofs + 3] << 8)
+			| (uint32_t)rom->image[ofs + 4];
+
+	if (!declared || declared > 0x800000) {
+		return span;
+	}
+
+	scratch = malloc(declared);
+
+	if (!scratch) {
+		return span;
+	}
+
+	memset(&zs, 0, sizeof(zs));
+	zs.next_in = rom->image + ofs + 5;
+	zs.avail_in = span - 5;
+	zs.next_out = scratch;
+	zs.avail_out = declared;
+
+	if (inflateInit2(&zs, -15) != Z_OK) {
+		free(scratch);
+		return span;
+	}
+
+	rc = inflate(&zs, Z_FINISH);
+
+	if (rc == Z_STREAM_END && zs.total_in + 5 <= span) {
+		span = (uint32_t)zs.total_in + 5;
+	}
+
+	inflateEnd(&zs);
+	free(scratch);
+	return span;
+}
+
+static bool altFileExtent(struct altRom *rom, const char *name, uint32_t *outOfs, uint32_t *outSize)
+{
+	uint32_t i;
+
+	if (!altFileIndex(rom)) {
+		return false;
+	}
+
+	for (i = 0; i < rom->numFiles; ++i) {
+		if (!strcmp(rom->files[i].name, name)) {
+			if (!rom->files[i].size) {
+				return false;
+			}
+
+			*outOfs = rom->files[i].offset;
+			*outSize = altTrueSize(rom, rom->files[i].offset, rom->files[i].size);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 /**
@@ -378,6 +821,7 @@ int main(int argc, char **argv)
 			const char *fn = o ? json_object_get_string(o, "filename") : NULL;
 			const char *fb = o ? json_object_get_string(o, "fallbackBehavior") : NULL;
 			JSON_Object *tx = o ? json_object_get_object(o, "textures") : NULL;
+			JSON_Object *fl = o ? json_object_get_object(o, "files") : NULL;
 			long v = 0;
 
 			if (!id || !fn) {
@@ -401,6 +845,20 @@ int main(int argc, char **argv)
 				roms[i].tlistOffset = numberOf(json_object_get_value(tx, "tlistOffset"), &v) ? (uint32_t)v : 0;
 				roms[i].tlistCount = numberOf(json_object_get_value(tx, "tlistCount"), &v) ? (uint32_t)v : 0;
 				roms[i].texdataOffset = numberOf(json_object_get_value(tx, "texdataOffset"), &v) ? (uint32_t)v : 0;
+			}
+
+			/* Optional, and only for a ROM whose segments are not where any
+			 * known variant keeps them. Both or neither: half of the pair
+			 * would send the detector looking for a table in the wrong
+			 * segment, which is worse than declaring nothing. */
+			if (fl) {
+				roms[i].dataOffset = numberOf(json_object_get_value(fl, "dataOffset"), &v) ? (uint32_t)v : 0;
+				roms[i].tableOffset = numberOf(json_object_get_value(fl, "tableOffset"), &v) ? (uint32_t)v : 0;
+
+				if (!roms[i].dataOffset != !roms[i].tableOffset) {
+					die("%s: romSource '%s': a files block needs both dataOffset and tableOffset",
+							manifestPath, id);
+				}
 			}
 
 			sources[i].id = roms[i].id;
@@ -570,8 +1028,30 @@ int main(int argc, char **argv)
 								manifestPath, name, v, rom->path);
 					}
 				} else if (!strcmp(lookup, "byName")) {
-					die("%s: '%s' is byName; resolving a name against a ROM's own file "
-							"table is not implemented yet", manifestPath, name);
+					struct altRom *rom = &roms[ents[i].altRom];
+					const char *alias = json_object_get_string(src, "alias");
+
+					/* The alias is the name in THAT ROM; our own name is the
+					 * name in the mod. They differ whenever a mod mounts a
+					 * file under a name of its own, which is most of the time. */
+					if (!alias) {
+						alias = name;
+					}
+
+					if (!altOpen(rom, romDirs, numRomDirs)) {
+						die("could not find '%s' for romSource '%s'; pass --rom-dir",
+								rom->filename, rom->id);
+					}
+
+					if (!altFileIndex(rom)) {
+						die("%s: '%s' is byName, but no file table could be read out of %s",
+								manifestPath, name, rom->path);
+					}
+
+					if (!altFileExtent(rom, alias, &ents[i].altOfs, &ents[i].altSize)) {
+						die("%s: '%s': no file named '%s' in %s (%s, %u files)",
+								manifestPath, name, alias, rom->path, rom->variant, rom->numFiles);
+					}
 				} else {
 					die("%s: '%s' has lookup '%s', which is not one of byOffset, byId, byName",
 							manifestPath, name, lookup);

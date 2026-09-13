@@ -5,12 +5,16 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -std=c99
 CFLAGS  += -Ivendor/parson
 
+# zlib: the data segment of a ROM a mod sources bytes from is 1173-compressed,
+# which is raw deflate behind a five byte header.
+LDLIBS  ?= -lz
+
 OBJS    = mkfiletable.o pdft_write.o vendor/parson/parson.o
 
 all: mkfiletable
 
 mkfiletable: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 # The test driver is not part of the tool; see pdft_test.py.
 pdft_reencode: pdft_reencode.o pdft_write.o

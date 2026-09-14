@@ -287,6 +287,7 @@ struct altFile {
 	const char *name;
 	uint32_t offset;
 	uint32_t size;
+	uint32_t id;   /* its slot in the ROM's file table, which IS its file id */
 };
 
 struct romVariant {
@@ -506,6 +507,7 @@ static bool altDecodeTable(struct altRom *rom, const uint8_t *seg, uint32_t segL
 		files[named].name = (const char *)nameTable + nameOfs;
 		files[named].offset = ofs;
 		files[named].size = next > ofs ? next - ofs : 0;
+		files[named].id = i;
 		++named;
 	}
 
@@ -696,6 +698,48 @@ static bool altFileExtent(struct altRom *rom, const char *name, uint32_t *outOfs
 	return false;
 }
 
+static void usage(FILE *out)
+{
+	fprintf(out,
+		"usage: mkfiletable <mod-name> [--workspace <dir>] [--output <dir>]\n"
+		"                   [--rom-dir <dir>]... [--base-rom <file>]\n"
+		"                   [--vanilla <files.json>] [--allow-orphans] [--help]\n"
+		"\n"
+		"Builds a mod's filetable.dat from its JSON manifest.\n"
+		"\n"
+		"  --workspace   where <mod-name>_filetable.json lives (default: .)\n"
+		"  --output      where to write filetable.dat (default: the workspace)\n"
+		"  --rom-dir     a directory to look for ROMs in; repeatable. Both the\n"
+		"                manifest's romSources and the base ROM are found here.\n"
+		"  --base-rom    the base game ROM, for resolving 'replaces' by name.\n"
+		"                Normally found in a --rom-dir without being named.\n"
+		"  --vanilla     a snapshotted {name: id} map, as an alternative to\n"
+		"                reading the base ROM. Wins over it when both are given.\n"
+		"  --allow-orphans  drop manifest rows whose 'replaces' resolves to\n"
+		"                nothing, instead of failing\n");
+}
+
+/**
+ * A file's id is its slot in the ROM's own file table. That is the same number
+ * a snapshotted name map carries, so a ROM can stand in for one.
+ */
+static long altFileId(struct altRom *rom, const char *name)
+{
+	uint32_t i;
+
+	if (!altFileIndex(rom)) {
+		return -1;
+	}
+
+	for (i = 0; i < rom->numFiles; ++i) {
+		if (!strcmp(rom->files[i].name, name)) {
+			return (long)rom->files[i].id;
+		}
+	}
+
+	return -1;
+}
+
 /**
  * Non-textures before textures; replacers before the rest; then by name, and
  * textures among themselves by texture id. Ids are handed out in this order,
@@ -725,6 +769,8 @@ static int cmpEntry(const void *a, const void *b)
 int main(int argc, char **argv)
 {
 	const char *modName = NULL, *workspace = ".", *output = NULL, *vanillaPath = NULL;
+	const char *baseRomName = NULL;
+	struct altRom baseRom;
 	const char *romDirs[8] = { 0 };
 	bool allowOrphans = false;
 	int numRomDirs = 0;
@@ -758,6 +804,11 @@ int main(int argc, char **argv)
 			allowOrphans = true;
 		} else if (!strcmp(argv[arg], "--vanilla") && arg + 1 < argc) {
 			vanillaPath = argv[++arg];
+		} else if (!strcmp(argv[arg], "--base-rom") && arg + 1 < argc) {
+			baseRomName = argv[++arg];
+		} else if (!strcmp(argv[arg], "--help") || !strcmp(argv[arg], "-h")) {
+			usage(stdout);
+			return 0;
 		} else if (!strcmp(argv[arg], "--rom-dir") && arg + 1 < argc) {
 			if (numRomDirs < (int)(sizeof(romDirs) / sizeof(romDirs[0])) - 2) {
 				romDirs[numRomDirs++] = argv[++arg];
@@ -774,8 +825,7 @@ int main(int argc, char **argv)
 	}
 
 	if (!modName) {
-		fprintf(stderr, "usage: mkfiletable <mod-name> [--workspace <dir>] [--output <dir>]\n"
-				"                   [--vanilla <files.json>] [--rom-dir <dir>]... [--allow-orphans]\n");
+		usage(stderr);
 		return 2;
 	}
 
@@ -878,6 +928,40 @@ int main(int argc, char **argv)
 		die("could not read the vanilla name map at %s", vanillaPath);
 	}
 
+	/* The base ROM carries its own file names, and a file's slot in that table
+	 * IS its file id - the same number a snapshotted map holds. So 'replaces'
+	 * can resolve against the ROM the player already has to supply, and this
+	 * tool stops needing a name map checked in somewhere else.
+	 *
+	 * --vanilla still wins when given, so nothing that passes it changes.
+	 * ntsc-final is tried first because that is what the port builds. */
+	memset(&baseRom, 0, sizeof(baseRom));
+
+	if (!vanilla.files) {
+		static const char *candidates[] = {
+			"pd.ntsc-final.z64", "pd.pal-final.z64", "pd.jpn-final.z64",
+			"pd.ntsc-beta.z64", "pd.pal-beta.z64",
+		};
+		size_t c;
+
+		snprintf(baseRom.id, sizeof(baseRom.id), "%s", "base");
+
+		if (baseRomName) {
+			snprintf(baseRom.filename, sizeof(baseRom.filename), "%s", baseRomName);
+			altOpen(&baseRom, romDirs, numRomDirs);
+		} else {
+			for (c = 0; c < sizeof(candidates) / sizeof(candidates[0]); ++c) {
+				memset(&baseRom, 0, sizeof(baseRom));
+				snprintf(baseRom.id, sizeof(baseRom.id), "%s", "base");
+				snprintf(baseRom.filename, sizeof(baseRom.filename), "%s", candidates[c]);
+
+				if (altOpen(&baseRom, romDirs, numRomDirs) && altFileIndex(&baseRom)) {
+					break;
+				}
+			}
+		}
+	}
+
 	files = json_object_get_array(manifest, "files");
 	n = files ? json_array_get_count(files) : 0;
 
@@ -954,25 +1038,32 @@ int main(int argc, char **argv)
 			ents[i].altRom = -1;
 
 			if (replaces) {
-				if (!vanilla.files) {
-					die("%s: '%s' replaces '%s', but no vanilla name map was given "
-							"(pass --vanilla <share/pd-<romid>/files.json>)", manifestPath, name, replaces);
-				}
+				const char *nameSource;
 
-				ents[i].fixedId = vanillaLookup(&vanilla, replaces);
+				if (vanilla.files) {
+					ents[i].fixedId = vanillaLookup(&vanilla, replaces);
+					nameSource = vanillaPath;
+				} else if (baseRom.fp) {
+					ents[i].fixedId = altFileId(&baseRom, replaces);
+					nameSource = baseRom.path;
+				} else {
+					die("%s: '%s' replaces '%s', and there is nothing to resolve it against. "
+							"Put the base ROM in a --rom-dir, name it with --base-rom, or pass "
+							"--vanilla <files.json>", manifestPath, name, replaces);
+				}
 
 				if (ents[i].fixedId < 0) {
 					if (!allowOrphans) {
-						die("%s: '%s' replaces '%s', which is not in the vanilla name map. "
+						die("%s: '%s' replaces '%s', which %s does not have. "
 								"Fix the manifest, or pass --allow-orphans to drop the entry",
-								manifestPath, name, replaces);
+								manifestPath, name, replaces, nameSource);
 					}
 
 					/* The Python dropped these silently under the same flag, which
 					 * is how a manifest row can do nothing for a year without
 					 * anyone noticing. Dropped here too, but said out loud. */
-					fprintf(stderr, "mkfiletable: dropping '%s': it replaces '%s', which no "
-							"vanilla name map has\n", name, replaces);
+					fprintf(stderr, "mkfiletable: dropping '%s': it replaces '%s', which %s "
+							"does not have\n", name, replaces, nameSource);
 					ents[i].drop = true;
 				}
 			}

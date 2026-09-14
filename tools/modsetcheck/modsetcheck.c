@@ -592,6 +592,19 @@ static void checkAltRefs(struct mod *m)
 
 /* -- main ------------------------------------------------------------------ */
 
+static void usage(FILE *out)
+{
+	fprintf(out,
+		"usage: modsetcheck <mod-dir> [<mod-dir> ...] [--base N] [--max N] [--help]\n"
+		"\n"
+		"Checks a set of mods the way they would mount, in the order given.\n"
+		"Reads each dir's filetable.dat and modconfig.txt - the artifacts that\n"
+		"actually ship, not the manifests they were built from.\n"
+		"\n"
+		"  --base N   the first texture slot the first mod is given\n"
+		"  --max N    the highest texture slot available to the set\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct mod *mods;
@@ -609,6 +622,9 @@ int main(int argc, char **argv)
 			base = (uint32_t)strtoul(argv[++i], NULL, 0);
 		} else if (!strcmp(argv[i], "--max") && i + 1 < argc) {
 			cap = (uint32_t)strtoul(argv[++i], NULL, 0);
+		} else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+			usage(stdout);
+			return 0;
 		} else if (argv[i][0] == '-') {
 			die("unknown argument %s", argv[i]);
 		} else if (n < MAX_MODS) {
@@ -627,12 +643,7 @@ int main(int argc, char **argv)
 	}
 
 	if (!n) {
-		fprintf(stderr,
-				"usage: modsetcheck <mod-dir> [<mod-dir> ...] [--base N] [--max N]\n"
-				"\n"
-				"Checks a set of mods the way they would mount, in the order given.\n"
-				"Reads each dir's filetable.dat and modconfig.txt - the artifacts that\n"
-				"actually ship, not the manifests they were built from.\n");
+		usage(stderr);
 		return 2;
 	}
 

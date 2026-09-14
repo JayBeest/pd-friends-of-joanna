@@ -4,7 +4,18 @@ This directory is the installable tool root for the Friends of Joanna fork. It
 contains modloader tools, build helpers, ROM and texture utilities, container
 support, binary inspection tools, and the older `pdtools` decomp helper suite.
 
-## In a Fojo Workspace
+## In a Fojo Checkout
+
+From a direct `pd-fojo` clone:
+
+```sh
+source ./activate.sh
+```
+
+That activates `tools/bin` and `tools/pdtools/bin`, sets `PD` to the current
+checkout, and sets `PDTOOLS` to `tools/pdtools`.
+
+## In the Monorepo Workspace
 
 From the monorepo root:
 
@@ -58,6 +69,9 @@ tools/
   activate.sh                   # copied/symlinked tool-root activation
   CREDITS.md                    # contributor and derived-work attribution
 ```
+
+The checkout-level `pd-fojo/activate.sh` script is the preferred entry point for
+a normal source clone. `tools/activate.sh` is for copied or symlinked tool roots.
 
 Existing port build helpers such as `mkfiletable`, `modsetcheck`, `pdsym`,
 `mktextures`, and `release.py` remain in this directory too.

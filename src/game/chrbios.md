@@ -152,7 +152,7 @@ Manufacturer: Carrington
 
 ### Profile
 
-First-generation Institute-produced combat replicant. Distilled from captured dataDyne unit designated 'Poplin'. Institute R&D was unable to allocate funding to pay dataDyne the astronomical royalties for its TruGinger(tm) technology, so an alternate likeness was chosen. Unit was placed in storage following its pilot deployment until the commencement of [redacted]
+First-generation Institute-produced combat replicant. Distilled from captured dataDyne unit designated 'Poplin'. Institute R&D was unable to allocate funding to pay dataDyne the astronomical royalties for its TruGinger(tm) technology, so an alternate likeness was chosen. Unit was placed in storage following its pilot deployment until the commencement of [redacted]. This skunkwork project's field data was the basis of further developments, hence the designation "Willow."
 
 ---
 

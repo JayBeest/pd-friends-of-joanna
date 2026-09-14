@@ -37,6 +37,7 @@ like something actually happened, and @JillyJane made the assets. Thank you.
 - **The all-solos switch is retired**, and `use_mod_files` and `force_vanilla` are deprecated. They are still parsed and ignored with a warning for this release so older configs keep loading, and **they are removed after 0.4.0** — delete the lines. Note that an unrecognised stage key aborts the whole config file, not just that block.
 - **Character bios moved to markdown** — `src/game/chrbios.md` is the source of truth; `tools/mkchrbios` compiles it into `training.c`, which should never be hand-edited inside the sentinels.
 - **`tools/wt`** gives each working session its own sparse worktree and sweeps the lock files that otherwise wedge the repository.
+- **A Lua 5.4 runtime is vendored but dormant** — groundwork for the scripting layer, linked into the binary ahead of the code that will use it so the intake can arrive in reviewable pieces. Nothing calls it in this release, and no mod can ship a script yet.
 
 ### Renamed / Identified Functions
 

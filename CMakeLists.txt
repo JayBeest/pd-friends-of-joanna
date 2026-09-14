@@ -194,6 +194,7 @@ include_directories("${CMAKE_SOURCE_DIR}/src/include")
 include_directories("${CMAKE_BINARY_DIR}/src/generated/${ROMID}")
 include_directories("${CMAKE_SOURCE_DIR}/src/lib/ultra/audio")
 include_directories("${CMAKE_SOURCE_DIR}/port/include")
+include_directories("${CMAKE_SOURCE_DIR}/port/lua")
 include_directories("${CMAKE_BINARY_DIR}/port/include")
 include_directories("${CMAKE_SOURCE_DIR}/port/third_party/imgui")
 include_directories("${CMAKE_SOURCE_DIR}/port/third_party/imgui/backends")
@@ -301,6 +302,11 @@ list(APPEND LIBS "${EXTRA_LIBRARIES}")
 
 file(GLOB_RECURSE SRC_PORT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/port/*.c")
 file(GLOB_RECURSE SRC_PORT_CXX CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/port/*.cpp")
+
+# The vendored Lua runtime is built as its own library (pd_lua, below) so its
+# sources are not compiled with the game's flags. SRC_PORT is GLOB_RECURSE, so
+# without this filter port/lua/*.c would land in the pd target.
+list(FILTER SRC_PORT EXCLUDE REGEX "/port/lua/")
 list(FILTER SRC_PORT_CXX EXCLUDE REGEX "/port/third_party/imgui/")
 list(APPEND SRC_PORT_CXX
   port/third_party/imgui/imgui.cpp
@@ -393,7 +399,16 @@ add_custom_target(pd_headers ALL DEPENDS ${JSON_HEADERS})
 set(BIN_NAME "pd${BIN_REGION}.${TARGET_ARCH}")
 add_executable(pd ${SRC})
 add_dependencies(pd pd_headers versioninfo)
-target_link_libraries(pd ${LIBS})
+# Vendored Lua 5.4 (MIT, lua.org/PUC-Rio), carried for the KAI script layer.
+# Nothing calls it yet - this builds and links it so the intake that does can
+# land on its own. lua.c / luac.c / onelua.c are the standalone interpreter and
+# compiler mains and would each bring a second main().
+file(GLOB SRC_LUA "${CMAKE_SOURCE_DIR}/port/lua/*.c")
+list(FILTER SRC_LUA EXCLUDE REGEX "/(lua|luac|onelua)\\.c$")
+add_library(pd_lua STATIC ${SRC_LUA})
+target_include_directories(pd_lua PUBLIC "${CMAKE_SOURCE_DIR}/port/lua")
+
+target_link_libraries(pd ${LIBS} pd_lua)
 set_target_properties(pd PROPERTIES OUTPUT_NAME "${BIN_NAME}")
 if(WIN32)
   set_target_properties(pd PROPERTIES WIN32_EXECUTABLE TRUE)

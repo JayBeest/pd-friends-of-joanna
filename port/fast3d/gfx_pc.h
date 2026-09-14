@@ -52,6 +52,10 @@ struct TextureCacheValue {
     uint32_t texture_id;
     uint8_t cms, cmt;
     bool linear_filter;
+    // Actual dimensions passed to upload_texture() for this entry -- the single
+    // source of truth for UV normalization, since more than one code path can
+    // decide what to upload (tile rect vs TMEM line size, ext_tex, etc.).
+    uint32_t width, height;
 
     std::list<struct TextureCacheMapIter>::iterator lru_location;
 };

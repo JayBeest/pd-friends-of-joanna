@@ -3,6 +3,7 @@
 #include "game/chraction.h"
 #include "game/chrai.h"
 #include "game/chraicommands.h"
+#include "game/chr.h" // chrFindByLiteralId for the bridge
 #include "bss.h"
 #include "lib/rng.h"
 #include "lib/ailist.h"
@@ -10,6 +11,7 @@
 #include "data.h"
 #include "types.h"
 #include "system.h" // sysLogPrintf/LOG_* for the ailist iteration cap
+#include "game/luaai.h" // struct luaaiselfinfo / luaaiplayerinfo for the bridge
 
 bool (*g_CommandPointers[])(void) = {
 	/*0x0000*/ aiGoToNext,
@@ -936,4 +938,259 @@ u32 chraiGetAilistLength(u8* list)
 	}
 
 	return (u32)(cmd - list);
+}
+
+// ---------------------------------------------------------------------------
+// The Lua bridge: read-only accessors over the ailist interpreter's state,
+// plus one synthetic-command entry point. Ported from pd-kai's chrai.c
+// (DabDavis's tree is not involved here). KAI phase 0 intake, second slice.
+//
+// NOTHING IN THIS TREE CALLS ANY OF IT YET. `luaai.c` is what will, and it
+// needs these to exist first - it references ten of them - so they land on
+// their own, inert, rather than arriving inside a 6.5k-line drop. The
+// dispatch hook that would route a chr through Lua (KAI's
+// `chraiExecuteBytecode` / `chraiExecute` split) is deliberately NOT here:
+// that is the change that alters behaviour, and it comes with the layer that
+// can service it.
+// ---------------------------------------------------------------------------
+
+s32 chraiLuaStep(u32 off)
+{
+	// Per-list length cache. Transpiler-emitted ctx:exec offsets are always in
+	// range, but a hand-written Lua override can pass an arbitrary integer; if we
+	// indexed ailist[off] with it we'd read the opcode (and the handler's
+	// operands) out of bounds. The length is computed once per list (the pointer
+	// is constant for the duration of a list's dispatch) so the hot path stays
+	// O(1). See docs/netplay-code-review-2026.md (CR-8).
+	static u8 *s_lenlist = NULL;
+	static u32 s_listlen = 0;
+	u8 *cmd;
+	s32 type;
+
+	if (g_Vars.ailist != s_lenlist) {
+		s_lenlist = g_Vars.ailist;
+		s_listlen = chraiGetAilistLength(g_Vars.ailist);
+	}
+	if (!g_Vars.ailist || off + 1 >= s_listlen) {
+		// Out of range: don't switch the list and report no-yield, which
+		// l_ctx_exec maps to LUAAI_TERMINAL so the offending list just ends.
+		return 0;
+	}
+
+	g_Vars.aioffset = off;
+	cmd = g_Vars.aioffset + g_Vars.ailist;
+	type = (cmd[0] << 8) + cmd[1];
+
+	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
+		return g_CommandPointers[type]() ? 1 : 0;
+	}
+
+	g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
+	return 0;
+}
+
+u32 chraiLuaGetOffset(void)
+{
+	return g_Vars.aioffset;
+}
+
+void *chraiLuaGetList(void)
+{
+	return g_Vars.ailist;
+}
+
+s32 chraiLuaGetListId(void *list)
+{
+	bool is_global;
+
+	if (list == NULL) {
+		return -1;
+	}
+
+	return chraiGetListIdByList((u8 *)list, &is_global);
+}
+
+s32 chraiLuaGetStageNum(void)
+{
+	return g_Vars.stagenum;
+}
+
+s32 chraiLuaOverridesAllowed(void)
+{
+	// KAI gates this on `g_NetMode != NETMODE_CLIENT`, because AI there is
+	// server-authoritative and a net client applying a Lua override would
+	// diverge from the host. This tree has no netplay - `g_NetMode` and
+	// `NETMODE_*` do not exist in it - so there is no client to refuse, and
+	// the guard comes back with netplay if it ever arrives.
+	return 1;
+}
+
+s32 chraiLuaGetChrNum(void)
+{
+	return g_Vars.chrdata ? (s32)g_Vars.chrdata->chrnum : -1;
+}
+
+s32 chraiLuaGetAlertness(void)
+{
+	return g_Vars.chrdata ? (s32)g_Vars.chrdata->alertness : 0;
+}
+
+// Fill a luaaiselfinfo snapshot from any chr (NULL -> valid=0). Shared by
+// ctx:self() (current chr) and pd.chr_info()/chr_pos()/etc (chr by chrnum).
+static void chraiLuaFillChrInfo(struct chrdata *chr, struct luaaiselfinfo *out)
+{
+	out->chrnum = -1;
+	out->valid = 0;
+	out->x = out->y = out->z = 0.0f;
+	out->room = -1;
+	out->health = out->maxhealth = out->shield = 0.0f;
+	out->alertness = 0;
+	out->targetchrnum = -1;
+	out->targetplayernum = -1;
+
+	if (chr == NULL) {
+		return;
+	}
+
+	out->valid = 1;
+	out->chrnum = (s32)chr->chrnum;
+	out->maxhealth = chr->maxdamage;
+	out->health = chr->maxdamage - chr->damage;
+	if (out->health < 0.0f) {
+		out->health = 0.0f;
+	}
+	out->shield = chrGetShield(chr);
+	out->alertness = (s32)chr->alertness;
+
+	if (chr->prop) {
+		out->x = chr->prop->pos.x;
+		out->y = chr->prop->pos.y;
+		out->z = chr->prop->pos.z;
+		out->room = (s32)chr->prop->rooms[0];
+	}
+
+	// Resolve the chr's current target. target == -1 means "the player indexed
+	// by p1p2" (see chrGetTargetProp). target >= 0 is a prop index that may be a
+	// player or another chr. Any other negative value (e.g. -2) means no target
+	// -- do NOT call chrGetTargetProp then, as it would index g_Vars.props with
+	// a negative offset.
+	if (chr->target == -1) {
+		out->targetplayernum = (s32)chr->p1p2;
+	} else if (chr->target >= 0) {
+		struct prop *tprop = g_Vars.props + chr->target;
+		if (tprop) {
+			if (tprop->type == PROPTYPE_PLAYER) {
+				s32 i;
+				for (i = 0; i < PLAYERCOUNT(); i++) {
+					if (g_Vars.players[i] && g_Vars.players[i]->prop == tprop) {
+						out->targetplayernum = i;
+						break;
+					}
+				}
+			} else if (tprop->chr) {
+				out->targetchrnum = (s32)tprop->chr->chrnum;
+			}
+		}
+	}
+}
+
+s32 chraiLuaGetSelf(struct luaaiselfinfo *out)
+{
+	if (out == NULL) {
+		return 0;
+	}
+	chraiLuaFillChrInfo(g_Vars.chrdata, out);
+	return out->valid;
+}
+
+s32 chraiLuaGetChrInfo(s32 chrnum, struct luaaiselfinfo *out)
+{
+	if (out == NULL) {
+		return 0;
+	}
+	chraiLuaFillChrInfo(chrnum < 0 ? NULL : chrFindByLiteralId(chrnum), out);
+	return out->valid;
+}
+
+s32 chraiLuaGetPlayerInfo(s32 playernum, struct luaaiplayerinfo *out)
+{
+	struct player *pl;
+	struct prop *prop;
+
+	if (out == NULL) {
+		return 0;
+	}
+
+	out->valid = 0;
+	out->x = out->y = out->z = 0.0f;
+	out->room = -1;
+
+	if (playernum < 0 || playernum >= MAX_PLAYERS) {
+		return 0;
+	}
+
+	pl = g_Vars.players[playernum];
+	if (pl == NULL || pl->prop == NULL) {
+		return 0;
+	}
+
+	prop = pl->prop;
+	out->valid = 1;
+	out->x = prop->pos.x;
+	out->y = prop->pos.y;
+	out->z = prop->pos.z;
+	out->room = (s32)prop->rooms[0];
+	return 1;
+}
+
+s32 chraiLuaGetPlayerCount(void)
+{
+	return (s32)PLAYERCOUNT();
+}
+
+s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
+{
+	// Zero-initialised so a handler that reads more operand bytes than the Lua
+	// caller supplied sees zeros rather than stack garbage.
+	u8 buf[64] = {0};
+	u8 *savelist = g_Vars.ailist;
+	u32 saveoff = g_Vars.aioffset;
+	s32 type = (s32)(opcode & 0xffff);
+	s32 ret = 0;
+	u32 i;
+
+	if (n > 60) {
+		n = 60;
+	}
+
+	buf[0] = (opcode >> 8) & 0xff;
+	buf[1] = opcode & 0xff;
+	for (i = 0; i < n; i++) {
+		buf[2 + i] = operands[i];
+	}
+
+	g_Vars.ailist = buf;
+	g_Vars.aioffset = 0;
+
+	// Terminate the single-command buffer with CMD_END. Branch-on-success
+	// handlers (aiFaceEntity/aiTryModifyAttack) call chraiGoToLabel, which scans
+	// forward for a CMD_LABEL/CMD_END. Without a terminator the zeroed tail reads
+	// as command type 0 (never a stop), so the scan walks off buf[] into stack
+	// garbage and faults. The jump target it computes is discarded anyway (we
+	// restore aioffset below), so a stop-at-buffer terminator is all we need.
+	{
+		u32 len = chraiGetCommandLength(buf, 0);
+		if (len + 1 < sizeof(buf)) {
+			buf[len] = (CMD_END >> 8) & 0xff;
+			buf[len + 1] = CMD_END & 0xff;
+		}
+	}
+
+	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
+		ret = g_CommandPointers[type]() ? 1 : 0;
+	}
+
+	g_Vars.ailist = savelist;
+	g_Vars.aioffset = saveoff;
+	return ret;
 }

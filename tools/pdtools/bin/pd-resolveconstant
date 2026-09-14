@@ -1,0 +1,23 @@
+#!/usr/bin/env php
+<?php
+
+$prefix = 'HEAD';
+
+// $PD = $_ENV['PD'];
+$PD = getenv('PD');
+
+$constants = file_get_contents("$PD/src/include/constants.h");
+
+$code = file_get_contents('php://stdin');
+
+$code = preg_replace_callback('/0x[0-9a-f]+/', function($match) use ($constants, $prefix) {
+	$hex = $match[0];
+
+	if (!preg_match("/#define ({$prefix}_\S+)\s+$hex\s/", $constants, $match)) {
+		return $match[0];
+	}
+
+	return $match[1];
+}, $code);
+
+echo $code;

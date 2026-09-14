@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""
+pdheadedit — CLI wrapper for the PD head model inspector/editor.
+
+Delegates to the C binary at lib/pdheadedit/pdheadedit.
+Run without args for usage.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+BIN_DIR = Path(__file__).resolve().parent
+LIB_DIR = BIN_DIR.parent / "lib" / "pdheadedit"
+BINARY = LIB_DIR / "pdheadedit"
+
+if not BINARY.exists():
+    print(f"error: pdheadedit binary not found at {BINARY}", file=sys.stderr)
+    print(f"Build it first:  cd {LIB_DIR} && make", file=sys.stderr)
+    sys.exit(1)
+
+sys.exit(subprocess.call([str(BINARY)] + sys.argv[1:]))

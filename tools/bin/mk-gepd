@@ -1,0 +1,4 @@
+#!/usr/bin/env python
+from leylinelib.gepd import make_gepdbundle
+
+make_gepdbundle()

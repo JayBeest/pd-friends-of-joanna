@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""
+pdheadtui — TUI for inspecting and editing PD head model files.
+
+Delegates to lib/pdheadtui/pdheadtui.py.
+Requires: pip install textual
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+BIN_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BIN_DIR.parent
+LIB_DIR = REPO_ROOT / "lib" / "pdheadtui"
+TUI_SCRIPT = LIB_DIR / "pdheadtui.py"
+VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python3"
+
+if not TUI_SCRIPT.exists():
+    print(f"error: pdheadtui.py not found at {TUI_SCRIPT}", file=sys.stderr)
+    sys.exit(1)
+
+# Re-exec under the repo venv if available and not already activated
+if VENV_PYTHON.exists() and "VIRTUAL_ENV" not in os.environ:
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(REPO_ROOT / ".venv")
+    env["PATH"] = str(REPO_ROOT / ".venv" / "bin") + ":" + env.get("PATH", "")
+    os.execve(str(VENV_PYTHON), [str(VENV_PYTHON), str(TUI_SCRIPT)] + sys.argv[1:], env)
+
+exec(open(TUI_SCRIPT).read())

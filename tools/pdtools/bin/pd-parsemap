@@ -1,0 +1,21 @@
+#!/usr/bin/env php
+<?php
+
+$map = file_get_contents($argv[1]);
+$data = ['functions' => [], 'variables' => []];
+
+preg_match_all('/^\s+0x00000000([0-9a-f]{8})\s+(\S+)$/m', $map, $matches, PREG_SET_ORDER);
+
+foreach ($matches as $match) {
+	$addr = hexdec($match[1]);
+	$name = $match[2];
+	$hex = sprintf('%08x', $addr);
+
+	if ($addr >= 0x80000000) {
+		$data['variables'][$hex] = $name;
+	} else {
+		$data['functions'][$hex] = $name;
+	}
+}
+
+echo json_encode($data);

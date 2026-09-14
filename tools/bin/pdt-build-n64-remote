@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Thin entry point for the remote N64 build orchestrator.
+
+Most logic lives in :mod:`pd_remote_build`; this just wires the
+package on the import path and delegates.
+"""
+import os
+import sys
+from pathlib import Path
+
+# Make the in-tree lib importable when run from a clone (no install required).
+_HERE = Path(__file__).resolve().parent
+_LIB = _HERE.parent / "lib" / "packages" / "python"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+
+from pd_remote_build import cli_main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())

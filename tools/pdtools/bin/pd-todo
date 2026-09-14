@@ -1,0 +1,180 @@
+#!/usr/bin/env php
+<?php
+
+$PD = getenv('PD');
+
+$app = new App;
+
+$app->addFilter('custom', function($asm) {
+	return false;
+});
+
+$app->addFilter('aicmdchild', function($asm, $function, $filename) {
+	global $PD;
+	$aicmds = file_get_contents("$PD/src/game/chr/chraicommands.c");
+
+	return strpos($aicmds, "jal\t$function") !== false && strpos($filename, 'chraicommands.c') === false;
+});
+
+$app->addFilter('attempted', function($asm, $function, $filename) {
+	$code = file_get_contents($filename);
+	return preg_match("%^//.* \*?$function\(.*\)$%m", $code) === 1;
+});
+
+$app->addFilter('callbacks', function($asm) {
+	return strpos($asm, "jalr\t\$") !== false;
+});
+
+$app->addFilter('data', function($asm) {
+	return strpos($asm, '%hi(var80') !== false ||
+		strpos($asm, '%hi(g_') !== false ||
+		preg_match('/lui.*?,0x80[0-9a-f]{2}$/m', $asm);
+});
+
+$app->addFilter('ifs', function($asm) {
+	return strpos($asm, "\n.L") !== false;
+});
+
+$app->addFilter('jals', function($asm) {
+	return strpos($asm, 'jal') !== false;
+});
+
+$app->addFilter('loops', function($asm) {
+	preg_match_all('/([0-9a-f]+):.*?\.L([0-9a-f]{8})$/m', $asm, $matches, PREG_SET_ORDER);
+
+	foreach ($matches as $match) {
+		if (hexdec($match[2]) < hexdec($match[1])) {
+			return true;
+		}
+	}
+
+	return false;
+});
+
+$app->addFilter('rodata', function($asm) {
+	return preg_match('/lui.*?,0x7f[0-9a-f]{2}$/m', $asm) ||
+		strpos($asm, '%hi(var7f') !== false;
+});
+
+$app->addFilter('render', function($asm) {
+	return strpos($asm, ",0xe700\n") !== false;
+});
+
+$app->addFilter('switches', function($asm) {
+	return strpos($asm, "jr\t\$t") !== false;
+});
+
+$app->addFilter('knownargs', function($asm, $funcname, $filename) {
+	$filename = str_replace('src/', 'src/include/', $filename);
+	$filename = str_replace('.c', '.h', $filename);
+	$header = file_get_contents($filename);
+
+	// If function is not defined in this header
+	if (strpos($header, " $funcname(") === false && strpos($header, " *$funcname(") === false) {
+		return false;
+	}
+
+	return strpos($header, "u32 $funcname(void)") === false;
+});
+
+$app->addFilter('structargs', function($asm, $funcname, $filename) {
+	$filename = str_replace('src/', 'src/include/', $filename);
+	$filename = str_replace('.c', '.h', $filename);
+	$header = file_get_contents($filename);
+	$lines = explode("\n", $header);
+
+	foreach ($lines as $line) {
+		if (strpos($line, " $funcname(") !== false
+			&& strpos($line, 'struct') !== false) {
+			return true;
+		}
+	}
+
+	return false;
+});
+
+$app->parseArgs($argv);
+$app->output();
+
+class App
+{
+
+	private $filters = [];
+	private $selected = [];
+	private $files = [];
+
+	public function addFilter($name, $callback)
+	{
+		$this->filters[$name] = $callback;
+	}
+
+	public function parseArgs($args)
+	{
+		foreach (array_slice($args, 1) as $arg) {
+			if (preg_match('/^--no-(.*?)$/', $arg, $match) && isset($this->filters[$match[1]])) {
+				$this->selected[$match[1]] = false;
+			} elseif (preg_match('/^--(.*?)$/', $arg, $match) && isset($this->filters[$match[1]])) {
+				$this->selected[$match[1]] = true;
+			} elseif (is_dir($arg)) {
+				$this->files = array_merge($this->files, explode("\n", trim(`find "$arg" -name '*.c'`)));
+			} else {
+				$this->files[] = $arg;
+			}
+		}
+	}
+
+	public function output()
+	{
+		global $PD;
+
+		if (!$this->files) {
+			$this->files = explode("\n", trim(`find "$PD/src" -name '*.c'`));
+		}
+
+		$items = [];
+
+		foreach ($this->files as $file) {
+			$items = array_merge($items, $this->processFile($file));
+		}
+
+		usort($items, function($a, $b) {
+			return 1 - ($a['len'] <=> $b['len']);
+		});
+
+		foreach ($items as $item) {
+			$filename = str_replace("$PD/", '', $item['file']);
+			printf("%s len %d (%s:%d)\n", $item['function'], $item['len'], $filename, $item['line']);
+		}
+	}
+
+	private function processFile($filename)
+	{
+		$items = [];
+		$code = file_get_contents($filename);
+
+		preg_match_all("/^GLOBAL_ASM\(\nglabel (\S+)\n(.*?)\n\);/sm", $code, $matches, PREG_SET_ORDER);
+
+		foreach ($matches as $match) {
+			foreach ($this->selected as $filter => $want) {
+				$result = $this->filters[$filter]($match[2], $match[1], $filename);
+
+				if ($result !== $want) {
+					continue 2;
+				}
+			}
+
+			$before = substr($code, 0, strpos($code, $match[0]));
+			$line = substr_count($before, "\n") + 1;
+
+			$items[] = [
+				'file'     => $filename,
+				'line'     => $line,
+				'function' => $match[1],
+				'len'      => substr_count($match[2], "\n") + 1,
+			];
+		}
+
+		return $items;
+	}
+
+}

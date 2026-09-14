@@ -1,0 +1,3456 @@
+#!/usr/bin/env python3
+
+import copy
+import json
+import logging
+import os
+import subprocess
+import sys
+import shutil
+from pathlib import Path
+import getopt
+import argparse
+import struct
+import re
+import zlib
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+logging.basicConfig(
+    # Default to WARNING so the host-env JSON dump and other diagnostic
+    # spew stays out of the way. Use `pdt -v` (or PDT_LOG_LEVEL=DEBUG) to
+    # turn it back on. All log records go to stderr so stdout remains a
+    # clean artifact for piping.
+    level=os.environ.get("PDT_LOG_LEVEL", "WARNING"),
+    handlers=[logging.StreamHandler(sys.stderr)]
+)
+
+parser = argparse.ArgumentParser(description='Perfect Dark Build tools CLI')
+
+parser.add_argument(
+    'command',
+    type=str,
+    default='bash',
+    help='pd buildtools command to run. Available commands: build-port, rom, gendat, genjson, merge-filetables, build-mod-filetable, snapshot-vanilla-names, tex2png, png2tex, tex-scan, text, build-n64-remote, psake, bash'
+)
+
+parser.add_argument('args', nargs=argparse.REMAINDER, help="Arguments for the command")
+
+parser.add_argument('--jobs', '-j', type=int, default=-1, help='number of jobs to run in parallel')
+
+parser.add_argument("--clean", action="store_true", help="clean build dir before building")
+
+parser.add_argument("--tasklist", type=str, default="make-perfectdark", help="comma-separated list of tasks to run")
+
+parser.add_argument("--properties", type=str, default="", help="comma-separated list of properties to set")
+
+# add --i386
+parser.add_argument("--i386", action="store_true", help="use i386 architecture")
+
+# add --debug
+parser.add_argument("--debug", action="store_true", help="use debug build")
+
+# verbosity
+parser.add_argument("-v", "--verbose", action="count", default=0,
+                    help="increase logging verbosity (-v: INFO, -vv: DEBUG)")
+parser.add_argument("-q", "--quiet", action="store_true",
+                    help="silence non-error logging (overrides -v)")
+
+def get_pdroot(path: Path = os.getcwd()) -> Path:
+    """
+    Given a detected os.getcwd(),
+    go updir until the 'root' of the pd project is found
+
+    """
+    path = Path(path).expanduser().resolve()
+
+    def is_pdroot(path: Path) -> bool:
+        """
+        Pretty sure that Makefile is forever in this project
+
+        this is a shameful, but good-enough check
+        to get reasonable confidence that we're in a perfect-dark project
+        """
+
+        return ((path / "makefile").exists() or (path / "Makefile").exists() or (path / "CMakeLists.txt").exists()) and\
+            (path / "stagetable.txt").exists() and\
+            (path / "checksums.ntsc-beta.md5").exists()
+    my_ex = Exception("Not in a pd project!")
+    if f'{path}' == "/":
+        raise my_ex
+    if is_pdroot(path):
+        return path
+    return get_pdroot(path / "..")
+
+parser.add_argument(
+    '--root',
+    type=str,
+    default=None,
+    help='root of Perfect Dark project'
+)
+
+argparseargs = parser.parse_args()
+
+# Apply verbosity overrides as soon as we know them.
+if argparseargs.quiet:
+    logging.getLogger().setLevel(logging.ERROR)
+elif argparseargs.verbose >= 2:
+    logging.getLogger().setLevel(logging.DEBUG)
+elif argparseargs.verbose >= 1:
+    logging.getLogger().setLevel(logging.INFO)
+
+# Save original cwd before PD chdir (used by commands that take workspace paths)
+_original_cwd = os.getcwd()
+
+# Capture our own on-disk location BEFORE any chdir below; used to resolve
+# checked-in artifacts like tools/share/pd-<rom-id>/files.json.
+_PDT_SCRIPT_PATH = Path(os.path.abspath(__file__)).resolve()
+TOOL_ROOT = _PDT_SCRIPT_PATH.parents[1]
+TOOL_BIN = TOOL_ROOT / "bin"
+TOOL_LIB_PYTHON = TOOL_ROOT / "lib" / "packages" / "python"
+TOOL_SHARE = TOOL_ROOT / "share"
+TOOL_PDTOOLS = TOOL_ROOT / "pdtools"
+
+# Check if --root appears in args (for when user puts it after the command)
+if not argparseargs.root and '--root' in argparseargs.args:
+    root_idx = argparseargs.args.index('--root')
+    if root_idx + 1 < len(argparseargs.args):
+        argparseargs.root = argparseargs.args[root_idx + 1]
+        # Remove --root and its value from args
+        argparseargs.args = argparseargs.args[:root_idx] + argparseargs.args[root_idx+2:]
+
+if argparseargs.properties:
+    properties = argparseargs.properties.split(',')
+    argparseargs.properties = {prop.split('=')[0]: prop.split('=')[1] for prop in properties}
+else: argparseargs.properties = {}
+
+if argparseargs.root:
+  # Resolve and normalize the path
+  resolved_root = Path(argparseargs.root).expanduser().resolve()
+  os.environ['PD'] = str(resolved_root)
+  argparseargs.root = str(resolved_root)
+  # Change to the project directory
+  os.chdir(resolved_root)
+elif 'PD' in os.environ:
+  argparseargs.root = os.environ['PD']
+  # Change to the project directory if PD is set
+  os.chdir(Path(os.environ['PD']).expanduser().resolve())
+else:
+  # Best-effort: try to find a PD project by walking upward. Failure is
+  # non-fatal — pure-python commands (build-n64-remote, fdiff, gendat,
+  # tex-scan) work fine without a PD root, and container-backed
+  # commands will raise a clearer error later via require_container_manager().
+  try:
+    detected_root = get_pdroot(os.getcwd())
+    os.environ['PD'] = str(detected_root)
+    argparseargs.root = str(detected_root)
+  except Exception:
+    logging.info("pdt: not inside a PD project; PD env var left unset.")
+
+if argparseargs.tasklist:
+  argparseargs.tasklist = [p for p in argparseargs.tasklist.split(",")]
+else: argparseargs.tasklist = []
+
+if argparseargs.jobs == -1:
+  argparseargs.jobs = os.cpu_count()
+
+
+get_env = os.environ.get
+
+get_opt = getopt.getopt
+
+IMAGE_NAME = "docker-caroll"
+HOSTNAME = "docker-caroll"
+
+def get_best_container_manager():
+  for d in ['podman', 'docker']:
+    if shutil.which(d):
+      return d
+
+container_manager = get_env("PD_CONTAINER_MANAGER", get_best_container_manager())
+
+# ---------------------------------------------------------------------------
+# Project-local config (.pdt.toml / .pdt.json)
+# ---------------------------------------------------------------------------
+#
+# If a config file is found by walking up from cwd (and falling back to
+# ~/.config/pdt.toml), its [env] table is merged into os.environ as
+# defaults. Real environment variables always win — the file just fills
+# in the gaps. This lets a project tree carry its own PD/PDTOOLS/
+# GEPD_TARGET/etc. without forcing every dev to maintain shell exports.
+
+_CONFIG_FILENAMES = (".pdt.toml", ".pdt.json")
+
+
+def _find_project_config(start=None):
+    """Walk up from ``start`` (default: cwd) looking for a config file.
+
+    Returns the first matching :class:`Path`, or ``None``.
+    """
+    p = Path(start or os.getcwd()).expanduser().resolve()
+    seen_root = False
+    while True:
+        for name in _CONFIG_FILENAMES:
+            cand = p / name
+            if cand.is_file():
+                return cand
+        if seen_root:
+            break
+        if p.parent == p:
+            seen_root = True
+        p = p.parent
+    user_cfg = Path("~/.config/pdt.toml").expanduser()
+    if user_cfg.is_file():
+        return user_cfg
+    return None
+
+
+def _load_config_file(path):
+    """Load and return the parsed config (dict), or ``{}`` on failure."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as e:
+        logging.warning("pdt: could not read config %s: %s", path, e)
+        return {}
+    suffix = Path(path).suffix.lower()
+    if suffix == ".json":
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            logging.warning("pdt: invalid JSON in %s: %s", path, e)
+            return {}
+    # default: TOML
+    try:
+        import tomllib  # py 3.11+
+    except ImportError:  # pragma: no cover - py3.10
+        try:
+            import tomli as tomllib  # type: ignore
+        except ImportError:
+            logging.warning(
+                "pdt: %s is TOML but neither tomllib nor tomli is available; "
+                "falling back to no-op. Use a .pdt.json file instead.", path)
+            return {}
+    try:
+        return tomllib.loads(text)
+    except Exception as e:  # tomllib.TOMLDecodeError
+        logging.warning("pdt: invalid TOML in %s: %s", path, e)
+        return {}
+
+
+def apply_project_config(start=None):
+    """Find and apply a project config file. Idempotent.
+
+    The ``[env]`` table (or top-level ``env`` key in JSON) is merged into
+    ``os.environ`` as a *fallback*: real env vars are never overwritten.
+    Returns the path that was loaded, or ``None``.
+    """
+    cfg_path = _find_project_config(start)
+    if cfg_path is None:
+        return None
+    cfg = _load_config_file(cfg_path)
+    env_table = cfg.get("env") if isinstance(cfg, dict) else None
+    if isinstance(env_table, dict):
+        applied = []
+        for k, v in env_table.items():
+            if not isinstance(k, str):
+                continue
+            if k in os.environ:
+                continue  # env wins
+            os.environ[k] = str(v)
+            applied.append(k)
+        if applied:
+            logging.info("pdt: loaded env defaults from %s: %s",
+                         cfg_path, ", ".join(sorted(applied)))
+    # Stash the parsed config so commands (e.g. build-n64-remote) can
+    # consume their own sections without re-reading the file.
+    global _project_config, _project_config_path
+    _project_config = cfg if isinstance(cfg, dict) else {}
+    _project_config_path = cfg_path
+    return cfg_path
+
+
+def get_project_config():
+    """Return the parsed project config dict (possibly empty)."""
+    return _project_config
+
+
+def get_project_config_path():
+    return _project_config_path
+
+
+_project_config = {}
+_project_config_path = None
+
+# Load the config before PDEnv (or any leylinelib import) has a chance
+# to look at os.environ. Search from the *original* cwd (i.e. where the
+# user invoked pdt), not from $PD — the user's worktree may differ from
+# $PD (e.g. /Users/.../perfect-dark-foj-n64 vs $PD=/Users/.../perfect-dark).
+apply_project_config(_original_cwd)
+
+
+# Container manager is only required for commands that actually run a
+# container (psake, build-port, bash). Pure-python commands like
+# build-n64-remote, fdiff, gendat, etc. do not need it. We warn at
+# import time and only hard-fail at the call site that needs it.
+if not container_manager:
+    # Re-resolve in case the config file set PD_CONTAINER_MANAGER.
+    container_manager = get_env("PD_CONTAINER_MANAGER", get_best_container_manager())
+if not container_manager:
+    logging.warning(
+        "No OCI container manager (podman/docker) found. "
+        "Container-backed commands (psake, build-port, bash) will fail; "
+        "pure-python commands will still work.")
+
+
+def require_container_manager():
+    if not container_manager:
+        raise RuntimeError(
+            "OCI container manager (podman or docker) not found on PATH. "
+            "Set PD_CONTAINER_MANAGER explicitly, or install one.")
+
+
+args = {}
+
+
+class PDEnv:
+    def __init__(self):
+        # Set up environment variables with defaults
+        self._pd_env_vars = {
+            "PD": "/app/perfect-dark",
+            'PIRACYCHECKS': get_env('PIRACYCHECKS', '1'),
+            'MATCHING': get_env('MATCHING', '1'),
+            'COMPILER': get_env('COMPILER', 'ido'),
+            'ROMID': get_env('ROMID', 'ntsc-final'),
+            'PDTOOLS': "/app/pdtools",
+            "MOUSEINJECTOR": "/app/MouseInjector",
+            'MINGWDIR': '/usr/bin',
+            'CC': '/usr/bin/i686-w64-mingw32-gcc-win32',
+            'WINDRES': "/usr/bin/i686-w64-mingw32-windres",
+            'GEPD_ZIP': "/app/gepd.zip",
+            'GEPD_ARCHIVE': "/app/gepd_archive",
+            'GEPD_TARGET': "/app/gepd_target",
+            "PD_MODDIR": "/app/pd_moddir",
+            'PDDEST': "/app/pddest",
+            "LEYLINELIB": "/app/leylinelib",
+            "SSH_AUTH_SOCK": '/ssh-agent',
+        }
+
+        # Allowlist for environment variables
+        self.allowedEnvironmentVars = [
+            "DEBUG", "DEBUG_BUILD", "SPEEDRUN_BUILD", "DECOMP_BUILD", "MI",
+            "PROFILING", "FOV", "GEMUZZLE", "PD_DECOMP", "GEPD_SAVE_DIR", "PDDEST"
+        ] + [
+            a for a in os.environ.keys()
+            if any(x in a for x in ["DEBUG", "PD", "PC", "GE", "DECOMP", "ENABLE", "USB", "BUILD"])
+            and a not in self._pd_env_vars
+        ]
+
+        # Paths used in the environment.
+        # PD_BASEDIR / PD_MODDIR / PDDEST must be set explicitly by the
+        # caller (or via --basedir / --moddir CLI args). No autodetection.
+        # Other paths fall back to in-tree defaults so that running pdt
+        # without a fully-configured shell still works for pure-python
+        # commands.
+        pd_basedir = get_env('PD_BASEDIR')
+        pd_moddir = get_env('PD_MODDIR', os.path.join(_original_cwd, 'mods'))
+        pddest = get_env('PDDEST', pd_basedir or os.path.join(_original_cwd, 'dist'))
+        pd_path = get_env('PD') or _original_cwd
+        pdtools_path = get_env('PDTOOLS') or str(TOOL_PDTOOLS)
+        for var, val in (("PD", get_env('PD')), ("PDTOOLS", get_env('PDTOOLS'))):
+            if not val:
+                logging.info("pdt: %s not set; using fallback (%s).",
+                             var, pd_path if var == "PD" else pdtools_path)
+        self._pd_env_paths = {
+            'PD': pd_path,
+            'PDTOOLS': pdtools_path,
+            'PD_MODDIR': pd_moddir,
+            'PDPSAKE': get_env('PDPSAKE', str(TOOL_ROOT / "scripts" / "psake")),
+            'PDPYTHON': get_env('PDPYTHON', str(TOOL_BIN)),
+            'PDSHARE': get_env('PDSHARE', str(TOOL_SHARE)),
+            'LEYLINELIB': get_env('LEYLINELIB', str(TOOL_LIB_PYTHON)),
+            'PDDEST': str(Path(pddest).expanduser().resolve()),
+        }
+
+        # Mounts for the container
+        self._pd_mounts = {
+            self._pd_env_paths['PD']: '/app/perfect-dark',
+            self._pd_env_paths['PDPSAKE']: "/app/psake",
+            self._pd_env_paths['PDPYTHON']: "/app/python",
+            self._pd_env_paths['PDSHARE']: "/app/share",
+            self._pd_env_paths['PDTOOLS']: "/app/pdtools",
+            self._pd_env_paths['LEYLINELIB']: "/usr/lib/python3/dist-packages",
+            self._pd_env_paths['PDDEST']: "/app/pddest",
+            self._pd_env_paths['PD_MODDIR']: "/app/pd_moddir",
+        }
+
+        # Add container-only variables
+        self._pd_env_vars.update({
+            'PD_HOST': self._pd_env_paths['PD'],
+            'PDSHARE': self.get_pd_mount('PDSHARE'),
+            'PDPYTHON': self.get_pd_mount('PDPYTHON'),
+            'PDDEST': self.get_pd_mount('PDDEST'),
+        })
+
+        # Add allowed environment variables from the host
+        for a in self.allowedEnvironmentVars:
+            v = get_env(a)
+            if v:
+                self._pd_env_vars[a] = v
+
+    def get_pd_mount(self, k):
+        return self._pd_mounts[self._pd_env_paths[k]]
+
+
+# PDEnv is constructed lazily because its setup pokes at every PD_*
+# env var. Pure-python commands (build-n64-remote, fdiff, gendat,
+# tex-scan, etc.) don't need any of that, and we don't want to make
+# them fail or noisy on a host that hasn't set up the full container
+# environment.
+_pd_env_singleton = None
+
+
+def get_pd_env():
+    global _pd_env_singleton, pd_env, pd_env_vars, pd_env_paths, pd_mounts
+    if _pd_env_singleton is None:
+        _pd_env_singleton = PDEnv()
+        pd_env = _pd_env_singleton
+        pd_env_vars = pd_env._pd_env_vars
+        pd_env_paths = pd_env._pd_env_paths
+        pd_mounts = pd_env._pd_mounts
+    return _pd_env_singleton
+
+
+# Stubs so existing globals stay importable; populated on first
+# get_pd_env() call.
+pd_env = None
+pd_env_vars = {}
+pd_env_paths = {}
+pd_mounts = {}
+
+
+def print_host_env():
+  logging.debug(f"pd command: {args.get('command')}")
+  logging.debug(f"pd args: {args}")
+  logging.debug("Environment variables")
+  logging.debug(json.dumps(pd_env_vars, indent=2))
+  logging.debug("Host system paths")
+  logging.debug(json.dumps(pd_env_paths, indent=2))
+  logging.debug("Container mounts")
+  logging.debug(json.dumps(pd_mounts, indent=2))
+
+
+def get_docker_caroll_root():
+    return TOOL_ROOT
+
+
+
+
+
+# ==== Commands ====
+# creates container
+
+def create_docker_caroll(**kwargs):
+  if not kwargs: kwargs = {}
+  kwargs['command'] = 'tail -f /dev/null'
+  kwargs['container_options'] = '-d'
+  kwargs['runner'] = subprocess.check_output
+  kwargs['current_user'] = False
+  container_id = container_cmd(**kwargs).decode('utf-8').strip()
+  logging.debug(f'container_id: {container_id}')
+  return container_id
+
+
+def container_exec(**kwargs):
+  if not kwargs: kwargs = {}
+  kwargs['container_cmd'] = 'exec'
+  kwargs['container_ref'] = kwargs['container_id']
+  container_cmd(**kwargs)
+
+
+def psake(**kwargs):
+  # run our bootstrap psake script
+  # and pass whatever parameters
+  # are provided on cli
+  logging.debug('psake: begin')
+  
+  cli_params = kwargs.get('params', {})
+  args_list = cli_params.get('args', [])
+  
+  # Parse remaining args for tasklist and properties
+  # This is needed because argparse.REMAINDER captures them into 'args'
+  tmp_parser = argparse.ArgumentParser()
+  tmp_parser.add_argument("--tasklist", type=str)
+  tmp_parser.add_argument("--properties", type=str)
+  
+  parsed, _ = tmp_parser.parse_known_args(args_list)
+  
+  if parsed.tasklist:
+      cli_params['tasklist'] = parsed.tasklist.split(',')
+      
+  if parsed.properties:
+      properties = parsed.properties.split(',')
+      cli_params['properties'] = {prop.split('=')[0]: prop.split('=')[1] for prop in properties}
+
+  # TODO: add tasklist and property params
+  # pass them to psake
+  # run-psake will parse it out from the json we send it
+  params = {k:v for k,v in cli_params.items() if k in [
+    'properties',
+    'command',
+    'tasklist'
+  ]}
+  import base64
+  base_psake_command = f"run-psake " +\
+    base64.b64encode( f"{json.dumps(dict(params))}".encode("utf8") ).decode("utf8")
+  command = base_psake_command
+  kwargs['command'] = base_psake_command
+  # need to run docker_caroll w/ mounts
+  # mount our psake scripts
+  container_exec(**kwargs)
+
+
+# all the other dockery things will eventually run this
+def container_cmd(image_name = IMAGE_NAME,
+    hostname = HOSTNAME,
+    command = "",
+    container_options = "-it",
+    container_cmd = 'run',
+    current_user = True,
+    params=None,
+    mounts=None,
+    # image or container ID
+    container_ref = IMAGE_NAME,
+    runner = subprocess.check_call,
+    stdout_null = False,
+    **kwargs):
+    if not params: params = {}
+
+    if isinstance(params, list):
+      params_tail=[p for p in params if p]
+
+    if isinstance(params, dict):
+      params_tail = params.get('params', [])
+    #logging.debug(f'container_cmd: {locals()}')
+    if not mounts: mounts = {}
+    def working_directory(command):
+      # default: /app
+      workdir = "/app"
+      # if command startswith make and get_pdroot passes, use pdroot
+      pd_root = None
+      r = None
+      try: pd_root = get_pdroot(os.getcwd())
+      except: pass
+
+      def _root_to_mount(w):
+        try:
+          return pd_mounts[str(w)]
+        except:
+          logging.debug(KeyError(f"map current project directory to container directory for workdir: {w}. Please make check these envrionment variables: {pd_env_paths}"))
+          return "/app/perfect-dark"
+
+
+      if "run-psake" in command:
+        r = "/app/psake"
+
+      if not r and pd_root:
+        r = _root_to_mount(pd_root)
+
+      r = f"-w {r}"
+      return r
+    def environment_variable(k, v):
+      return f"--env {k}={v}"
+    def bind_mount(source, dest):
+        '''
+        parameter source: path-ish on host system. Converted to pathlib and resolve is used.
+        parameter destination: path-ish on OCI image. Converted to string and used as-is.
+        rvalue: --mount parameter for `podman|docker run`
+        '''
+        return "--mount type=bind,source=" + str(Path(source).resolve()) + ",target=" + str( dest )
+
+    # legacy mode: mount project dir in to /pd and just run it
+    # this is what happens when running make inside a perfect-dark / MouseInjector project
+    #
+    # ensamble mode: mount directories per config and load command
+    # everything else. Useful for running psake cycles.
+    #
+
+
+    rmstr = '--rm'
+    userstr = ''
+    if container_manager == 'docker':
+      userstr = "--user " +  str(os.getuid()) + ":" + str(os.getgid())
+    homestr = f"-v {get_env('HOME')}:/home/u1"
+    hosttr = f'-h={hostname}'
+    nethost = ""
+    if container_cmd != 'run':
+      rmstr = ''
+      hosttr = ''
+      homestr = ''
+      nethost = ''
+    if not current_user:
+      userstr = ''
+
+    container_command = " ".join([
+      f"{container_manager} {container_cmd}",
+      # pretty hostname for terminal
+      nethost,
+      hosttr,
+      *[
+        # everything else can be passed as-is
+        *[environment_variable(k,v) for k,v in pd_env_vars.items()]
+      ],
+      # # sensible permissions for generated artifacts
+      userstr,
+      *[bind_mount(k, v) for k,v in pd_mounts.items() if container_cmd == 'run'],
+      homestr,
+      working_directory(command),
+      # interactive terminal
+      container_options,
+      # clean up after ourselves
+      rmstr,
+      # image name
+      container_ref,
+      # command to run. usually bash or some invocation of make
+      command,
+      *[p for p in params_tail]
+    ])
+    if stdout_null:
+      container_command = f"{container_command} > /dev/null"
+    retval = runner(container_command, shell=True)
+    logging.debug(container_command)
+    return retval
+
+
+def add_current_user(**kwargs):
+  if not kwargs: kwargs = {}
+  # runtime user creation sh snippet
+  # pasted and modified from https://unix.stackexchange.com/questions/524268/running-git-or-ssh-client-in-docker-as-user-no-user-exists-for-uid
+  kwargs['command'] = "sh -c " + '"' + "[ -x /usr/sbin/useradd ] && useradd -m -u $(id -u) u1 -s /bin/sh || adduser -D -u $(id -u) u1 -s /bin/bash;" + '"'
+  kwargs['current_user'] = False
+  kwargs['stdout_null'] = True
+  container_exec(**kwargs)
+
+
+def pd_cli(
+        image_name=IMAGE_NAME,
+        hostname=HOSTNAME,
+        command="bash",
+        params=None,
+        **kwargs):
+    '''
+    cli dispatcher
+    '''
+    require_container_manager()
+    get_pd_env()
+    # start container
+    container_id = create_docker_caroll(**params)
+
+    cmds = {
+      # this points to a function
+      'psake' : psake,
+      # points to container creation function
+      'container': create_docker_caroll
+    }
+    # slurp up all locals into params dictionary for later use
+    params = copy.deepcopy(locals())
+    # retval of docker command, if any
+    r = None
+    # exceptions during docker command
+    cmd_e = None
+    try:
+      add_current_user(**params)
+
+      params['runner'] = subprocess.call
+      try:
+        if command not in cmds:
+          return container_exec(**params)
+        # TODO: exec 'invoke-command-as-user' script
+        r = cmds[command](**params)
+      except Exception as ex:
+        cmd_e = ex
+        logging.error(ex)
+    except:
+      pass
+    finally:
+      logging.debug("cleaning up container...")
+      subprocess.Popen([
+        get_best_container_manager(),
+        'container',
+        'stop',
+        container_id
+      ],
+      stderr=subprocess.DEVNULL,
+      stdout=subprocess.DEVNULL)
+    return r
+
+
+def cmd_rom(**kwargs):
+    # Dispatches to leylinelib.pdrom (a Ryan Dwyer-derived ROM driver:
+    # filetable parsing, segment offsets, file extraction, and the
+    # pathlib-style ROMPath wrapper). The tex-scan path below feeds
+    # the same ROM-parsing primitives. See
+    # lib/packages/python/leylinelib/{pd_rom_driver,rompath,pdrom}.py
+    # for the full attribution.
+    # Intercept tex-scan subcommand before delegating to leylinelib
+    get_pd_env()
+    args = kwargs.get('args', [])
+    if args and args[0] == 'tex-scan':
+        kwargs_sub = dict(kwargs)
+        kwargs_sub['args'] = args[1:]
+        cmd_rom_tex_scan(**kwargs_sub)
+        return
+
+    # Add lib/packages/python to sys.path.
+    lib_path = TOOL_LIB_PYTHON
+    
+    # Add to sys.path so we can import leylinelib
+    if str(lib_path) not in sys.path:
+        sys.path.insert(0, str(lib_path))
+    
+    # Set up environment variables for leylinelib
+    # Use host paths where available
+    if 'PD' not in os.environ:
+        os.environ['PD'] = pd_env._pd_env_paths['PD']
+    if 'PDSHARE' not in os.environ:
+        os.environ['PDSHARE'] = pd_env._pd_env_paths['PDSHARE']
+    if 'PDPYTHON' not in os.environ:
+        os.environ['PDPYTHON'] = pd_env._pd_env_paths['PDPYTHON']
+    
+    # Use values from pd_env_vars for others, providing defaults if missing
+    # These are required by leylinelib/core.py assertions
+    for key in ['GEPD_TARGET', 'GEPD_ZIP', 'GEPD_ARCHIVE', 'MOUSEINJECTOR']:
+        if key not in os.environ:
+            if key in pd_env._pd_env_vars:
+                os.environ[key] = pd_env._pd_env_vars[key]
+            else:
+                # Provide dummy values for things that might not be critical for ROM tools
+                os.environ[key] = "/tmp/dummy"
+
+    try:
+        from leylinelib import pdrom
+    except ImportError as e:
+        print(f"Error importing pdrom: {e}")
+        print(f"sys.path: {sys.path}")
+        sys.exit(1)
+
+    # Prepare arguments for pdrom
+    # kwargs['args'] contains the list of arguments passed after 'rom'
+    # We need to set sys.argv so argparse in pdrom works correctly
+    sys.argv = ["pd rom"] + kwargs.get('args', [])
+    
+    # Run pdrom main
+    try:
+        ret = pdrom.main()
+        sys.exit(ret)
+    except SystemExit as e:
+        sys.exit(e.code)
+    except Exception as e:
+        print(f"Error running pdrom: {e}")
+        sys.exit(1)
+
+
+def cmd_build_port(**kwargs):
+  get_pd_env()
+  # build-port runs cmake on the host; it never enters a container, so it
+  # does not need an OCI runtime. Build directory is overridable via
+  # PD_BUILD_DIR so a second host (eg a Linux VM sharing the checkout) can
+  # keep its own cache instead of fighting over ./build.
+  build_dir = get_env("PD_BUILD_DIR", "build")
+  # Check for flags in args (if passed after command)
+  args = kwargs.get('args', [])
+  if '--clean' in args:
+      kwargs['clean'] = True
+  if '--i386' in args:
+      kwargs['i386'] = True
+  if '--debug' in args:
+      kwargs['debug'] = True
+
+  # recreate cmake unix makefiles
+  # rm -rf build
+  # cmake -Bbuild . -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug
+  if kwargs.get("clean"):
+    print("Cleaning build directory...")
+    cleancmd = ['rm', '-rf', build_dir]
+    subprocess.check_call(cleancmd, cwd=Path(kwargs['root']).expanduser().resolve())
+    makefilescmd = [
+      'cmake',
+      f'-B{build_dir}',
+      '.',
+      '-GUnix Makefiles',
+    ]
+    if kwargs.get("i386"):
+      makefilescmd.append('-DCMAKE_C_FLAGS=-m32')
+      makefilescmd.append('-DCMAKE_CXX_FLAGS=-m32')
+    if kwargs.get("debug"):
+      makefilescmd.append('-DCMAKE_BUILD_TYPE=Debug')
+      makefilescmd.append('-DDPRINT=1')
+      makefilescmd.append('-DLIVE_STREAM=1')
+    subprocess.check_call(makefilescmd, cwd=Path(kwargs['root']).expanduser().resolve())
+  # rebuild command
+  # cmake --build build --target pd -j24 --clean-first
+  buildcmd = [
+    'cmake',
+    '--build',
+    build_dir,
+    '--target',
+    'pd',
+    f'-j{kwargs["jobs"]}',
+  ]
+  subprocess.check_call(buildcmd, cwd=Path(kwargs['root']).expanduser().resolve())
+
+# ============================================================
+# Perfect Dark texture pipeline (tex2png / png2tex / tex-scan)
+# ============================================================
+#
+# Attribution
+# -----------
+# The texture decoder/encoder below (TEXFORMAT_* constants, channel
+# unswizzling, CI/zlib palette handling, the per-format encode/decode
+# branches in `_encode_non_ci`, `_encode_ci`, `tex_encode`, and the
+# pixel-format unpackers feeding `cmd_tex2png`) is a Python port of
+# Raphael "Raf" Pinochet's PNG <-> N64 texture loader work in the
+# perfect-dark PC port (`port/src/contrib/png_loader.*` and the
+# `texture_*` helpers it grew out of). Format tables, swizzle order,
+# and the CI compression layout match Raf's reference code.
+#
+# The ROM-side texture extractor below (`_locate_tlist_by_signature`,
+# `_extract_textures_from_rom`, and the `cmd_rom_tex_scan` driver) is
+# derived from Ryan Dwyer's standalone texture-extractor scripts
+# distributed with the perfect-dark decomp tooling. The textureslist
+# walking strategy, the copyright-anchored seek heuristic, and the
+# texdata-offset table for the supported ROM variants come straight
+# from Ryan's scripts; the format-signature fallback (used to recover
+# heavily-modded ROMs like GE-X / AIO where the copyright anchor is
+# missing) is the only material change we layered on top.
+#
+# Bugs in this port are ours, not theirs.
+
+# Tex2Png Logic
+TEXFORMAT_RGBA32     = 0x00
+TEXFORMAT_RGBA16     = 0x01
+TEXFORMAT_RGB24      = 0x02
+TEXFORMAT_RGB15      = 0x03
+TEXFORMAT_IA16       = 0x04
+TEXFORMAT_IA8        = 0x05
+TEXFORMAT_IA4        = 0x06
+TEXFORMAT_I8         = 0x07
+TEXFORMAT_I4         = 0x08
+TEXFORMAT_RGBA16_CI8 = 0x09
+TEXFORMAT_RGBA16_CI4 = 0x0a
+TEXFORMAT_IA16_CI8   = 0x0b
+TEXFORMAT_IA16_CI4   = 0x0c
+
+TEXCOMPMETHOD_UNCOMPRESSED0      = 0
+TEXCOMPMETHOD_UNCOMPRESSED1      = 1
+TEXCOMPMETHOD_HUFFMAN            = 2
+TEXCOMPMETHOD_HUFFMANPERHCHANNEL = 3
+TEXCOMPMETHOD_RLE                = 4
+TEXCOMPMETHOD_LOOKUP             = 5
+TEXCOMPMETHOD_HUFFMANLOOKUP      = 6
+TEXCOMPMETHOD_RLELOOKUP          = 7
+TEXCOMPMETHOD_HUFFMANBLUR        = 8
+TEXCOMPMETHOD_RLEBLUR            = 9
+
+g_TexFormatNumChannels = [4, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 1]
+g_TexFormatHas1BitAlpha = [0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+g_TexFormatChannelSizes = [256, 32, 256, 32, 256, 16, 8, 256, 16, 256, 16, 256, 16]
+g_TexFormatBitsPerPixel = [32, 16, 24, 15, 16, 8, 4, 8, 4, 16, 16, 16, 16]
+
+class BitStream:
+    def __init__(self, data):
+        self.data = data
+        self.pos = 0
+        self.accum_value = 0
+        self.accum_num_bits = 0
+
+    def read_bits(self, want_num_bits):
+        while self.accum_num_bits < want_num_bits:
+            if self.pos >= len(self.data):
+                self.accum_value = (self.accum_value << 8)
+            else:
+                self.accum_value = (self.accum_value << 8) | self.data[self.pos]
+                self.pos += 1
+            self.accum_num_bits += 8
+        
+        self.accum_num_bits -= want_num_bits
+        return (self.accum_value >> self.accum_num_bits) & ((1 << want_num_bits) - 1)
+
+    def align_byte(self):
+        if self.accum_num_bits == 0:
+            self.pos += 1
+        else:
+            self.accum_num_bits = 0
+
+def rzip_inflate(bs):
+    bs.accum_num_bits = 0
+    data = bs.data
+    pos = bs.pos
+    
+    if pos >= len(data):
+        return b""
+
+    if pos + 1 < len(data) and data[pos] == 0x11 and data[pos+1] == 0x72:
+        offset = 2
+        dobj = zlib.decompressobj(wbits=-15)
+        output = dobj.decompress(data[pos+offset:])
+        consumed = offset + len(data[pos+offset:]) - len(dobj.unused_data)
+        bs.pos += consumed
+        return output
+    elif pos + 1 < len(data) and data[pos] == 0x11 and data[pos+1] == 0x73:
+        offset = 5
+        dobj = zlib.decompressobj(wbits=-15)
+        output = dobj.decompress(data[pos+offset:])
+        consumed = offset + len(data[pos+offset:]) - len(dobj.unused_data)
+        bs.pos += consumed
+        return output
+    else:
+        print(f"Warning: Unknown rzip header {data[pos]:02x} {data[pos+1]:02x} at offset {pos}")
+        return b""
+
+def tex_inflate_huffman(bs, num_iterations, chan_size):
+    frequencies = []
+    for _ in range(chan_size):
+        frequencies.append(bs.read_bits(8))
+    
+    nodes = [[-1, -1] for _ in range(2048)]
+    
+    while True:
+        min_freq1 = 9999
+        min_freq2 = 9999
+        min_index1 = -1
+        min_index2 = -1
+        
+        for i in range(chan_size):
+            if frequencies[i] < min_freq1:
+                if min_freq2 < min_freq1:
+                    min_freq1 = frequencies[i]
+                    min_index1 = i
+                else:
+                    min_freq2 = frequencies[i]
+                    min_index2 = i
+            elif frequencies[i] < min_freq2:
+                min_freq2 = frequencies[i]
+                min_index2 = i
+        
+        if min_freq1 == 9999 or min_freq2 == 9999:
+            break
+            
+        sum_freq = frequencies[min_index1] + frequencies[min_index2]
+        if sum_freq == 0:
+            sum_freq = 1
+            
+        frequencies[min_index1] = 9999
+        frequencies[min_index2] = 9999
+        
+        root_index = -1
+        
+        if nodes[min_index1][0] < 0 and nodes[min_index1][1] < 0:
+            nodes[min_index1][0] = min_index1 + 10000
+            root_index = min_index1
+            frequencies[min_index1] = sum_freq
+            
+            if nodes[min_index2][0] < 0 and nodes[min_index2][1] < 0:
+                nodes[min_index1][1] = min_index2 + 10000
+            else:
+                nodes[min_index1][1] = min_index2
+        elif nodes[min_index2][0] < 0 and nodes[min_index2][1] < 0:
+            nodes[min_index2][0] = min_index2 + 10000
+            root_index = min_index2
+            frequencies[min_index2] = sum_freq
+            
+            if nodes[min_index1][0] < 0 and nodes[min_index1][1] < 0:
+                nodes[min_index2][1] = min_index1 + 10000
+            else:
+                nodes[min_index2][1] = min_index1
+        else:
+            root_index = 0
+            while nodes[root_index][0] >= 0 or nodes[root_index][1] >= 0 or frequencies[root_index] < 9999:
+                root_index += 1
+            
+            frequencies[root_index] = sum_freq
+            nodes[root_index][0] = min_index1
+            nodes[root_index][1] = min_index2
+
+    dst = []
+    for _ in range(num_iterations):
+        index_or_value = root_index
+        while index_or_value < 10000:
+            bit = bs.read_bits(1)
+            index_or_value = nodes[index_or_value][bit]
+        dst.append(index_or_value - 10000)
+    
+    return dst
+
+def tex_inflate_rle(bs, blocks_total):
+    bt_field_size = bs.read_bits(3)
+    rl_field_size = bs.read_bits(3)
+    block_size = bs.read_bits(4)
+    
+    cost = bt_field_size + rl_field_size + block_size + 1
+    fudge = 0
+    while cost > 0:
+        cost = cost - block_size - 1
+        fudge += 1
+        
+    dst = []
+    blocks_done = 0
+    
+    while blocks_done < blocks_total:
+        if bs.read_bits(1) == 0:
+            dst.append(bs.read_bits(block_size))
+            blocks_done += 1
+        else:
+            start_block_index = blocks_done - bs.read_bits(bt_field_size) - 1
+            run_num_blocks = bs.read_bits(rl_field_size) + fudge
+            
+            for i in range(run_num_blocks):
+                dst.append(dst[start_block_index + i])
+                blocks_done += 1
+            
+            dst.append(bs.read_bits(block_size))
+            blocks_done += 1
+            
+    return dst
+
+def tex_build_lookup(bs, bpp):
+    num_colours = bs.read_bits(11)
+    lookup = []
+    for _ in range(num_colours):
+        lookup.append(bs.read_bits(bpp))
+    return lookup
+
+def tex_read_uncompressed(bs, width, height, format):
+    dst = bytearray()
+    for y in range(height):
+        row_data = bytearray()
+        if format == TEXFORMAT_RGBA32:
+            for x in range(width):
+                val = (bs.read_bits(16) << 16) | bs.read_bits(16)
+                row_data.extend(val.to_bytes(4, 'big'))
+        elif format == TEXFORMAT_RGB24:
+            for x in range(width):
+                val = (bs.read_bits(24) << 8) | 0xff
+                row_data.extend(val.to_bytes(4, 'big'))
+        elif format in [TEXFORMAT_RGBA16, TEXFORMAT_IA16]:
+            for x in range(width):
+                val = bs.read_bits(16)
+                row_data.extend(val.to_bytes(2, 'big'))
+        elif format == TEXFORMAT_RGB15:
+            for x in range(width):
+                val = (bs.read_bits(15) << 1) | 1
+                row_data.extend(val.to_bytes(2, 'big'))
+        elif format in [TEXFORMAT_IA8, TEXFORMAT_I8]:
+            for x in range(width):
+                val = bs.read_bits(8)
+                row_data.append(val)
+        elif format in [TEXFORMAT_IA4, TEXFORMAT_I4]:
+            for x in range(0, width, 2):
+                val = bs.read_bits(8)
+                row_data.append(val)
+        dst.extend(row_data)
+    return dst
+
+def tex_blur(pixels, width, height, method, chan_size):
+    for y in range(height):
+        for x in range(width):
+            idx = y * width + x
+            cur = pixels[idx] + chan_size * 2
+            left = pixels[y * width + x - 1] if x > 0 else 0
+            above = pixels[(y - 1) * width + x] if y > 0 else 0
+            aboveleft = pixels[(y - 1) * width + x - 1] if x > 0 and y > 0 else 0
+            
+            val = 0
+            if method == 0:
+                val = (cur + left) % chan_size
+            elif method == 1:
+                val = (cur + above) % chan_size
+            elif method == 2:
+                val = (cur + aboveleft) % chan_size
+            elif method == 3:
+                val = (cur + (left + above - aboveleft)) % chan_size
+            elif method == 4:
+                val = (cur + ((above - aboveleft) // 2 + left)) % chan_size
+            elif method == 5:
+                val = (cur + ((left - aboveleft) // 2 + above)) % chan_size
+            elif method == 6:
+                val = (cur + ((left + above) // 2)) % chan_size
+            
+            pixels[idx] = val
+
+def tex_inflate_lookup_from_buffer(src, width, height, lookup, num_colours, format):
+    dst = bytearray()
+    if format in [TEXFORMAT_IA4, TEXFORMAT_I4]:
+        for y in range(height):
+            for x in range(0, width, 2):
+                idx1 = src[y * width + x]
+                val1 = lookup[idx1]
+                byte_val = (val1 << 4)
+                
+                if x + 1 < width:
+                    idx2 = src[y * width + x + 1]
+                    val2 = lookup[idx2]
+                    byte_val |= val2
+                
+                dst.append(byte_val)
+    else:
+        for y in range(height):
+            for x in range(width):
+                idx = src[y * width + x]
+                val = lookup[idx]
+                
+                if format == TEXFORMAT_RGBA32:
+                    dst.extend(val.to_bytes(4, 'big'))
+                elif format == TEXFORMAT_RGB24:
+                    dst.extend((val << 8 | 0xff).to_bytes(4, 'big'))
+                elif format in [TEXFORMAT_RGBA16, TEXFORMAT_IA16]:
+                    dst.extend(val.to_bytes(2, 'big'))
+                elif format == TEXFORMAT_RGB15:
+                    dst.extend(((val << 1) | 1).to_bytes(2, 'big'))
+                elif format in [TEXFORMAT_IA8, TEXFORMAT_I8]:
+                    dst.append(val)
+                    
+    return dst
+
+def tex_channels_to_pixels(src, width, height, format):
+    dst = bytearray()
+    mult = width * height
+    pos = 0
+    
+    if format == TEXFORMAT_RGBA32:
+        for y in range(height):
+            for x in range(width):
+                r = src[pos]
+                g = src[pos + mult]
+                b = src[pos + mult * 2]
+                a = src[pos + mult * 3]
+                dst.extend([r, g, b, a])
+                pos += 1
+    elif format == TEXFORMAT_RGB24:
+        for y in range(height):
+            for x in range(width):
+                r = src[pos]
+                g = src[pos + mult]
+                b = src[pos + mult * 2]
+                dst.extend([r, g, b, 0xff])
+                pos += 1
+    elif format == TEXFORMAT_RGBA16:
+        for y in range(height):
+            for x in range(width):
+                r = src[pos]
+                g = src[pos + mult]
+                b = src[pos + mult * 2]
+                a = src[pos + mult * 3]
+                val = (r << 11) | (g << 6) | (b << 1) | a
+                dst.extend(val.to_bytes(2, 'big'))
+                pos += 1
+    elif format == TEXFORMAT_IA16:
+        for y in range(height):
+            for x in range(width):
+                i = src[pos]
+                a = src[pos + mult]
+                val = (i << 8) | a
+                dst.extend(val.to_bytes(2, 'big'))
+                pos += 1
+    elif format == TEXFORMAT_RGB15:
+        for y in range(height):
+            for x in range(width):
+                r = src[pos]
+                g = src[pos + mult]
+                b = src[pos + mult * 2]
+                val = (r << 11) | (g << 6) | (b << 1) | 1
+                dst.extend(val.to_bytes(2, 'big'))
+                pos += 1
+    elif format == TEXFORMAT_IA8:
+        for y in range(height):
+            for x in range(width):
+                i = src[pos]
+                a = src[pos + mult]
+                val = (i << 4) | a
+                dst.append(val)
+                pos += 1
+    elif format == TEXFORMAT_I8:
+        for y in range(height):
+            for x in range(width):
+                dst.append(src[pos])
+                pos += 1
+    elif format == TEXFORMAT_IA4:
+        for y in range(height):
+            for x in range(0, width, 2):
+                i1 = src[pos]
+                a1 = src[pos + mult * 3]
+                i2 = src[pos + 1]
+                a2 = src[pos + mult * 3 + 1]
+                val = (i1 << 5) | (a1 << 4) | (i2 << 1) | a2
+                dst.append(val)
+                pos += 2
+            if width & 1:
+                pos -= 1
+    elif format == TEXFORMAT_I4:
+        for y in range(height):
+            for x in range(0, width, 2):
+                i1 = src[pos]
+                i2 = src[pos + 1]
+                val = (i1 << 4) | i2
+                dst.append(val)
+                pos += 2
+            if width & 1:
+                pos -= 1
+    return dst
+
+def convert_to_image(data, width, height, format, palette=None):
+    if Image is None:
+        raise ImportError("PIL/Pillow is not installed. Cannot convert to image.")
+
+    if format == TEXFORMAT_RGBA32:
+        img = Image.frombytes('RGBA', (width, height), bytes(data))
+    elif format == TEXFORMAT_RGB24:
+        img = Image.frombytes('RGBA', (width, height), bytes(data))
+    elif format == TEXFORMAT_RGBA16:
+        img = Image.new('RGBA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                idx = (y * width + x) * 2
+                val = (data[idx] << 8) | data[idx+1]
+                r = ((val >> 11) & 0x1f) * 255 // 31
+                g = ((val >> 6) & 0x1f) * 255 // 31
+                b = ((val >> 1) & 0x1f) * 255 // 31
+                a = 255 if (val & 1) else 0
+                pixels[x, y] = (r, g, b, a)
+    elif format == TEXFORMAT_IA16:
+        img = Image.new('LA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                idx = (y * width + x) * 2
+                val = (data[idx] << 8) | data[idx+1]
+                i = (val >> 8) & 0xff
+                a = val & 0xff
+                pixels[x, y] = (i, a)
+    elif format == TEXFORMAT_RGB15:
+        img = Image.new('RGB', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                idx = (y * width + x) * 2
+                val = (data[idx] << 8) | data[idx+1]
+                r = ((val >> 11) & 0x1f) * 255 // 31
+                g = ((val >> 6) & 0x1f) * 255 // 31
+                b = ((val >> 1) & 0x1f) * 255 // 31
+                pixels[x, y] = (r, g, b)
+    elif format == TEXFORMAT_IA8:
+        img = Image.new('LA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                val = data[y * width + x]
+                i = ((val >> 4) & 0xf) * 17
+                a = (val & 0xf) * 17
+                pixels[x, y] = (i, a)
+    elif format == TEXFORMAT_I8:
+        img = Image.frombytes('L', (width, height), bytes(data))
+    elif format == TEXFORMAT_IA4:
+        img = Image.new('LA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                byte_idx = (y * width + x) // 2
+                byte_val = data[byte_idx]
+                if x % 2 == 0:
+                    val = (byte_val >> 4) & 0xf
+                else:
+                    val = byte_val & 0xf
+                i = ((val >> 1) & 0x7) * 255 // 7
+                a = 255 if (val & 1) else 0
+                pixels[x, y] = (i, a)
+    elif format == TEXFORMAT_I4:
+        img = Image.new('L', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                byte_idx = (y * width + x) // 2
+                byte_val = data[byte_idx]
+                if x % 2 == 0:
+                    val = (byte_val >> 4) & 0xf
+                else:
+                    val = byte_val & 0xf
+                pixels[x, y] = val * 17
+    elif format in [TEXFORMAT_RGBA16_CI8, TEXFORMAT_IA16_CI8]:
+        img = Image.new('RGBA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                idx = data[y * width + x]
+                if idx < len(palette):
+                    col = palette[idx]
+                    if format == TEXFORMAT_RGBA16_CI8:
+                        r = ((col >> 11) & 0x1f) * 255 // 31
+                        g = ((col >> 6) & 0x1f) * 255 // 31
+                        b = ((col >> 1) & 0x1f) * 255 // 31
+                        a = 255 if (col & 1) else 0
+                        pixels[x, y] = (r, g, b, a)
+                    else:
+                        i = (col >> 8) & 0xff
+                        a = col & 0xff
+                        pixels[x, y] = (i, i, i, a)
+    elif format in [TEXFORMAT_RGBA16_CI4, TEXFORMAT_IA16_CI4]:
+        img = Image.new('RGBA', (width, height))
+        pixels = img.load()
+        for y in range(height):
+            for x in range(width):
+                byte_idx = (y * width + x) // 2
+                byte_val = data[byte_idx]
+                if x % 2 == 0:
+                    idx = (byte_val >> 4) & 0xf
+                else:
+                    idx = byte_val & 0xf
+                
+                if idx < len(palette):
+                    col = palette[idx]
+                    if format == TEXFORMAT_RGBA16_CI4:
+                        r = ((col >> 11) & 0x1f) * 255 // 31
+                        g = ((col >> 6) & 0x1f) * 255 // 31
+                        b = ((col >> 1) & 0x1f) * 255 // 31
+                        a = 255 if (col & 1) else 0
+                        pixels[x, y] = (r, g, b, a)
+                    else:
+                        i = (col >> 8) & 0xff
+                        a = col & 0xff
+                        pixels[x, y] = (i, i, i, a)
+    return img
+
+def tex_decode(data):
+    """Decode a PD texture binary blob to a PIL Image."""
+    if Image is None:
+        raise ImportError("PIL/Pillow is not installed.")
+    if not data:
+        raise ValueError("Empty texture data")
+
+    byte0 = data[0]
+    is_zlib = (byte0 & 0x40) >> 6
+
+    bs = BitStream(data)
+    bs.pos = 1
+
+    if is_zlib:
+        format = bs.read_bits(8)
+        num_colours = bs.read_bits(8) + 1
+        palette = []
+        for _ in range(num_colours):
+            palette.append(bs.read_bits(16))
+        width = bs.read_bits(8)
+        height = bs.read_bits(8)
+        decompressed_data = rzip_inflate(bs)
+        return convert_to_image(decompressed_data, width, height, format, palette)
+
+    else:
+        format = bs.read_bits(4)
+        width = bs.read_bits(8)
+        height = bs.read_bits(8)
+        comp_method = bs.read_bits(4)
+
+        dst = bytearray()
+
+        if comp_method in [TEXCOMPMETHOD_UNCOMPRESSED0, TEXCOMPMETHOD_UNCOMPRESSED1]:
+            dst = tex_read_uncompressed(bs, width, height, format)
+        elif comp_method == TEXCOMPMETHOD_HUFFMAN:
+            scratch = tex_inflate_huffman(bs, g_TexFormatNumChannels[format] * width * height, g_TexFormatChannelSizes[format])
+            if g_TexFormatHas1BitAlpha[format]:
+                for _ in range(width * height):
+                    scratch.append(bs.read_bits(1))
+            dst = tex_channels_to_pixels(scratch, width, height, format)
+        elif comp_method == TEXCOMPMETHOD_HUFFMANPERHCHANNEL:
+            scratch = []
+            for j in range(g_TexFormatNumChannels[format]):
+                scratch.extend(tex_inflate_huffman(bs, width * height, g_TexFormatChannelSizes[format]))
+            if g_TexFormatHas1BitAlpha[format]:
+                for _ in range(width * height):
+                    scratch.append(bs.read_bits(1))
+            dst = tex_channels_to_pixels(scratch, width, height, format)
+        elif comp_method == TEXCOMPMETHOD_RLE:
+            scratch = tex_inflate_rle(bs, g_TexFormatNumChannels[format] * width * height)
+            if g_TexFormatHas1BitAlpha[format]:
+                for _ in range(width * height):
+                    scratch.append(bs.read_bits(1))
+            dst = tex_channels_to_pixels(scratch, width, height, format)
+        elif comp_method == TEXCOMPMETHOD_LOOKUP:
+            lookup = tex_build_lookup(bs, g_TexFormatBitsPerPixel[format])
+            num_colours = len(lookup)
+            bits_per_colour = 0
+            temp = num_colours - 1
+            while temp > 0:
+                temp >>= 1
+                bits_per_colour += 1
+
+            if format in [TEXFORMAT_IA4, TEXFORMAT_I4]:
+                dst = bytearray()
+                for y in range(height):
+                    for x in range(0, width, 2):
+                        idx1 = bs.read_bits(bits_per_colour)
+                        val1 = lookup[idx1]
+                        byte_val = (val1 << 4)
+                        if x + 1 < width:
+                            idx2 = bs.read_bits(bits_per_colour)
+                            val2 = lookup[idx2]
+                            byte_val |= val2
+                        dst.append(byte_val)
+            else:
+                dst = bytearray()
+                for y in range(height):
+                    for x in range(width):
+                        idx = bs.read_bits(bits_per_colour)
+                        val = lookup[idx]
+                        if format == TEXFORMAT_RGBA32:
+                            dst.extend(val.to_bytes(4, 'big'))
+                        elif format == TEXFORMAT_RGB24:
+                            dst.extend((val << 8 | 0xff).to_bytes(4, 'big'))
+                        elif format in [TEXFORMAT_RGBA16, TEXFORMAT_IA16]:
+                            dst.extend(val.to_bytes(2, 'big'))
+                        elif format == TEXFORMAT_RGB15:
+                            dst.extend(((val << 1) | 1).to_bytes(2, 'big'))
+                        elif format in [TEXFORMAT_IA8, TEXFORMAT_I8]:
+                            dst.append(val)
+        elif comp_method == TEXCOMPMETHOD_HUFFMANLOOKUP:
+            lookup = tex_build_lookup(bs, g_TexFormatBitsPerPixel[format])
+            num_colours = len(lookup)
+            scratch = tex_inflate_huffman(bs, width * height, num_colours)
+            dst = tex_inflate_lookup_from_buffer(scratch, width, height, lookup, num_colours, format)
+        elif comp_method == TEXCOMPMETHOD_RLELOOKUP:
+            lookup = tex_build_lookup(bs, g_TexFormatBitsPerPixel[format])
+            num_colours = len(lookup)
+            scratch = tex_inflate_rle(bs, width * height)
+            dst = tex_inflate_lookup_from_buffer(scratch, width, height, lookup, num_colours, format)
+        elif comp_method == TEXCOMPMETHOD_HUFFMANBLUR:
+            value = bs.read_bits(3)
+            scratch = tex_inflate_huffman(bs, g_TexFormatNumChannels[format] * width * height, g_TexFormatChannelSizes[format])
+            tex_blur(scratch, width, g_TexFormatNumChannels[format] * height, value, g_TexFormatChannelSizes[format])
+            if g_TexFormatHas1BitAlpha[format]:
+                for _ in range(width * height):
+                    scratch.append(bs.read_bits(1))
+            dst = tex_channels_to_pixels(scratch, width, height, format)
+        elif comp_method == TEXCOMPMETHOD_RLEBLUR:
+            value = bs.read_bits(3)
+            scratch = tex_inflate_rle(bs, g_TexFormatNumChannels[format] * width * height)
+            tex_blur(scratch, width, g_TexFormatNumChannels[format] * height, value, g_TexFormatChannelSizes[format])
+            if g_TexFormatHas1BitAlpha[format]:
+                for _ in range(width * height):
+                    scratch.append(bs.read_bits(1))
+            dst = tex_channels_to_pixels(scratch, width, height, format)
+
+        return convert_to_image(dst, width, height, format)
+
+def cmd_tex2png(**kwargs):
+    args = kwargs.get('args', [])
+    if len(args) < 2:
+        print("Usage: pdt tex2png <input> <output>")
+        sys.exit(1)
+
+    input_file = args[0]
+    output_file = args[1]
+
+    with open(input_file, "rb") as f:
+        data = f.read()
+
+    if not data:
+        print("Empty file")
+        return
+
+    img = tex_decode(data)
+    img.save(output_file)
+
+# ============================================================
+# Texture encoding: PNG → binary .bin
+# (Port of Raf's PNG ↔ N64 texture loader; see attribution at top
+# of the texture pipeline section.)
+# ============================================================
+
+import collections as _collections
+
+_FORMAT_NAMES = {
+    'rgba32':   TEXFORMAT_RGBA32,
+    'rgba16':   TEXFORMAT_RGBA16,
+    'rgb24':    TEXFORMAT_RGB24,
+    'ia16':     TEXFORMAT_IA16,
+    'ia8':      TEXFORMAT_IA8,
+    'ia4':      TEXFORMAT_IA4,
+    'i8':       TEXFORMAT_I8,
+    'i4':       TEXFORMAT_I4,
+    'ci8':      TEXFORMAT_RGBA16_CI8,
+    'rgba_ci8': TEXFORMAT_RGBA16_CI8,
+    'ci4':      TEXFORMAT_RGBA16_CI4,
+    'rgba_ci4': TEXFORMAT_RGBA16_CI4,
+    'ia_ci8':   TEXFORMAT_IA16_CI8,
+    'ia_ci4':   TEXFORMAT_IA16_CI4,
+}
+
+def _auto_detect_format(img):
+    mode = img.mode
+    if mode in ('RGBA', 'RGB', 'RGBa'):
+        return TEXFORMAT_RGBA16
+    elif mode in ('LA', 'La'):
+        return TEXFORMAT_IA8
+    elif mode == 'L':
+        return TEXFORMAT_I8
+    elif mode == 'P':
+        n = len(set(img.getdata()))
+        return TEXFORMAT_RGBA16_CI4 if n <= 16 else TEXFORMAT_RGBA16_CI8
+    else:
+        return TEXFORMAT_RGBA16
+
+def _px_to_rgba16(r, g, b, a):
+    r5 = r * 31 // 255
+    g5 = g * 31 // 255
+    b5 = b * 31 // 255
+    a1 = 1 if a > 127 else 0
+    return (r5 << 11) | (g5 << 6) | (b5 << 1) | a1
+
+def _encode_non_ci(img, fmt):
+    """Return raw pixel bytes for non-CI (non-zlib) texture formats."""
+    w, h = img.size
+    dst = bytearray()
+    if fmt == TEXFORMAT_RGBA32:
+        src = img.convert('RGBA').tobytes()
+        dst.extend(src)
+    elif fmt == TEXFORMAT_RGBA16:
+        pix = img.convert('RGBA').load()
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = pix[x, y]
+                dst.extend(_px_to_rgba16(r, g, b, a).to_bytes(2, 'big'))
+    elif fmt == TEXFORMAT_RGB24:
+        pix = img.convert('RGB').load()
+        for y in range(h):
+            for x in range(w):
+                r, g, b = pix[x, y]
+                dst.extend([r, g, b])
+    elif fmt == TEXFORMAT_IA16:
+        pix = img.convert('LA').load()
+        for y in range(h):
+            for x in range(w):
+                i, a = pix[x, y]
+                dst.extend([i, a])
+    elif fmt == TEXFORMAT_IA8:
+        pix = img.convert('LA').load()
+        for y in range(h):
+            for x in range(w):
+                i_val, a_val = pix[x, y]
+                i4 = min(15, round(i_val * 15 / 255))
+                a4 = min(15, round(a_val * 15 / 255))
+                dst.append((i4 << 4) | a4)
+    elif fmt == TEXFORMAT_IA4:
+        pix = img.convert('LA').load()
+        for y in range(h):
+            for x in range(0, w, 2):
+                i1, a1 = pix[x, y]
+                i1_3 = min(7, round(i1 * 7 / 255))
+                a1_1 = 1 if a1 > 127 else 0
+                v1 = (i1_3 << 1) | a1_1
+                if x + 1 < w:
+                    i2, a2 = pix[x + 1, y]
+                    i2_3 = min(7, round(i2 * 7 / 255))
+                    a2_1 = 1 if a2 > 127 else 0
+                    v2 = (i2_3 << 1) | a2_1
+                else:
+                    v2 = 0
+                dst.append((v1 << 4) | v2)
+    elif fmt == TEXFORMAT_I8:
+        dst.extend(img.convert('L').tobytes())
+    elif fmt == TEXFORMAT_I4:
+        pix = img.convert('L').load()
+        for y in range(h):
+            for x in range(0, w, 2):
+                v1 = min(15, pix[x, y] * 15 // 255)
+                v2 = min(15, pix[x + 1, y] * 15 // 255) if x + 1 < w else 0
+                dst.append((v1 << 4) | v2)
+    else:
+        raise ValueError(f"Unsupported non-CI format: {fmt}")
+    return bytes(dst)
+
+def _encode_ci(img, fmt, lod_count=1):
+    """Return encoded bytes for CI (zlib-compressed paletted) texture formats."""
+    w, h = img.size
+    is_ia = fmt in (TEXFORMAT_IA16_CI8, TEXFORMAT_IA16_CI4)
+    is_ci4 = fmt in (TEXFORMAT_RGBA16_CI4, TEXFORMAT_IA16_CI4)
+    max_colors = 16 if is_ci4 else 256
+
+    if is_ia:
+        # Build IA16 palette: find unique (I, A) pairs
+        pix = img.convert('LA').load()
+        seen, order = {}, []
+        for y in range(h):
+            for x in range(w):
+                key = pix[x, y]
+                if key not in seen:
+                    seen[key] = len(order)
+                    order.append(key)
+        if len(order) > max_colors:
+            # Truncate and remap to nearest
+            order = order[:max_colors]
+            seen_lim = {k: i for i, k in enumerate(order)}
+            def _closest_ia(i_val, a_val):
+                best, bd = 0, float('inf')
+                for j, (pi, pa) in enumerate(order):
+                    d = (pi - i_val) ** 2 + (pa - a_val) ** 2
+                    if d < bd:
+                        bd, best = d, j
+                return best
+            indices_flat = [seen_lim.get((pix[x, y][0], pix[x, y][1]),
+                            _closest_ia(*pix[x, y])) for y in range(h) for x in range(w)]
+        else:
+            indices_flat = [seen[pix[x, y]] for y in range(h) for x in range(w)]
+        palette_u16 = [(i_val << 8) | a_val for (i_val, a_val) in order]
+    else:
+        # Build RGBA16 palette via quantisation of RGB; preserve alpha per palette entry
+        img_rgba = img.convert('RGBA')
+        r_ch, g_ch, b_ch, a_ch = img_rgba.split()
+        img_rgb = Image.merge('RGB', (r_ch, g_ch, b_ch))
+        img_p = img_rgb.quantize(colors=max_colors, dither=0)
+        pal_flat = img_p.getpalette()
+        indices_flat = list(img_p.getdata())
+        alpha_flat = list(a_ch.getdata())
+        n_colors = min(max_colors, max(indices_flat) + 1)
+        pal_alphas = _collections.defaultdict(list)
+        for idx, alpha in zip(indices_flat, alpha_flat):
+            pal_alphas[idx].append(alpha)
+        palette_u16 = []
+        for c in range(n_colors):
+            r = pal_flat[c * 3]; g = pal_flat[c * 3 + 1]; b = pal_flat[c * 3 + 2]
+            alphas = pal_alphas.get(c, [255])
+            a = max(set(alphas), key=alphas.count)
+            palette_u16.append(_px_to_rgba16(r, g, b, a))
+
+    num_colors = len(palette_u16)
+
+    # Build index byte array
+    if is_ci4:
+        idx_bytes = bytearray()
+        for y in range(h):
+            for x in range(0, w, 2):
+                hi = indices_flat[y * w + x] & 0xf
+                lo = (indices_flat[y * w + x + 1] & 0xf) if x + 1 < w else 0
+                idx_bytes.append((hi << 4) | lo)
+    else:
+        idx_bytes = bytearray(min(255, v) for v in indices_flat)
+
+    # Compress with rzip (raw deflate, 0x1172 header)
+    cobj = zlib.compressobj(level=9, wbits=-15)
+    compressed = cobj.compress(bytes(idx_bytes)) + cobj.flush()
+    rzip_data = b'\x11\x72' + compressed
+
+    out = bytearray()
+    out.append(0x40 | (lod_count & 0x3f))   # byte0: zlib flag | lod_count
+    out.append(fmt & 0xff)                    # byte1: format
+    out.append((num_colors - 1) & 0xff)      # byte2: num_colors - 1
+    for val in palette_u16:
+        out.extend(val.to_bytes(2, 'big'))    # palette
+    out.append(w & 0xff)                      # lod0 width
+    out.append(h & 0xff)                      # lod0 height
+    out.extend(rzip_data)
+    return bytes(out)
+
+def tex_encode(img, fmt, lod_count=1):
+    """Encode a PIL Image to a PD texture binary blob (.bin)."""
+    w, h = img.size
+    if w > 255 or h > 255:
+        raise ValueError(f"Image too large for PD texture: {w}x{h} (max 255x255)")
+    if fmt in (TEXFORMAT_RGBA16_CI8, TEXFORMAT_RGBA16_CI4,
+               TEXFORMAT_IA16_CI8, TEXFORMAT_IA16_CI4):
+        return _encode_ci(img, fmt, lod_count)
+    else:
+        pixel_data = _encode_non_ci(img, fmt)
+        # Pack 4-bit format | 8-bit width | 8-bit height | 4-bit comp_method into 3 bytes
+        val24 = (fmt << 20) | (w << 12) | (h << 4) | TEXCOMPMETHOD_UNCOMPRESSED0
+        return bytes([lod_count & 0x3f,
+                      (val24 >> 16) & 0xff,
+                      (val24 >> 8) & 0xff,
+                      val24 & 0xff]) + pixel_data
+
+def cmd_png2tex(**kwargs):
+    if Image is None:
+        print("Error: PIL/Pillow is not installed.")
+        sys.exit(1)
+
+    raw_args = kwargs.get('args', [])
+
+    # Simple arg parse: [--format|-f FMT] input output
+    fmt_name = None
+    positional = []
+    i = 0
+    while i < len(raw_args):
+        if raw_args[i] in ('--format', '-f') and i + 1 < len(raw_args):
+            fmt_name = raw_args[i + 1].lower()
+            i += 2
+        else:
+            positional.append(raw_args[i])
+            i += 1
+
+    if len(positional) < 2:
+        print("Usage: pdt png2tex <input.png> <output.bin> [--format FORMAT]")
+        print("Formats:", ', '.join(_FORMAT_NAMES.keys()))
+        sys.exit(1)
+
+    input_file, output_file = positional[0], positional[1]
+
+    img = Image.open(input_file)
+
+    if fmt_name:
+        if fmt_name not in _FORMAT_NAMES:
+            print(f"Unknown format: {fmt_name!r}. Valid: {', '.join(_FORMAT_NAMES)}")
+            sys.exit(1)
+        fmt = _FORMAT_NAMES[fmt_name]
+    else:
+        fmt = _auto_detect_format(img)
+        fmt_name = next(k for k, v in _FORMAT_NAMES.items() if v == fmt)
+        print(f"Auto-detected format: {fmt_name}")
+
+    data = tex_encode(img, fmt)
+
+    with open(output_file, 'wb') as f:
+        f.write(data)
+
+    w, h = img.size
+    print(f"Encoded {input_file} ({w}x{h}, {fmt_name}) → {output_file} ({len(data)} bytes)")
+
+
+# ============================================================
+# ROM texture extraction: ROM → PNGs
+# (Derived from Ryan Dwyer's texture-extractor scripts; see
+# attribution at top of the texture pipeline section.)
+# ============================================================
+
+def _locate_tlist_by_signature(rom):
+    """Locate textureslist by format signature: every entry is 8 bytes,
+    word1 always == 0, word0 low 24 bits strictly monotonic, first
+    entry has offset == 0. This works on modded PD ROMs (GE-X, AIO,
+    etc.) where the copyright anchor is missing or relocated.
+
+    Returns (tlist_start, count) or (None, 0).
+    """
+    import struct
+    n_words = len(rom) // 4
+    # We test both 8-byte alignments (table starts at offset 0 or 4 mod 8).
+    best = (None, 0)
+    for align_word in (0, 1):
+        # Slice as alternating w0/w1 pairs
+        i = 0
+        # Convert: position in pair-stream; absolute byte = align_word*4 + i*8
+        # Walk pairs; when we hit (w0&0xffffff==0, w1==0), start a candidate run.
+        max_pair = (n_words - align_word) // 2
+        while i < max_pair:
+            base = (align_word + i * 2) * 4
+            w0 = struct.unpack_from('>I', rom, base)[0]
+            w1 = struct.unpack_from('>I', rom, base + 4)[0]
+            if w1 != 0 or (w0 & 0xffffff) != 0:
+                i += 1
+                continue
+            # Candidate start; extend while w1==0 and offsets monotonic and bounded.
+            run = 1
+            prev_off = 0
+            j = i + 1
+            while j < max_pair:
+                p = (align_word + j * 2) * 4
+                w0j = struct.unpack_from('>I', rom, p)[0]
+                w1j = struct.unpack_from('>I', rom, p + 4)[0]
+                off = w0j & 0xffffff
+                if w1j != 0 or off < prev_off or off > 0x800000:
+                    break
+                prev_off = off
+                run += 1
+                j += 1
+            if run > best[1] and 1000 <= run <= 6000:
+                best = (base, run)
+            i = max(j, i + 1)
+    return best
+
+
+def _extract_textures_from_rom(rom_path):
+    """
+    Extract all non-empty texture blobs from a Perfect Dark ROM.
+    Returns list of (hex_id_str, bytes).
+    """
+    # [ntsc-beta, ntsc-1.0, ntsc-final, pal-beta, pal-final, jpn-final]
+    _ROM_VARIANTS    = ['ntsc-beta', 'ntsc-1.0', 'ntsc-final', 'pal-beta', 'pal-final', 'jpn-final']
+    _TEXDATA_OFFSETS = [0x1d12fe0, 0x1d65f40, 0x1d65f40, 0x1d5bb50, 0x1d5ca20, 0x1d61f90]
+    _COPY_OFFSETS    = [0x1fabac0, 0x1ffea20, 0x1ffea20, 0x1ff4630, 0x1ff5500, 0x1ffd6b0]
+
+    import struct
+
+    with open(rom_path, 'rb') as f:
+        rom = f.read()
+
+    fname = Path(rom_path).name.lower()
+    idx = 2  # default ntsc-final
+    for i, v in enumerate(_ROM_VARIANTS):
+        if v in fname:
+            idx = i
+            break
+
+    print(f"ROM variant: {_ROM_VARIANTS[idx]}")
+    texdata_start = _TEXDATA_OFFSETS[idx]
+    copyright_start = _COPY_OFFSETS[idx]
+
+    # Locate textureslist by scanning backwards from copyright
+    # struct texture is 8 bytes; first entry has dataoffset == 0
+    EXPECTED = 3503   # ntsc-final has 3503 textures + 1 sentinel
+    tlist_start = None
+    for count in (EXPECTED, 3500, 3400, 3600, 3200):
+        candidate = copyright_start - (count + 1) * 8
+        if candidate < 0:
+            continue
+        word = struct.unpack_from('>I', rom, candidate)[0]
+        if (word & 0xffffff) == 0:
+            # Verify next few offsets are monotonically increasing
+            ok = True
+            prev = 0
+            for c in range(1, min(20, count + 1)):
+                w2 = struct.unpack_from('>I', rom, candidate + c * 8)[0]
+                off = w2 & 0xffffff
+                if off < prev:
+                    ok = False
+                    break
+                prev = off
+            if ok:
+                tlist_start = candidate
+                EXPECTED = count
+                break
+
+    if tlist_start is None:
+        # Fallback: format-signature scan. Works on modded ROMs where
+        # the copyright anchor is missing.
+        print("Copyright-anchored heuristic failed; falling back to "
+              "format-signature scan...")
+        tlist_start, count = _locate_tlist_by_signature(rom)
+        if tlist_start is None:
+            print("Error: could not locate textureslist in ROM")
+            return []
+        EXPECTED = count - 1  # last entry is sentinel
+        # Recover texdata_start from sentinel: the sentinel offset is
+        # the total texdata size, so texdata ends at tlist_start - PAD.
+        # In modded ROMs the gap may be non-trivial (gex has ~1 KB of
+        # trailer data), so we can't blindly assume tlist_start - last_off
+        # is the texdata start. Instead we try the vanilla offset first,
+        # then walk back from tlist_start by last_off + small padding.
+        last_off = struct.unpack_from('>I', rom, tlist_start + EXPECTED * 8)[0] & 0xffffff
+        # Try: vanilla offset for the variant; then tlist - last_off;
+        # then sniff for the first-texture sig (vanilla front-loaded).
+        candidates = [_TEXDATA_OFFSETS[idx],
+                      tlist_start - last_off,
+                      tlist_start - last_off - 0x500]
+        # Also try: search for the well-known vanilla first-tex magic
+        # (first 8 bytes of every PD-derivative ROM's texture #0).
+        magic = bytes.fromhex('460a0f000100c319')
+        m = rom.find(magic)
+        if m >= 0:
+            candidates.insert(0, m)
+        # Pick the one that yields plausible-looking blobs.
+        for cand in candidates:
+            if 0 <= cand < tlist_start:
+                # Sanity: sentinel offset must fit within rom.
+                if cand + last_off <= len(rom):
+                    texdata_start = cand
+                    print(f"Recovered texdata_start: 0x{texdata_start:x}")
+                    break
+
+    print(f"Textures list: {EXPECTED} entries at ROM offset 0x{tlist_start:x}")
+    print(f"Textures data: ROM offset 0x{texdata_start:x}")
+
+    results = []
+    for i in range(EXPECTED):
+        w0 = struct.unpack_from('>I', rom, tlist_start + i * 8)[0]
+        w1 = struct.unpack_from('>I', rom, tlist_start + (i + 1) * 8)[0]
+        this_off = w0 & 0xffffff
+        next_off = w1 & 0xffffff
+        if this_off == next_off:
+            continue  # empty slot
+        blob = rom[texdata_start + this_off:texdata_start + next_off]
+        results.append((f'{i:04x}', blob))
+
+    print(f"Found {len(results)} non-empty textures")
+    return results
+
+def cmd_rom_tex_scan(**kwargs):
+    if Image is None:
+        print("Error: PIL/Pillow is not installed.")
+        sys.exit(1)
+
+    raw_args = kwargs.get('args', [])
+
+    # Parse: input [-o output_dir]
+    output_dir = 'textures_out'
+    positional = []
+    i = 0
+    while i < len(raw_args):
+        if raw_args[i] in ('-o', '--output') and i + 1 < len(raw_args):
+            output_dir = raw_args[i + 1]
+            i += 2
+        else:
+            positional.append(raw_args[i])
+            i += 1
+
+    if not positional:
+        print("Usage: pdt tex-scan <rom.z64 | textures_dir> [-o output_dir]")
+        sys.exit(1)
+
+    input_path = Path(positional[0])
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    if input_path.is_dir():
+        textures = [(f.stem, f.read_bytes()) for f in sorted(input_path.glob('*.bin'))]
+        print(f"Scanning {len(textures)} .bin files in {input_path}")
+    elif input_path.is_file():
+        textures = _extract_textures_from_rom(str(input_path))
+    else:
+        print(f"Error: {input_path} is not a file or directory")
+        sys.exit(1)
+
+    ok = fail = 0
+    fail_ids = []
+    for (name, data) in textures:
+        try:
+            img = tex_decode(data)
+            img.save(str(out_path / f'{name}.png'))
+            ok += 1
+        except Exception:
+            fail += 1
+            fail_ids.append(name)
+
+    print(f"Converted {ok} textures → {out_path}/")
+    if fail:
+        shown = ', '.join(fail_ids[:20])
+        ellipsis_str = '...' if len(fail_ids) > 20 else ''
+        print(f"  {fail} failed: {shown}{ellipsis_str}")
+
+# Text Manager Logic
+def read_uint32_be(data, offset):
+    return struct.unpack_from('>I', data, offset)[0]
+
+def write_uint32_be(val):
+    return struct.pack('>I', val)
+
+def decompress_rare(data):
+    if len(data) < 5:
+        raise ValueError("Data too short for Rare compression header")
+    
+    header = struct.unpack_from('>H', data, 0)[0]
+    if header not in [0x1172, 0x1173]:
+        return data, False # Not compressed
+    
+    try:
+        decompressed = zlib.decompress(data[5:], wbits=-15)
+        return decompressed, True
+    except zlib.error:
+        return data, False
+
+def compress_rare(data):
+    compressed_data = zlib.compress(data, level=9, wbits=-15)
+    size = len(data)
+    header = b'\x11\x73' + struct.pack('>I', size)[1:] # 3 bytes size
+    return header + compressed_data
+
+def text_extract(input_path, output_path):
+    with open(input_path, 'rb') as f:
+        raw_data = f.read()
+    
+    data, was_compressed = decompress_rare(raw_data)
+    
+    if len(data) < 4:
+        print("File too small")
+        return
+
+    first_offset = read_uint32_be(data, 0)
+    
+    if first_offset > len(data) or first_offset < 4:
+        print(f"Invalid first offset: {first_offset}")
+        return
+
+    offsets = []
+    pos = 0
+    while pos < first_offset:
+        offset = read_uint32_be(data, pos)
+        offsets.append(offset)
+        pos += 4
+        
+    strings = []
+    for i, offset in enumerate(offsets):
+        if offset >= len(data):
+            strings.append("")
+            continue
+            
+        end = data.find(b'\x00', offset)
+        if end == -1:
+            end = len(data)
+            
+        s_bytes = data[offset:end]
+        try:
+            s = s_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            s = s_bytes.decode('latin-1')
+            
+        strings.append(s)
+        
+    output_data = {
+        "compressed": was_compressed,
+        "strings": strings
+    }
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+    
+    print(f"Extracted {len(strings)} strings to {output_path}")
+
+def text_build(input_path, output_path):
+    with open(input_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        
+    strings = data["strings"]
+    should_compress = data.get("compressed", True)
+    
+    offset_table_size = len(strings) * 4
+    current_offset = offset_table_size
+    
+    offsets = []
+    string_data = bytearray()
+    
+    for s in strings:
+        padding = (4 - (current_offset % 4)) % 4
+        if padding > 0:
+            string_data.extend(b'\x00' * padding)
+            current_offset += padding
+            
+        offsets.append(current_offset)
+        
+        try:
+            enc_s = s.encode('latin-1')
+        except UnicodeEncodeError:
+            print(f"Warning: String '{s}' contains non-latin-1 characters. Encoding as utf-8.")
+            enc_s = s.encode('utf-8')
+            
+        string_data.extend(enc_s)
+        string_data.extend(b'\x00')
+        current_offset += len(enc_s) + 1
+        
+    padding = (4 - (current_offset % 4)) % 4
+    if padding > 0:
+        string_data.extend(b'\x00' * padding)
+        current_offset += padding
+
+    final_data = bytearray()
+    for off in offsets:
+        final_data.extend(write_uint32_be(off))
+        
+    final_data.extend(string_data)
+    
+    if should_compress:
+        final_data = compress_rare(final_data)
+        
+    with open(output_path, 'wb') as f:
+        f.write(final_data)
+        
+    print(f"Built {output_path} ({len(final_data)} bytes)")
+
+def cmd_text_manager(**kwargs):
+    args = kwargs.get('args', [])
+    if len(args) < 3:
+        print("Usage: pdt text <extract|build> <input> <output>")
+        sys.exit(1)
+        
+    subcmd = args[0]
+    input_file = args[1]
+    output_file = args[2]
+    
+    if subcmd == "extract":
+        text_extract(input_file, output_file)
+    elif subcmd == "build":
+        text_build(input_file, output_file)
+    else:
+        print(f"Unknown subcommand: {subcmd}")
+        sys.exit(1)
+
+def write_binary_dat(files_list, output_path, rom_sources=None, rom_tex_map=None):
+    """Write filetable.dat.
+
+    Wire-format selection:
+      v3 — emitted when rom_tex_map is non-empty. Per-mod fragment with
+           a romTexMap block (localTexId → portTexId).
+      v2 — emitted when rom_sources is non-empty or any file has a
+           'source' block. Adds romSources block + per-file alt-ROM tail.
+      v1 — bare file table.
+
+    files_list entries may carry an optional 'source' dict. byName/byId
+    sources must already have been resolved to byOffset by
+    resolve_alt_rom_sources(); any unresolved entry is dropped from the
+    source tail with a warning.
+
+    rom_tex_map: iterable of (localTexId, portTexId) pairs, both u16.
+    """
+    rom_sources = rom_sources or []
+    rom_tex_map = list(rom_tex_map or [])
+    has_v3 = bool(rom_tex_map)
+    has_v2 = has_v3 or bool(rom_sources) or any(e.get("source") for e in files_list)
+    if has_v3:
+        version = 3
+    elif has_v2:
+        version = 2
+    else:
+        version = 1
+
+    print(f"Writing binary to {output_path} (PDFT v{version}, {len(files_list)} files, "
+          f"{len(rom_sources)} romSources, {len(rom_tex_map)} texMap entries)...")
+
+    # Map rom id -> index for altRomIdx encoding
+    rom_index = {rs["id"]: i for i, rs in enumerate(rom_sources)}
+
+    with open(output_path, 'wb') as f:
+        # Header
+        f.write(b'PDFT')
+        f.write(struct.pack('>I', version))
+        f.write(struct.pack('>I', len(files_list)))
+        if version >= 2:
+            f.write(struct.pack('>I', len(rom_sources)))
+
+            for rs in rom_sources:
+                rs_id = rs["id"].encode('utf-8') + b'\0'
+                rs_filename = rs["filename"].encode('utf-8') + b'\0'
+                if len(rs_id) > 255 or len(rs_filename) > 255:
+                    raise ValueError(f"romSource id/filename too long: {rs['id']} / {rs['filename']}")
+                expected_size = int(rs.get("expectedSize", 0)) or 0
+                flags = 0
+                if rs.get("required"):
+                    flags |= 1
+                if rs.get("strict"):
+                    flags |= 2
+                fb_map = {"skip": 0, "vanilla": 1, "error": 2}
+                fallback = fb_map.get(rs.get("fallbackBehavior", "skip"), 0)
+
+                f.write(struct.pack('>B', len(rs_id)))
+                f.write(rs_id)
+                f.write(struct.pack('>B', len(rs_filename)))
+                f.write(rs_filename)
+                f.write(struct.pack('>I', expected_size))
+                f.write(struct.pack('>BB', flags, fallback))
+                f.write(b'\0\0')  # reserved
+
+        for entry in files_list:
+            file_id = entry["id"]
+            if isinstance(file_id, str):
+                file_id = int(file_id, 16)
+            name = entry["name"].encode('utf-8') + b'\0'
+            path = entry.get("path", "").encode('utf-8') + b'\0'
+
+            flags = 0
+            offset = 0
+            size = 0
+
+            if entry.get("path"):
+                flags |= 2
+
+            src = entry.get("source")
+            alt_tail = None
+            if src and version >= 2:
+                lookup = src.get("lookup")
+                rom_id = src.get("rom")
+                if lookup == "byOffset" and rom_id in rom_index:
+                    src_offset = src.get("offset", 0)
+                    if isinstance(src_offset, str):
+                        src_offset = int(src_offset, 16)
+                    src_size = int(src.get("size", 0))
+                    comp_map = {"1173": 1}
+                    compression = comp_map.get(src.get("compression"), 0)
+                    alt_tail = (rom_index[rom_id], src_offset, src_size, compression)
+                    flags |= 4
+                else:
+                    print(f"  Warning: file '{entry['name']}' has unresolved source (lookup={lookup}, rom={rom_id}); emitting without alt-ROM tail")
+
+            f.write(struct.pack('>I', file_id))
+            f.write(struct.pack('>I', flags))
+            f.write(struct.pack('>I', offset))
+            f.write(struct.pack('>I', size))
+
+            f.write(struct.pack('>H', len(name)))
+            f.write(name)
+
+            f.write(struct.pack('>H', len(path)))
+            f.write(path)
+
+            if alt_tail is not None:
+                rom_idx, src_offset, src_size, compression = alt_tail
+                f.write(struct.pack('>BIIB', rom_idx, src_offset, src_size, compression))
+
+        # PDFT v3: romTexMap block (localTexId -> portTexId)
+        if version >= 3:
+            f.write(struct.pack('>I', len(rom_tex_map)))
+            for local_id, port_id in rom_tex_map:
+                if isinstance(local_id, str):
+                    local_id = int(local_id, 16)
+                if isinstance(port_id, str):
+                    port_id = int(port_id, 16)
+                if local_id < 0 or local_id > 0xffff or port_id < 0 or port_id > 0xffff:
+                    raise ValueError(f"romTexMap entry out of u16 range: 0x{local_id:x} -> 0x{port_id:x}")
+                f.write(struct.pack('>HH', local_id, port_id))
+
+
+_alt_rom_driver_cache = {}
+
+
+def _get_alt_rom_driver(filename, search_dirs):
+    """Locate an alt ROM and return a cached PDROMDriver for it.
+
+    search_dirs is a list of directories to probe (in order). Returns
+    None if the file isn't found or leylinelib isn't importable."""
+    if filename in _alt_rom_driver_cache:
+        return _alt_rom_driver_cache[filename]
+
+    found = None
+    for d in search_dirs:
+        if not d:
+            continue
+        candidate = os.path.join(d, filename)
+        if os.path.isfile(candidate):
+            found = candidate
+            break
+
+    if not found:
+        print(f"  Warning: alt ROM '{filename}' not found in {search_dirs}")
+        _alt_rom_driver_cache[filename] = None
+        return None
+
+    try:
+        # Ensure leylinelib is importable (same setup as cmd_rom)
+        lib_path = TOOL_LIB_PYTHON
+        if str(lib_path) not in sys.path:
+            sys.path.insert(0, str(lib_path))
+        # Lazy-init PDEnv so _pd_env_paths is populated on host-only invocations
+        get_pd_env()
+        # Provide the env vars leylinelib insists on
+        os.environ.setdefault('PD', pd_env._pd_env_paths.get('PD', '/tmp/dummy'))
+        os.environ.setdefault('PDSHARE', pd_env._pd_env_paths.get('PDSHARE', '/tmp/dummy'))
+        os.environ.setdefault('PDPYTHON', pd_env._pd_env_paths.get('PDPYTHON', '/tmp/dummy'))
+        for key in ['GEPD_TARGET', 'GEPD_ZIP', 'GEPD_ARCHIVE', 'MOUSEINJECTOR']:
+            if key not in os.environ:
+                os.environ[key] = pd_env._pd_env_vars.get(key, '/tmp/dummy')
+        from leylinelib.pd_rom_driver import PDROMDriver
+        driver = PDROMDriver(rom_path=found)
+        _alt_rom_driver_cache[filename] = driver
+        print(f"  Opened alt ROM '{filename}' at {found}")
+        return driver
+    except Exception as e:
+        print(f"  Warning: failed to open alt ROM '{filename}': {e}")
+        _alt_rom_driver_cache[filename] = None
+        return None
+
+
+def resolve_alt_rom_sources(files_list, rom_sources, search_dirs):
+    """Walk files_list; for any entry with source.lookup in {byName, byId},
+    resolve it to a concrete byOffset using the alt ROM. Mutates the
+    entry's source dict in place. byOffset entries pass through unchanged.
+
+    Entries that fail to resolve (driver missing, name not found, etc.)
+    have their `source` removed and an unresolved-source warning logged.
+    Returns the count of entries successfully resolved.
+
+    Whether unresolved entries are fatal depends on the owning romSource's
+    `required` (default true) and `fallbackBehavior` ("skip"/"vanilla"/"error")
+    fields. A source is treated as required unless `required: false` AND
+    `fallbackBehavior: skip`.
+    """
+    if not rom_sources:
+        return 0
+
+    rs_by_id = {rs["id"]: rs for rs in rom_sources}
+    per_source_failures = {rs["id"]: 0 for rs in rom_sources}
+    unknown_source_failures = 0
+    resolved_count = 0
+    failed_count = 0
+
+    for entry in files_list:
+        src = entry.get("source")
+        if not src:
+            continue
+        lookup = src.get("lookup")
+        rom_id = src.get("rom")
+        if rom_id not in rs_by_id:
+            print(f"  Warning: '{entry.get('name')}' references unknown romSource '{rom_id}'")
+            entry.pop("source", None)
+            failed_count += 1
+            unknown_source_failures += 1
+            continue
+
+        if lookup == "byOffset":
+            resolved_count += 1
+            continue
+
+        rs = rs_by_id[rom_id]
+        driver = _get_alt_rom_driver(rs["filename"], search_dirs)
+        if driver is None:
+            entry.pop("source", None)
+            failed_count += 1
+            per_source_failures[rom_id] += 1
+            continue
+
+        if lookup == "byName":
+            alias = src.get("alias") or entry.get("name")
+            try:
+                files_in_rom = driver.get_files()
+            except Exception as e:
+                print(f"  Warning: get_files failed for '{rs['filename']}': {e}")
+                entry.pop("source", None)
+                failed_count += 1
+                per_source_failures[rom_id] += 1
+                continue
+            match = None
+            for finfo in files_in_rom:
+                if finfo.get("name") == alias:
+                    match = finfo
+                    break
+            if not match:
+                print(f"  Warning: '{entry.get('name')}' alias '{alias}' not found in '{rs['filename']}'")
+                entry.pop("source", None)
+                failed_count += 1
+                per_source_failures[rom_id] += 1
+                continue
+            entry["source"] = {
+                "rom": rom_id,
+                "lookup": "byOffset",
+                "offset": f"0x{int(match['offset']):08x}",
+                "size": int(match.get("size", 0)),
+            }
+            resolved_count += 1
+
+        elif lookup == "byId":
+            tex_cfg = rs.get("textures") or {}
+            id_str = src.get("id")
+            tex_id = int(id_str, 16) if isinstance(id_str, str) else int(id_str)
+            if entry.get("type") == "texture" and tex_cfg:
+                # textureslist entries are 8-byte records starting at tlistOffset.
+                # The 3 bytes at record+1..record+4 are the texture-data byte
+                # offset (relative to texdataOffset). The next entry's offset
+                # gives this entry's size.
+                tlist_offset = int(tex_cfg["tlistOffset"], 16)
+                tlist_count = int(tex_cfg["tlistCount"])
+                texdata_offset = int(tex_cfg["texdataOffset"], 16)
+                if tex_id >= tlist_count:
+                    print(f"  Warning: texture id 0x{tex_id:04x} >= tlistCount {tlist_count} for '{rs['filename']}'")
+                    entry.pop("source", None)
+                    failed_count += 1
+                    per_source_failures[rom_id] += 1
+                    continue
+                try:
+                    rom_path = driver.rom_path if hasattr(driver, 'rom_path') else _alt_rom_driver_cache[rs['filename']].rom_path
+                    with open(rom_path, 'rb') as rf:
+                        rf.seek(tlist_offset + tex_id * 8)
+                        rec = rf.read(16)  # this entry + next for size delta
+                    cur_data_off = struct.unpack('>I', b'\x00' + rec[1:4])[0]
+                    nxt_data_off = struct.unpack('>I', b'\x00' + rec[9:12])[0] if len(rec) >= 12 else None
+                    if nxt_data_off is not None:
+                        tex_size = nxt_data_off - cur_data_off
+                    else:
+                        tex_size = 0
+                    if tex_size <= 0 or tex_size > 0x10000:
+                        print(f"  Warning: implausible texture size {tex_size} for id 0x{tex_id:04x} in '{rs['filename']}'")
+                        entry.pop("source", None)
+                        failed_count += 1
+                        per_source_failures[rom_id] += 1
+                        continue
+                    abs_off = texdata_offset + cur_data_off
+                    entry["source"] = {
+                        "rom": rom_id,
+                        "lookup": "byOffset",
+                        "offset": f"0x{abs_off:08x}",
+                        "size": tex_size,
+                    }
+                    resolved_count += 1
+                except Exception as e:
+                    print(f"  Warning: failed to resolve texture id 0x{tex_id:04x} in '{rs['filename']}': {e}")
+                    entry.pop("source", None)
+                    failed_count += 1
+                    per_source_failures[rom_id] += 1
+                    continue
+            else:
+                # Non-texture byId: index into get_files()
+                try:
+                    files_in_rom = driver.get_files()
+                    if tex_id >= len(files_in_rom):
+                        raise IndexError(f"id {tex_id} out of range")
+                    finfo = files_in_rom[tex_id]
+                    entry["source"] = {
+                        "rom": rom_id,
+                        "lookup": "byOffset",
+                        "offset": f"0x{int(finfo['offset']):08x}",
+                        "size": int(finfo.get("size", 0)),
+                    }
+                    resolved_count += 1
+                except Exception as e:
+                    print(f"  Warning: byId {tex_id} failed for '{entry.get('name')}': {e}")
+                    entry.pop("source", None)
+                    failed_count += 1
+                    per_source_failures[rom_id] += 1
+                    continue
+        else:
+            print(f"  Warning: '{entry.get('name')}': unsupported lookup '{lookup}'")
+            entry.pop("source", None)
+            failed_count += 1
+            per_source_failures[rom_id] += 1
+
+    print(f"Alt-ROM source resolution: {resolved_count} resolved, {failed_count} failed")
+    if failed_count > 0:
+        fatal_sources = []
+        skipped_sources = []
+        for rs in rom_sources:
+            rid = rs["id"]
+            n = per_source_failures.get(rid, 0)
+            if n == 0:
+                continue
+            required = bool(rs.get("required", True))
+            fallback = rs.get("fallbackBehavior", "skip")
+            if required or fallback == "error":
+                fatal_sources.append((rid, n))
+            else:
+                skipped_sources.append((rid, n))
+        for rid, n in skipped_sources:
+            print(f"  Info: alt-ROM '{rid}' unresolved for {n} entries (optional, fallback=skip)", file=sys.stderr)
+        if fatal_sources or unknown_source_failures > 0:
+            for rid, n in fatal_sources:
+                print(f"ERROR: alt-ROM '{rid}' unresolved for {n} entries and is required.", file=sys.stderr)
+            if unknown_source_failures:
+                print(f"ERROR: {unknown_source_failures} entries reference undeclared romSources.", file=sys.stderr)
+            print("Pass --rom-search-dir <dir> pointing at any missing source ROM(s).", file=sys.stderr)
+            sys.exit(1)
+    return resolved_count
+
+def cmd_gendat(**kwargs):
+    args = kwargs.get('args', [])
+    if len(args) < 2:
+        print("Usage: pdt gendat <input.json> <output.dat> [--rom-search-dir <dir>]")
+        sys.exit(1)
+
+    input_path = args[0]
+    output_path = args[1]
+
+    extra_search_dirs = []
+    i = 2
+    while i < len(args):
+        if args[i] == '--rom-search-dir' and i + 1 < len(args):
+            extra_search_dirs.append(os.path.join(_original_cwd, os.path.expanduser(args[i + 1])))
+            i += 2
+        else:
+            i += 1
+
+    if not os.path.exists(input_path):
+        print(f"Error: {input_path} not found.")
+        sys.exit(1)
+
+    print(f"Reading {input_path}...")
+    with open(input_path, 'r') as f:
+        data = json.load(f)
+
+    rom_sources = []
+    if isinstance(data, dict) and "files" in data:
+        files_list = data["files"]
+        rom_sources = data.get("romSources", []) or []
+    elif isinstance(data, list):
+        files_list = data
+    else:
+        print("Error: Invalid JSON format. Expected list or dict with 'files' key.")
+        sys.exit(1)
+
+    # Assign sequential IDs to entries that lack them (per-mod JSONs may
+    # omit IDs since IDs are normally assigned at merge time). gendat is
+    # mostly used for merged filetables, but allow per-mod inputs too.
+    next_id = 1
+    for entry in files_list:
+        if "id" not in entry:
+            entry["id"] = f"0x{next_id:04x}"
+            next_id += 1
+        else:
+            try:
+                cur = int(entry["id"], 16) if isinstance(entry["id"], str) else int(entry["id"])
+                if cur >= next_id:
+                    next_id = cur + 1
+            except (ValueError, TypeError):
+                pass
+
+    if rom_sources:
+        # ROM search dirs come exclusively from --rom-search-dir flags
+        # plus the directory of the input JSON. No env-var fallback.
+        search_dirs = list(extra_search_dirs)
+        search_dirs.append(os.path.dirname(os.path.abspath(input_path)))
+        # de-dup
+        seen = set()
+        search_dirs = [d for d in search_dirs if not (d in seen or seen.add(d))]
+        resolve_alt_rom_sources(files_list, rom_sources, search_dirs)
+
+    write_binary_dat(files_list, output_path, rom_sources=rom_sources)
+    print("Done.")
+
+def cmd_merge_filetables(**kwargs):
+    args = kwargs.get('args', [])
+    # Usage: pdt merge-filetables [workspace_root] [--mods-root <dir>] [--mod-order mod1,mod2,...] [--output <dir>]
+    #
+    # workspace_root: directory containing mod_xxx_filetable.json files (default: cwd)
+    # --mods-root:    directory containing mod subdirs (default: <workspace_root>/mods)
+    # --mod-order:    comma-separated mod names (default: auto-detect from mods-root)
+    # --output:       output directory for filetable.json/dat (default: workspace_root)
+    #
+    # No env-var autodetection: pass --mods-root / --output explicitly when
+    # the defaults aren't appropriate.
+
+    workspace_root = _original_cwd
+    mods_root = None
+    mod_order = None
+    output_dir = None
+
+    # Parse args
+    i = 0
+    while i < len(args):
+        if args[i] == '--mods-root' and i + 1 < len(args):
+            mods_root = os.path.join(_original_cwd, os.path.expanduser(args[i + 1]))
+            i += 2
+        elif args[i] == '--mod-order' and i + 1 < len(args):
+            mod_order = args[i + 1].split(',')
+            i += 2
+        elif args[i] == '--output' and i + 1 < len(args):
+            output_dir = os.path.join(_original_cwd, os.path.expanduser(args[i + 1]))
+            i += 2
+        elif not args[i].startswith('--'):
+            workspace_root = os.path.join(_original_cwd, args[i])
+            i += 1
+        else:
+            print(f"Unknown arg: {args[i]}", file=sys.stderr)
+            i += 1
+
+    # Resolve workspace-relative defaults
+    if mods_root is None:
+        mods_root = os.path.join(workspace_root, "mods")
+
+    if output_dir is None:
+        output_dir = workspace_root
+
+    # Auto-detect mod order: find all mod_xxx_filetable.json in workspace_root
+    if mod_order is None:
+        mod_order = []
+        for fname in sorted(os.listdir(workspace_root)):
+            m = re.match(r'^(mod_\w+)_filetable\.json$', fname)
+            if m:
+                mod_order.append(m.group(1))
+        if not mod_order:
+            print("Error: no mod_xxx_filetable.json files found and --mod-order not specified", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Workspace root: {workspace_root}")
+    print(f"Mods root:      {mods_root}")
+    print(f"Output dir:     {output_dir}")
+    print(f"Mod order:      {mod_order}")
+
+    # Helper functions
+    def get_file_id_map():
+        return _vanilla_rom_file_id_map()
+
+    def parse_path_string(path_str):
+        definitions = {}
+        parts = path_str.split('|')
+        for part in parts:
+            if ':' in part:
+                prefix, p = part.split(':', 1)
+                definitions[prefix] = p
+            else:
+                definitions[None] = part
+        return definitions
+
+    def build_path_string(definitions):
+        parts = []
+        if None in definitions:
+            parts.append(f"::{definitions[None]}")
+        for prefix, path in definitions.items():
+            if prefix is not None:
+                parts.append(f"{prefix}::{path}")
+        return "|".join(parts)
+
+    # Main logic
+    file_id_map = get_file_id_map()
+    
+    max_id = 0
+    if file_id_map:
+        max_id = max(file_id_map.values())
+    
+    print(f"Max ROM File ID: {max_id}")
+
+    # reserved_files = {
+    #     "Ccarroll2Z": 2014,
+    #     "Cskedar2Z": 2015,
+    #     "Ghand_carollZ": 2016,
+    #     "Ghand_skedarZ": 2017
+    # }
+    # 
+    # for name, fid in reserved_files.items():
+    #     if name not in file_id_map:
+    #         file_id_map[name] = fid
+    #         if fid > max_id:
+    #             max_id = fid
+    #     else:
+    #         print(f"  Warning: '{name}' already exists in ROM map with ID {file_id_map[name]}. Skipping reservation.")
+    
+    # shared_files = {
+    #     "CheadgreyZ", "Cskedar2Z", "Ghand_skedarZ", "Ccarroll2Z",
+    #     "Ghand_carollZ", "Ghand_dr_carrollZ", "Ghand_dr_carroll", "Ghand_caroll"
+    # }
+
+    merged_data = {}
+    rom_sources_agg = []        # list of dicts (deduped by id)
+    rom_source_owner = {}       # rom id -> owning mod name (for alt-ROM search-dir hint)
+
+    for mod_name in mod_order:
+        json_path = os.path.join(workspace_root, f"{mod_name}_filetable.json")
+        if not os.path.exists(json_path):
+            print(f"Warning: {json_path} not found. Skipping.")
+            continue
+            
+        print(f"Processing {mod_name}...")
+        try:
+            with open(json_path, 'r') as f:
+                mod_data = json.load(f)
+
+            # Aggregate any romSources declared by this mod
+            for rs in mod_data.get("romSources", []) or []:
+                rs_id = rs.get("id")
+                if not rs_id:
+                    continue
+                if rs_id in rom_source_owner:
+                    print(f"  Info: romSource '{rs_id}' already declared by '{rom_source_owner[rs_id]}'; skipping duplicate from '{mod_name}'")
+                    continue
+                rom_sources_agg.append(rs)
+                rom_source_owner[rs_id] = mod_name
+
+            for file_entry in mod_data.get("files", []):
+                name = file_entry.get("name")
+                path_str = file_entry.get("path", "")
+                source = file_entry.get("source")
+
+                # Entry must have either a path (loose file lookup) or a
+                # source descriptor (alt-ROM byte range). Skip entries
+                # with neither.
+                if not name or (not path_str and not source):
+                    continue
+
+                if name not in file_id_map:
+                    max_id += 1
+                    file_id_map[name] = max_id
+                    print(f"  Info: Assigned new ID {max_id} to new file '{name}'.")
+
+                file_id = file_id_map[name]
+                new_defs = parse_path_string(path_str) if path_str else {}
+                
+                # Character files (heads, bodies, hands) and textures are
+                # universally exported with plain paths — no mod/context prefix
+                is_character = (
+                    (name.startswith('Chead') and name.endswith('Z')) or
+                    (name.startswith('C') and name.endswith('Z') and not name.startswith('Chead')) or
+                    (name.startswith('Ghand_') and name.endswith('Z'))
+                )
+                is_texture = file_entry.get('type') == 'texture'
+                has_replaces = 'replaces' in file_entry
+
+                if is_texture and not has_replaces:
+                    # Textures need mod: prefix for scoping — vanilla-range
+                    # texnums collide across mods (N64 replacers ported to PC)
+                    prefixed_defs = {}
+                    for prefix, path in new_defs.items():
+                        meta_parts = [f"mod:{mod_name}"]
+                        if prefix:
+                            meta_parts.append(f"context:{prefix}")
+                        meta_str = ",".join(meta_parts)
+                        prefixed_defs[meta_str] = path
+                else:
+                    prefixed_defs = {}
+                    for prefix, path in new_defs.items():
+                        meta_parts = [f"mod:{mod_name}"]
+                        if prefix:
+                            meta_parts.append(f"context:{prefix}")
+                        meta_str = ",".join(meta_parts)
+                        prefixed_defs[meta_str] = path
+                
+                # if name in shared_files:
+                #     default_path = new_defs.get(None)
+                #     if default_path:
+                #         prefixed_defs[None] = default_path
+                #         print(f"  Info: Added shared default path for '{name}': {default_path}")
+
+                new_defs = prefixed_defs
+
+                if file_id not in merged_data:
+                    merged_data[file_id] = {
+                        "name": name,
+                        "definitions": {},
+                        "source": None,
+                        "type": file_entry.get("type"),
+                    }
+
+                merged_data[file_id]["definitions"].update(new_defs)
+                if source and merged_data[file_id]["source"] is None:
+                    merged_data[file_id]["source"] = source
+                
+        except json.JSONDecodeError as e:
+            print(f"Error parsing {json_path}: {e}")
+
+    if max_id >= 8192:
+        print(f"ERROR: Max file ID {max_id} exceeds ROMDATA_MAX_FILES (8192). Bump the engine constant before regenerating.", file=sys.stderr)
+        sys.exit(1)
+
+    final_files_list = []
+    for file_id in sorted(merged_data.keys()):
+        entry = merged_data[file_id]
+        path_str = build_path_string(entry["definitions"]) if entry["definitions"] else ""
+        out_entry = {
+            "id": f"0x{file_id:04x}",
+            "name": entry["name"],
+            "path": path_str,
+        }
+        if entry.get("source"):
+            out_entry["source"] = entry["source"]
+        if entry.get("type"):
+            out_entry["type"] = entry["type"]
+        final_files_list.append(out_entry)
+
+    # Resolve byName/byId alt-ROM sources to byOffset before binary write
+    if rom_sources_agg:
+        alt_search_dirs = []
+        # if basedir:
+        #     for mod_name in mod_order:
+        #         alt_search_dirs.append(os.path.join(basedir, "mods", mod_name, "roms"))
+        #         alt_search_dirs.append(os.path.join(basedir, "mods", mod_name))
+        #     alt_search_dirs.append(os.path.join(basedir, "roms"))
+        #     alt_search_dirs.append(basedir)
+        alt_search_dirs.append(os.path.join(workspace_root, "roms"))
+        alt_search_dirs.append(workspace_root)
+        # de-dup while preserving order
+        seen = set()
+        alt_search_dirs = [d for d in alt_search_dirs if not (d in seen or seen.add(d))]
+        resolve_alt_rom_sources(final_files_list, rom_sources_agg, alt_search_dirs)
+
+    output_json = os.path.join(output_dir, "filetable.json")
+    with open(output_json, 'w') as f:
+        json.dump({"files": final_files_list, "romSources": rom_sources_agg}, f, indent=4)
+    print(f"Written {len(final_files_list)} entries to {output_json}")
+
+    output_dat = os.path.join(output_dir, "filetable.dat")
+    write_binary_dat(final_files_list, output_dat, rom_sources=rom_sources_agg)
+
+def cmd_genjson(**kwargs):
+    args = kwargs.get('args', [])
+    if len(args) < 1:
+        print("Usage: pdt genjson <output.json>")
+        sys.exit(1)
+        
+    output_path = args[0]
+    
+    # Run pd rom files --simple
+    # We use sys.argv[0] to call the same pdt script
+    try:
+        cmd = [sys.argv[0], 'rom', 'files', '--simple']
+        print(f"Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        output = result.stdout
+    except subprocess.CalledProcessError as e:
+        print(f"Error running pd rom files: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    files = []
+    start_parsing = False
+    
+    # Regex to parse lines like: "  1   bgdata       512B bgdata/bg_sev.seg"
+    line_regex = re.compile(r'^\s+(\d+)\s+(\w+)\s+([\d\.]+[BKM])\s+(.+)$')
+
+    for line in output.splitlines():
+        if "FILES (" in line and "total):" in line:
+            start_parsing = True
+            continue
+        
+        if not start_parsing:
+            continue
+            
+        if not line.strip():
+            continue
+
+        match = line_regex.match(line)
+        if match:
+            file_id = int(match.group(1))
+            file_type = match.group(2)
+            # file_size = match.group(3) # Unused
+            file_path = match.group(4).strip()
+            
+            # Extract filename from path
+            file_name = file_path.split('/')[-1]
+            
+            # Skip ID 0 if it's "unknown" or special
+            if file_id == 0 and file_type == "unknown":
+                continue
+
+            files.append({
+                "id": f"0x{file_id:04x}",
+                "name": file_name,
+                "path": file_path
+            })
+
+    output_data = {"files": files}
+    
+    with open(output_path, 'w') as f:
+        json.dump(output_data, f, indent=4)
+    
+    print(f"Generated {output_path} with {len(files)} entries.")
+
+# ---------------------------------------------------------------
+# Vanilla ROM file ID map (cached). Used by merge-filetables and
+# build-mod-filetable to resolve `replaces:` to vanilla IDs.
+# ---------------------------------------------------------------
+_vanilla_rom_file_id_map_cache = None
+
+
+def _parse_vanilla_filetable_dat(path):
+    """Parse a PDFT v1/v2/v3 filetable.dat and return {name: fileId}.
+
+    Used to augment the rom-derived file_map with entries that exist
+    only in an overlay filetable.dat.
+    """
+    file_map = {}
+    with open(path, 'rb') as f:
+        data = f.read()
+    if len(data) < 12 or data[:4] != b'PDFT':
+        raise ValueError(f"{path}: not a PDFT file")
+    ver, num_files = struct.unpack('>II', data[4:12])
+    p = 12
+    if ver >= 2:
+        num_rs = struct.unpack('>I', data[p:p+4])[0]; p += 4
+        for _ in range(num_rs):
+            id_len = data[p]; p += 1 + id_len
+            fn_len = data[p]; p += 1 + fn_len
+            p += 4 + 1 + 1 + 2  # expectedSize + flags + fallback + reserved
+    for _ in range(num_files):
+        fid = struct.unpack('>I', data[p:p+4])[0]; p += 4
+        flags = struct.unpack('>I', data[p:p+4])[0]; p += 4
+        p += 8  # offset + size
+        name_len = struct.unpack('>H', data[p:p+2])[0]; p += 2
+        name = data[p:p+name_len].rstrip(b'\0').decode('latin-1'); p += name_len
+        path_len = struct.unpack('>H', data[p:p+2])[0]; p += 2
+        p += path_len
+        if flags & 4:
+            p += 10  # alt-rom tail
+        file_map[name] = fid
+    return file_map
+
+
+def _vanilla_names_snapshot_path(rom_id="ntsc-final"):
+    # Snapshots live alongside other vanilla-derived artifacts (funcs, etc.).
+    return _PDT_ROOT / "share" / f"pd-{rom_id}" / "files.json"
+
+
+def _load_vanilla_names_snapshot(rom_id="ntsc-final"):
+    path = _vanilla_names_snapshot_path(rom_id)
+    if not path.is_file():
+        return None
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"  Warning: could not read vanilla names snapshot {path}: {e}", file=sys.stderr)
+        return None
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, dict):
+        return None
+    out = {}
+    for name, fid in files.items():
+        if isinstance(fid, str):
+            out[name] = int(fid, 0)
+        else:
+            out[name] = int(fid)
+    return out
+
+
+def _extract_vanilla_names_via_rom():
+    """Invoke `pdt rom files --simple` and parse its table output.
+
+    Requires the ROM to be present. Returns {name: fileId}.
+    """
+    cmd = [sys.argv[0], 'rom', 'files', '--simple']
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error running {' '.join(cmd)} (exit {result.returncode}):", file=sys.stderr)
+        if result.stdout:
+            print("--- stdout ---", file=sys.stderr)
+            print(result.stdout, file=sys.stderr)
+        if result.stderr:
+            print("--- stderr ---", file=sys.stderr)
+            print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+    output = result.stdout
+
+    file_map = {}
+    line_regex = re.compile(r'^\s*(\d+)\s+(.+?)\s+([\d\.]+[BKM])\s+(.+)$')
+    start_parsing = False
+    for line in output.splitlines():
+        if "FILES (" in line and "total):" in line:
+            start_parsing = True
+            continue
+        if not start_parsing or not line.strip():
+            continue
+        match = line_regex.match(line)
+        if match:
+            file_id = int(match.group(1))
+            file_path = match.group(4).strip()
+            file_name = os.path.basename(file_path)
+            file_map[file_name] = file_id
+    return file_map
+
+
+def _vanilla_rom_file_id_map(extra_filetable_paths=None):
+    """Return {filename: fileId} for the vanilla file space.
+
+    Reads the checked-in snapshot at `share/pd-<rom-id>/files.json` when
+    present (no ROM required); otherwise falls back to `pdt rom files
+    --simple`. Optional filetable.dat overlays win on key conflict.
+    """
+    global _vanilla_rom_file_id_map_cache
+    if _vanilla_rom_file_id_map_cache is not None and not extra_filetable_paths:
+        return _vanilla_rom_file_id_map_cache
+    if _vanilla_rom_file_id_map_cache is not None:
+        file_map = dict(_vanilla_rom_file_id_map_cache)
+    else:
+        file_map = _load_vanilla_names_snapshot()
+        if file_map is not None:
+            snap_path = _vanilla_names_snapshot_path()
+            print(f"Loaded {len(file_map)} vanilla filenames from snapshot: {snap_path}")
+        else:
+            print("No vanilla names snapshot found; running 'pdt rom files'...")
+            file_map = _extract_vanilla_names_via_rom()
+            print(f"Found {len(file_map)} files in vanilla ROM.")
+        _vanilla_rom_file_id_map_cache = dict(file_map)
+
+    if extra_filetable_paths:
+        for ftpath in extra_filetable_paths:
+            if not os.path.isfile(ftpath):
+                print(f"  Warning: vanilla filetable overlay not found: {ftpath}", file=sys.stderr)
+                continue
+            overlay = _parse_vanilla_filetable_dat(ftpath)
+            added = sum(1 for k in overlay if k not in file_map)
+            file_map.update(overlay)
+            print(f"  Loaded {len(overlay)} entries ({added} new) from vanilla filetable overlay: {ftpath}")
+    return file_map
+
+
+def cmd_build_mod_filetable(**kwargs):
+    """Build a per-mod PDFT v3 fragment.
+
+    Usage:
+      pdt build-mod-filetable <mod-name> [--workspace <dir>] [--output <dir>]
+                                         [--vanilla-tex-count <N>]
+
+    Inputs:
+      <workspace>/<mod-name>_filetable.json     (mod manifest)
+      <workspace>/<mod-name>_texmap.json        (optional, persisted texMap)
+
+    Output:
+      <output>/filetable.dat                    (default: <workspace>/<mod-name>/)
+      <workspace>/<mod-name>_texmap.json        (updated with any new allocations)
+
+    Local file ID allocation:
+      - replaces: <vanilla-name>  → vanilla file ID (looked up via 'pdt rom files')
+      - new files                 → allocated 2018+, sorted by name (deterministic)
+
+    Texture port ID allocation:
+      - localTexId from JSON (`textureId` field)
+      - portTexId persisted in <mod-name>_texmap.json so model bytes stay stable
+      - new textures get next-available port ID >= --vanilla-tex-count (default 3503)
+    """
+    args = kwargs.get('args', [])
+    if not args or args[0].startswith('--'):
+        print("Usage: pdt build-mod-filetable <mod-name> [--workspace <dir>] [--output <dir>] "
+              "[--mod-dir <dir>] [--vanilla-tex-count <N>] [--vanilla-filetable <path>] "
+              "[--rom-search-dir <dir>]... [--allow-orphans]",
+              file=sys.stderr)
+        sys.exit(1)
+
+    mod_name = args[0]
+    workspace = _original_cwd
+    output_dir = None
+    vanilla_tex_count = 3503  # NUM_TEXTURES default; must match engine constants.h
+    vanilla_filetables = []
+    extra_search_dirs = []
+    allow_orphans = False
+
+    i = 1
+    while i < len(args):
+        if args[i] == '--workspace' and i + 1 < len(args):
+            workspace = os.path.join(_original_cwd, os.path.expanduser(args[i + 1]))
+            i += 2
+        elif args[i] == '--output' and i + 1 < len(args):
+            output_dir = os.path.join(_original_cwd, os.path.expanduser(args[i + 1]))
+            i += 2
+        elif args[i] == '--mod-dir' and i + 1 < len(args):
+            md = os.path.join(_original_cwd, os.path.expanduser(args[i + 1]))
+            workspace = md
+            output_dir = md
+            i += 2
+        elif args[i] == '--vanilla-tex-count' and i + 1 < len(args):
+            vanilla_tex_count = int(args[i + 1], 0)
+            i += 2
+        elif args[i] == '--vanilla-filetable' and i + 1 < len(args):
+            vanilla_filetables.append(os.path.join(_original_cwd, os.path.expanduser(args[i + 1])))
+            i += 2
+        elif args[i] == '--rom-search-dir' and i + 1 < len(args):
+            extra_search_dirs.append(os.path.join(_original_cwd, os.path.expanduser(args[i + 1])))
+            i += 2
+        elif args[i] == '--allow-orphans':
+            allow_orphans = True
+            i += 1
+        else:
+            print(f"Unknown arg: {args[i]}", file=sys.stderr)
+            sys.exit(1)
+
+    json_path = os.path.join(workspace, f"{mod_name}_filetable.json")
+    texmap_path = os.path.join(workspace, f"{mod_name}_texmap.json")
+    if not os.path.isfile(json_path):
+        print(f"Error: {json_path} not found", file=sys.stderr)
+        sys.exit(1)
+    if output_dir is None:
+        output_dir = os.path.join(workspace, mod_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(json_path, 'r') as f:
+        manifest = json.load(f)
+
+    # Load existing texmap (for stability across rebuilds)
+    texmap = {}  # localTexId (int) -> portTexId (int)
+    if os.path.isfile(texmap_path):
+        with open(texmap_path, 'r') as f:
+            raw = json.load(f)
+        for k, v in raw.get("entries", {}).items():
+            texmap[int(k, 0) if isinstance(k, str) else int(k)] = int(v, 0) if isinstance(v, str) else int(v)
+        print(f"Loaded {len(texmap)} existing texMap entries from {texmap_path}")
+
+    # Partition manifest entries
+    files_in = manifest.get("files", []) or []
+    rom_sources = manifest.get("romSources", []) or []
+
+    file_entries = []   # non-texture entries (model/setup/prop)
+    tex_entries = []    # texture entries
+    for e in files_in:
+        if e.get("type") == "texture":
+            tex_entries.append(e)
+        else:
+            file_entries.append(e)
+
+    # Resolve any byName/byId alt-ROM sources to byOffset before writing.
+    # --rom-search-dir entries take precedence over the workspace-relative defaults.
+    search_dirs = extra_search_dirs + [output_dir, os.path.join(workspace, "mods", mod_name), workspace]
+    if rom_sources:
+        resolved = resolve_alt_rom_sources(file_entries + tex_entries, rom_sources, search_dirs)
+        print(f"Resolved {resolved} alt-ROM sources")
+
+    # Allocate local file IDs
+    vanilla_map = _vanilla_rom_file_id_map(extra_filetable_paths=vanilla_filetables or None)
+
+    # Validator: classify each entry as resolved / vanilla-name-flag / unknown-replaces / orphan.
+    # An entry is resolved iff it has a source block, a replaces onto a vanilla name,
+    # or a `path` that points at an existing loose file in the workspace.
+    def _loose_file_exists(entry_path):
+        if not entry_path:
+            return False
+        for part in entry_path.split("|"):
+            # Strip PDT scope prefix like "INTRO:" or "mod:foo::".
+            rel = part.rsplit(":", 1)[-1] if ":" in part else part
+            if os.path.isfile(os.path.join(workspace, rel)):
+                return True
+        return False
+
+    orphans = []
+    vanilla_name_warnings = []
+    unknown_replaces = []
+    for e in file_entries + tex_entries:
+        name = e.get("name", "")
+        if not name:
+            continue
+        replaces = e.get("replaces")
+        if replaces:
+            if replaces not in vanilla_map:
+                unknown_replaces.append((name, replaces))
+            continue
+        if "source" in e:
+            continue
+        if _loose_file_exists(e.get("path")):
+            if name in vanilla_map:
+                vanilla_name_warnings.append(name)
+            continue
+        orphans.append(name)
+
+    if unknown_replaces:
+        print(f"\nValidator: {len(unknown_replaces)} entries with replaces: pointing at unknown vanilla files:", file=sys.stderr)
+        for n, r in unknown_replaces[:20]:
+            print(f"  {n:<40} replaces={r}", file=sys.stderr)
+        if len(unknown_replaces) > 20:
+            print(f"  ... and {len(unknown_replaces) - 20} more", file=sys.stderr)
+    if vanilla_name_warnings:
+        print(f"\nValidator: {len(vanilla_name_warnings)} entries have a vanilla name without replaces: (add `replaces` if you intend to override vanilla):", file=sys.stderr)
+        for n in vanilla_name_warnings[:20]:
+            print(f"  {n}", file=sys.stderr)
+        if len(vanilla_name_warnings) > 20:
+            print(f"  ... and {len(vanilla_name_warnings) - 20} more", file=sys.stderr)
+    if orphans:
+        print(f"\nValidator: {len(orphans)} orphan entries (no source, no loose file, no replaces):", file=sys.stderr)
+        for n in orphans[:20]:
+            print(f"  {n}", file=sys.stderr)
+        if len(orphans) > 20:
+            print(f"  ... and {len(orphans) - 20} more", file=sys.stderr)
+
+    if (orphans or unknown_replaces) and not allow_orphans:
+        print("\nERROR: validator found issues. Fix them, or re-run with --allow-orphans to build anyway.", file=sys.stderr)
+        sys.exit(1)
+
+    vanilla_max = max(vanilla_map.values()) if vanilla_map else 0
+    next_local_id = max(vanilla_max + 1, 2018)
+
+    # Sort new (non-replacer) files by name for determinism
+    file_entries_sorted = sorted(file_entries, key=lambda e: (0 if e.get("replaces") else 1, e.get("name", "")))
+
+    out_files = []
+    for e in file_entries_sorted:
+        name = e.get("name")
+        if not name:
+            continue
+        replaces = e.get("replaces")
+        if replaces:
+            if replaces not in vanilla_map:
+                print(f"  Warning: '{name}' replaces unknown vanilla file '{replaces}'; skipping", file=sys.stderr)
+                continue
+            local_id = vanilla_map[replaces]
+        else:
+            local_id = next_local_id
+            next_local_id += 1
+        out_e = dict(e)
+        out_e["id"] = local_id
+        out_files.append(out_e)
+
+    # Allocate texture port IDs (persistent). The fragment on disk stores
+    # mod-LOCAL slot indices starting at 0. The engine offsets them by a
+    # per-mod base at fragment-load time so port IDs are globally unique
+    # without any cross-mod build-time coordination.
+    used_ports = set(texmap.values())
+    next_port_id = 0
+    def alloc_port():
+        nonlocal next_port_id
+        while next_port_id in used_ports:
+            next_port_id += 1
+        port = next_port_id
+        used_ports.add(port)
+        next_port_id += 1
+        return port
+
+    rom_tex_map_pairs = []  # (localTexId, portTexId), sorted by localTexId
+    seen_map_pairs = set()  # dedupe: same (local, port) shows up per texture-file entry
+    tex_entries_sorted = sorted(tex_entries, key=lambda e: int(e.get("textureId", "0"), 0)
+                                 if isinstance(e.get("textureId"), str) else int(e.get("textureId", 0)))
+    for e in tex_entries_sorted:
+        tid = e.get("textureId")
+        if tid is None:
+            print(f"  Warning: texture '{e.get('name')}' missing textureId; skipping", file=sys.stderr)
+            continue
+        local_tex_id = int(tid, 0) if isinstance(tid, str) else int(tid)
+        if local_tex_id not in texmap:
+            texmap[local_tex_id] = alloc_port()
+        port_tex_id = texmap[local_tex_id]
+        if (local_tex_id, port_tex_id) not in seen_map_pairs:
+            rom_tex_map_pairs.append((local_tex_id, port_tex_id))
+            seen_map_pairs.add((local_tex_id, port_tex_id))
+
+        # Texture entries also need a file-table id so engine can locate
+        # bytes (loose path or alt-ROM source). Allocate from the same
+        # `next_local_id` pool as other new files, NOT from the portTexId
+        # space: for a mod loaded at mod-index 0 (the boot mod, whose
+        # fileSlots row aliases vanilla), a small port id would overwrite
+        # a vanilla file slot (e.g. id=19 is FILE_BG_DISH_SEG).
+        out_e = dict(e)
+        out_e["id"] = next_local_id
+        next_local_id += 1
+        out_files.append(out_e)
+
+    # Persist texmap
+    with open(texmap_path, 'w') as f:
+        json.dump({
+            "modName": mod_name,
+            "vanillaTexCount": vanilla_tex_count,
+            "entries": {f"0x{k:04x}": f"0x{v:04x}" for k, v in sorted(texmap.items())},
+        }, f, indent=2)
+    print(f"Persisted {len(texmap)} texMap entries to {texmap_path}")
+
+    # Emit fragment
+    out_path = os.path.join(output_dir, "filetable.dat")
+    write_binary_dat(out_files, out_path, rom_sources=rom_sources, rom_tex_map=rom_tex_map_pairs)
+    print(f"Wrote per-mod fragment: {out_path} "
+          f"({len(out_files)} entries, {len(rom_tex_map_pairs)} texMap, {len(rom_sources)} romSources)")
+
+
+def _resolve_rom_for_id(rom_id, rom_file=None):
+    """Return the ROM path for a rom-id, or exit with a message.
+
+    An explicit --rom-file wins. Otherwise look for pd.<rom-id>.z64 beside the
+    other ROMs. $PD_ROMFILE is only accepted when it is that same file: a
+    mismatch is what produced mislabelled snapshots before, so it is fatal
+    rather than a warning.
+    """
+    expected_name = f"pd.{rom_id}.z64"
+    env_rom = os.environ.get('PD_ROMFILE', '').strip()
+
+    if rom_file:
+        path = Path(rom_file).expanduser()
+        if not path.is_file():
+            print(f"ERROR: --rom-file {path} does not exist", file=sys.stderr)
+            sys.exit(1)
+        return path.resolve()
+
+    candidates = []
+    if env_rom:
+        candidates.append(Path(env_rom).expanduser().parent / expected_name)
+    repo_root = _PDT_ROOT.parent
+    candidates.append(repo_root / "pd-fojo-basedir" / "data" / expected_name)
+    candidates.append(repo_root / "pd-fojo-basedir" / expected_name)
+
+    for cand in candidates:
+        if cand.is_file():
+            if env_rom and Path(env_rom).expanduser().resolve() != cand.resolve():
+                print(f"ERROR: --rom-id {rom_id} wants {cand}", file=sys.stderr)
+                print(f"       but PD_ROMFILE points at {env_rom}", file=sys.stderr)
+                print("       Unset PD_ROMFILE, point it at the right ROM, or pass --rom-file.",
+                      file=sys.stderr)
+                sys.exit(1)
+            return cand.resolve()
+
+    print(f"ERROR: no {expected_name} found for --rom-id {rom_id}", file=sys.stderr)
+    print("       Looked in: " + ", ".join(str(c) for c in candidates), file=sys.stderr)
+    print("       Pass --rom-file to point at it explicitly.", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_snapshot_vanilla_names(**kwargs):
+    """Snapshot the vanilla filename->fileId map to a checked-in JSON file.
+
+    Usage:
+      pdt snapshot-vanilla-names [--rom-id <id>] [--rom-file <path>]
+
+    Reads the ROM via `pdt rom files --simple` and writes
+    tools/share/pd-<rom-id>/files.json
+
+    --rom-id selects BOTH the ROM that gets read and the folder written. It
+    used to name only the output folder while the extraction read whatever
+    $PD_ROMFILE happened to point at, so `--rom-id jpn-final` with a stale env
+    wrote ntsc data into share/pd-jpn-final/ stamped "romId": "jpn-final" --
+    silently wrong, and worse than a missing snapshot. The ROM is now resolved
+    from the id and $PD_ROMFILE is overridden for the child process; a
+    $PD_ROMFILE that disagrees is an error, not a silent win.
+
+    Use --rom-file to point at a ROM that is not in the basedir.
+    """
+    args = kwargs.get('args', [])
+    rom_id = "ntsc-final"
+    rom_file = None
+    it = iter(args)
+    for a in it:
+        if a == '--rom-id':
+            rom_id = next(it, rom_id)
+        elif a.startswith('--rom-id='):
+            rom_id = a.split('=', 1)[1]
+        elif a == '--rom-file':
+            rom_file = next(it, None)
+        elif a.startswith('--rom-file='):
+            rom_file = a.split('=', 1)[1]
+
+    rom_path = _resolve_rom_for_id(rom_id, rom_file)
+    os.environ['PD_ROMFILE'] = str(rom_path)
+
+    out_path = _vanilla_names_snapshot_path(rom_id)
+    # Force a fresh extraction: bypass cache and any existing snapshot.
+    global _vanilla_rom_file_id_map_cache
+    _vanilla_rom_file_id_map_cache = None
+    print(f"Running 'pdt rom files' for rom-id={rom_id} using {rom_path}...")
+    file_map = _extract_vanilla_names_via_rom()
+    if not file_map:
+        print("ERROR: rom enumeration returned no files; refusing to write empty snapshot", file=sys.stderr)
+        sys.exit(1)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "romId": rom_id,
+        "count": len(file_map),
+        "files": {name: fid for name, fid in sorted(file_map.items(), key=lambda kv: (kv[1], kv[0]))},
+    }
+    with open(out_path, 'w') as f:
+        json.dump(payload, f, indent=2)
+        f.write('\n')
+    print(f"Wrote {len(file_map)} vanilla filenames to {out_path}")
+
+
+def cmd_build_n64_remote(**kwargs):
+    """Dispatch to the standalone remote-N64-build orchestrator.
+
+    Implementation lives in lib/packages/python/pd_remote_build.py so
+    it can be unit-tested without dragging in the rest of pdt.
+
+    Reads default values from the ``[remote-build]`` table of the
+    project config file (if any), so a checked-in ``.pdt.toml`` can
+    encode the team's linuxbox host without forcing every invocation
+    to pass --remote/--remote-path.
+    """
+    lib_path = str(TOOL_LIB_PYTHON)
+    if lib_path not in sys.path:
+        sys.path.insert(0, lib_path)
+    from pd_remote_build import cli_main
+
+    args = list(kwargs.get('args', []) or [])
+    cfg_section = (get_project_config() or {}).get("remote-build") or {}
+    if isinstance(cfg_section, dict):
+        # For each known flag, if the user didn't pass it on the CLI,
+        # synthesize one from the config. Booleans use their flag form.
+        flag_map = {
+            "remote": "--remote",
+            "remote_path": "--remote-path",
+            "source": "--source",
+            "out": "--out",
+            "rom_id": "--rom-id",
+            "tasklist": "--tasklist",
+            "jobs": "--jobs",
+            "tag": "--tag",
+            "remote_config": "--remote-config",
+        }
+        for key, flag in flag_map.items():
+            if flag in args or any(a.startswith(flag + "=") for a in args):
+                continue
+            if key in cfg_section and cfg_section[key] not in (None, ""):
+                args.extend([flag, str(cfg_section[key])])
+        if cfg_section.get("no_rsync_back") and "--no-rsync-back" not in args:
+            args.append("--no-rsync-back")
+        for opt in cfg_section.get("ssh_opts", []) or []:
+            args.extend(["--ssh-opt", str(opt)])
+        # [[remote-build.overlays]] -- non-built asset trees layered on
+        # top of the worktree before the remote build. Each entry is an
+        # inline table with `source` (required) and optional
+        # `dest_subdir`. CLI --overlay flags from the user take
+        # precedence (they appear before the synthesized ones below
+        # only by convention; argparse with action=append keeps order).
+        cli_has_overlay = any(a == "--overlay" or a.startswith("--overlay=") for a in args)
+        if not cli_has_overlay:
+            for ov in cfg_section.get("overlays", []) or []:
+                if not isinstance(ov, dict):
+                    continue
+                src = ov.get("source")
+                if not src:
+                    continue
+                sub = ov.get("dest_subdir") or ""
+                stage = ov.get("stage") or "post-build"
+                # Encode as SOURCE[:SUB[:STAGE]]; omit trailing
+                # defaults to keep the argv human-readable.
+                if stage != "post-build":
+                    value = f"{src}:{sub}:{stage}"
+                elif sub:
+                    value = f"{src}:{sub}"
+                else:
+                    value = str(src)
+                args.extend(["--overlay", value])
+        # [remote-build].artifacts -- explicit tarball artifact list.
+        # CLI --artifact flags take precedence; if the user passes any,
+        # the toml list is ignored entirely (no merge).
+        cli_has_artifact = any(
+            a == "--artifact" or a.startswith("--artifact=") for a in args)
+        if not cli_has_artifact:
+            for art in cfg_section.get("artifacts", []) or []:
+                if art:
+                    args.extend(["--artifact", str(art)])
+    # Default --source to the user's original cwd (pdt chdir's to $PD
+    # at startup, but for remote builds we want to rsync the worktree
+    # the user actually invoked pdt from).
+    if "--source" not in args and not any(a.startswith("--source=") for a in args):
+        args.extend(["--source", _original_cwd])
+    sys.exit(cli_main(args))
+
+
+def cmd_deploy_mod(**kwargs):
+    """Deploy a built mod tarball into a local install dir.
+
+    Implementation lives in lib/packages/python/pd_deploy.py.
+
+    Reads defaults from the ``[deploy]`` table of the project config
+    file, including ``[[deploy.artifacts]]`` entries. CLI flags take
+    precedence; for `--artifact`, if the user passes any, the toml
+    artifact list is ignored entirely (no merge).
+    """
+    lib_path = str(TOOL_LIB_PYTHON)
+    if lib_path not in sys.path:
+        sys.path.insert(0, lib_path)
+    from pd_deploy import cli_main
+
+    args = list(kwargs.get('args', []) or [])
+    cfg_section = (get_project_config() or {}).get("deploy") or {}
+    if isinstance(cfg_section, dict):
+        flag_map = {
+            "install_dir":  "--install-dir",
+            "source_dir":   "--source-dir",
+            "tarball":      "--from",
+            "tarball_glob": "--tarball-glob",
+        }
+        for key, flag in flag_map.items():
+            if flag in args or any(a.startswith(flag + "=") for a in args):
+                continue
+            if key in cfg_section and cfg_section[key] not in (None, ""):
+                args.extend([flag, str(cfg_section[key])])
+        if cfg_section.get("clean") and "--clean" not in args:
+            args.append("--clean")
+        # Only inject artifact entries from toml if the CLI didn't pass any.
+        cli_has_artifact = any(
+            a == "--artifact" or a.startswith("--artifact=") for a in args)
+        if not cli_has_artifact:
+            for art in cfg_section.get("artifacts", []) or []:
+                if not isinstance(art, dict):
+                    continue
+                tpath = art.get("tarball_path")
+                if not tpath:
+                    continue
+                sub = art.get("dest_subdir") or ""
+                value = f"{tpath}:{sub}" if sub else str(tpath)
+                args.extend(["--artifact", value])
+    sys.exit(cli_main(args))
+
+
+commands = {
+  'build-port' : cmd_build_port,
+  'rom': cmd_rom,
+    'gendat': cmd_gendat,
+    'genjson': cmd_genjson,
+    'merge-filetables': cmd_merge_filetables,
+    'build-mod-filetable': cmd_build_mod_filetable,
+    'snapshot-vanilla-names': cmd_snapshot_vanilla_names,
+    'tex2png': cmd_tex2png,
+    'png2tex': cmd_png2tex,
+    'tex-scan': cmd_rom_tex_scan,
+    'text': cmd_text_manager,
+    'build-n64-remote': cmd_build_n64_remote,
+    'deploy-mod': cmd_deploy_mod,
+}
+
+if __name__ == "__main__":
+
+    print_host_env()
+    command = None
+    # I don't even want to bothher with the getopt-centered parser for pc port builds
+    if argparseargs.command not in ['psake', 'bash']:
+      args = argparseargs
+      command = args.command
+      if command not in commands:
+        raise Exception(f"command {command} not found")
+      commands[command](**args.__dict__)
+    else:
+      try:
+        command, args = argparseargs.command, vars(argparseargs)
+      except Exception as ex:
+        logging.error(f"Failed to parse cli args: {ex}")
+        raise
+      pd_cli(command=command, params=args)
+      logging.debug("final args: %s", args)
+      print_host_env()

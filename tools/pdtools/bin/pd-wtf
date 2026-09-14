@@ -1,0 +1,10 @@
+#!/bin/bash
+
+ROMID=${ROMID:-ntsc-final}
+
+xxd "$PD/extracted/$ROMID/segments/$1.bin" > /tmp/old.bin
+xxd "$PD/build/$ROMID/segments/$1.bin" > /tmp/new.bin
+
+diff /tmp/{old,new}.bin | less -S
+
+rm -f /tmp/{old,new}.bin

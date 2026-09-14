@@ -1,0 +1,241 @@
+#!/usr/bin/env php
+<?php
+
+// pd-dis <file> <start> <stop> <vma> <map>
+
+$file = $argv[1];
+$start = $argv[2];
+$stop = $argv[3];
+$vma = $argv[4] ?? 0;
+$map = isset($argv[5]) ? json_decode(file_get_contents($argv[5])) : null;
+
+$cmd = "mips64-linux-gnu-objdump -D -M hex --disassemble-zeroes --no-show-raw-insn -b binary -m mips -EB --start-address=$start --stop-address=$stop --adjust-vma=$vma $file | tail +8 | column -t";
+
+$asm = `$cmd`;
+
+$asm = rename_functions($asm, $map);
+$asm = mark_loops($asm);
+$asm = mark_targets($asm);
+$asm = mark_delays($asm);
+$asm = hexify($asm);
+$asm = mark_floats($asm);
+//$asm = grep_branches($asm);
+//$asm = grep_jals($asm);
+
+echo $asm;
+
+/**
+ * Find branches to earlier positions.
+ * Mark branch as LOOPEND and target as LOOP.
+ */
+function mark_loops($asm)
+{
+	preg_match_all('/^(\S+):\s+(b\S*).*?0x([0-9a-f]+)$/m', $asm, $matches, PREG_SET_ORDER);
+
+	foreach ($matches as $match) {
+		$endaddr = $match[1];
+		$instr = $match[2];
+		$startaddr = $match[3];
+
+		if ($instr != 'break' && hexdec($startaddr) < hexdec($endaddr)) {
+			$asm = preg_replace("/^($endaddr:\s+\S+\s+)(\S)/m", "\$1[LOOPEND]\$2", $asm);
+			$asm = preg_replace("/^($startaddr:\s+\S+\s+)(\S)/m", "\$1[LOOP]\$2", $asm);
+		}
+	}
+
+	return $asm;
+}
+
+function mark_targets($asm)
+{
+	preg_match_all('/^(\S+):\s+(b\S+).*?0x([0-9a-f]+)$/m', $asm, $matches, PREG_SET_ORDER);
+	$addrs = [];
+
+	foreach ($matches as $match) {
+		$branchaddr = $match[1];
+		$instr = $match[2];
+		$targaddr = $match[3];
+
+		if ($instr != 'break' && hexdec($targaddr) > hexdec($branchaddr)) {
+			$addrs[$targaddr] = 1;
+		}
+	}
+
+	foreach (array_keys($addrs) as $targaddr) {
+		$asm = preg_replace("/^($targaddr:\s+\S+ +)/m", "\$1[TARGET]", $asm);
+	}
+
+	return $asm;
+}
+
+/**
+ * Find branch-likelys then take the following instruction and replace with DELAY.
+ */
+function mark_delays($asm)
+{
+	preg_match_all('/^(\S+):\s+b\S+l\s/m', $asm, $matches, PREG_SET_ORDER);
+
+	foreach ($matches as $match) {
+		$addr = $match[1];
+
+		$delayaddr = dechex(hexdec($addr) + 4);
+
+		$asm = preg_replace("/^($delayaddr:\s+)\S+.*$/m", "\$1DELAY", $asm);
+	}
+
+	return $asm;
+}
+
+/**
+ * Convert all decimal values to hex if 10 or more.
+ */
+function hexify($asm)
+{
+	$regexes = [
+		'/,([-0-9a-fx]+)/',
+		'/,([-0-9a-fx]+)/',
+		'/([-0-9a-fx]+)$/m',
+	];
+
+	foreach ($regexes as $regex) {
+		$asm = preg_replace_callback($regex, function($match) {
+			$value = $match[1];
+
+			if (strpos($match[1], 'x') === false) {
+				if ($match[1] >= 10) {
+					$value = '0x' . dechex($match[1]);
+				} else if ($match[1] < 0) {
+					$value = '-0x' . dechex(abs($match[1]));
+				}
+			}
+
+			return str_replace($match[1], $value, $match[0]);
+		}, $asm);
+	}
+
+	return $asm;
+}
+
+function mark_floats($asm)
+{
+	preg_match_all('/^(\S+):\s+lui\s.*?at,0x([0-9a-f]+)$/m', $asm, $matches, PREG_SET_ORDER);
+
+	foreach ($matches as $match) {
+		$addr = $match[1];
+		$dec = hexdec($match[2]) << 16;
+
+		$binary  = chr(($dec >> 24) & 0xff);
+		$binary .= chr(($dec >> 16) & 0xff);
+		$binary .= chr(($dec >> 8) & 0xff);
+		$binary .= chr($dec & 0xff);
+
+		$float = unpack('G', $binary)[1];
+
+		if (strpos($float, 'E') === false) {
+			$asm = preg_replace("/^($addr:\s+\S+\s+\S+)$/m", "\$1 (float $float)", $asm);
+		}
+	}
+
+	return $asm;
+}
+
+function rename_functions($asm, $map)
+{
+	$asm = preg_replace_callback('/(\s+jal\s+)(0x[0-9a-f]+)$/m', function($match) use($map) {
+		$addr = hexdec($match[2]);
+
+		if ($addr >= 0 && $addr < 0x0f000000) {
+			$addr |= 0x70000000;
+		} else if ($addr >= 0x0f000000 && $addr <= 0x0fffffff) {
+			$addr |= 0x7f000000;
+		}
+
+		$key = sprintf('%08x', $addr);
+
+		if (!isset($map->functions->$key)) {
+			return $match[0];
+		}
+
+		return $match[1] . $map->functions->$key;
+	}, $asm);
+
+	return $asm;
+}
+
+function readvalue($value)
+{
+	$mult = 1;
+
+	if (strpos($value, '-') === 0) {
+		$value = substr($value, 1);
+		$mult = -1;
+	}
+
+	if (strpos($value, '0x') !== false) {
+		$value = hexdec($value);
+	}
+
+	return $value * $mult;
+}
+
+function tryreplace($function, $line1, $line2, $addr, $map)
+{
+	if ($addr < 0x70000000 || $addr > 0x800ad1c0) {
+		return $function;
+	}
+
+	$name = null;
+
+	for ($offset = 0; $offset < 0x10000; $offset++) {
+		$hex = sprintf('%08x', $addr - $offset);
+
+		if (isset($map->variables->$hex)) {
+			$name = $map->variables->$hex;
+			break;
+		}
+
+		$offset++;
+	}
+
+	if ($name && $offset) {
+		$name = sprintf('%s+0x%x', $name, $offset);
+	} elseif (!$name) {
+		$name = sprintf('unk%08x', $addr);
+	}
+
+	$newline1 = preg_replace('/,-?(0x)?[0-9a-f]+/', ",%hi($name)", $line1);
+	$function = str_replace($line1, $newline1, $function);
+
+	$newline2 = preg_replace('/,-?(0x)?[0-9a-f]+/', ",%lo($name)", $line2);
+	$function = str_replace($line2, $newline2, $function);
+
+	return $function;
+}
+
+function grep_branches($asm)
+{
+	$lines = explode("\n", $asm);
+
+	$lines = array_filter($lines, function($line) {
+		return strpos($line, ':  b') !== false;
+	});
+
+	$lines = implode("\n", $lines);
+
+	$lines = preg_replace('/^(\S+\s+\S+).*$/m', '$1', $lines);
+
+	$lines = preg_replace('/l$/m', '', $lines);
+
+	return $lines;
+}
+
+function grep_jals($asm)
+{
+	$lines = explode("\n", $asm);
+
+	$lines = array_filter($lines, function($line) {
+		return strpos($line, 'jal') !== false;
+	});
+
+	return implode("\n", $lines);
+}

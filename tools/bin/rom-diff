@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""rom-diff — compare two PD-format ROM file tables by content.
+
+For every filename that exists in both ROMs, hash the (raw, on-ROM)
+bytes and report which slots have different content. Designed to
+surface the replacer set in modded PD ROMs (GE-X, PD+ AIO, etc.)
+where the name table is largely vanilla but slot contents are
+swapped out.
+
+Usage:
+    rom-diff <modded.z64> <vanilla.z64> [--json]
+
+Exits 0 always; output goes to stdout.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import io
+import json
+import os
+import sys
+from pathlib import Path
+
+# Make leylinelib importable when invoked from anywhere.
+_HERE = Path(__file__).resolve().parent
+_LIB = _HERE.parent / "lib" / "packages" / "python"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+
+# leylinelib.core asserts these exist; provide harmless defaults.
+for _k in ("GEPD_TARGET", "GEPD_ZIP", "GEPD_ARCHIVE", "MOUSEINJECTOR"):
+    os.environ.setdefault(_k, "/tmp/dummy")
+
+from leylinelib.pd_rom_driver import PDROMDriver  # noqa: E402
+
+
+def load_rom(path: str) -> dict[str, dict]:
+    """Return {name: {md5, size, offset, category}} for every file in ROM."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        driver = PDROMDriver(path)
+        files = driver.extract_files()
+    out: dict[str, dict] = {}
+    for f in files:
+        # Use raw on-ROM bytes (compressed if compressed); we don't
+        # care about the unzipped form for the diff, only whether
+        # the bytes the engine reads differ.
+        h = hashlib.md5(f["content"]).hexdigest()
+        out[f["name"]] = {
+            "md5": h,
+            "size": f["size"],
+            "offset": f["offset"],
+            "category": f.get("category", "unknown"),
+            "compressed": f.get("compressed", False),
+        }
+    return out
+
+
+def classify(name: str) -> str:
+    """Coarse slot family for grouping."""
+    if name.startswith("Chead"):
+        return "head"
+    if name.startswith("Ghand_"):
+        return "hand"
+    if name.startswith("C") and name.endswith("Z"):
+        return "body_or_chr"
+    if name.startswith("G") and name.endswith("Z"):
+        return "gun"
+    if name.startswith("U"):
+        return "setup"
+    if name.startswith("P"):
+        return "prop"
+    if name.startswith("A"):
+        return "audio"
+    if name.startswith("L"):
+        return "lang"
+    if name.endswith(".seg"):
+        return "bgseg"
+    if name.endswith("padsZ"):
+        return "pads"
+    if name.endswith("tilesZ"):
+        return "tiles"
+    if name.startswith("ob/"):
+        return "object"
+    return "other"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("modded", help="modded ROM (e.g. gex.z64)")
+    ap.add_argument("vanilla", help="vanilla baseline (e.g. pd.ntsc-final.z64)")
+    ap.add_argument("--json", action="store_true",
+                    help="emit machine-readable JSON instead of text")
+    args = ap.parse_args()
+
+    mod = load_rom(args.modded)
+    van = load_rom(args.vanilla)
+
+    mod_names = set(mod)
+    van_names = set(van)
+    shared = mod_names & van_names
+    only_mod = sorted(mod_names - van_names)
+    only_van = sorted(van_names - mod_names)
+
+    replaced: list[dict] = []
+    identical = 0
+    for name in sorted(shared):
+        if mod[name]["md5"] == van[name]["md5"]:
+            identical += 1
+            continue
+        replaced.append({
+            "name": name,
+            "family": classify(name),
+            "mod_size": mod[name]["size"],
+            "van_size": van[name]["size"],
+            "mod_md5": mod[name]["md5"],
+            "van_md5": van[name]["md5"],
+        })
+
+    summary = {
+        "modded_rom": str(Path(args.modded).resolve()),
+        "vanilla_rom": str(Path(args.vanilla).resolve()),
+        "modded_count": len(mod),
+        "vanilla_count": len(van),
+        "shared": len(shared),
+        "identical": identical,
+        "replaced": len(replaced),
+        "only_in_modded": only_mod,
+        "only_in_vanilla": only_van,
+    }
+
+    if args.json:
+        json.dump({"summary": summary, "replaced": replaced},
+                  sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    print(f"== rom-diff ==")
+    print(f"  modded  : {summary['modded_rom']}")
+    print(f"  vanilla : {summary['vanilla_rom']}")
+    print()
+    print(f"  files in modded : {summary['modded_count']}")
+    print(f"  files in vanilla: {summary['vanilla_count']}")
+    print(f"  shared names    : {summary['shared']}")
+    print(f"  ├─ identical    : {summary['identical']}")
+    print(f"  └─ replaced     : {summary['replaced']}")
+    print(f"  only in modded  : {len(only_mod)}")
+    print(f"  only in vanilla : {len(only_van)}")
+    print()
+
+    # Group replaced by family.
+    by_family: dict[str, list[dict]] = {}
+    for r in replaced:
+        by_family.setdefault(r["family"], []).append(r)
+    print("== replaced slots by family ==")
+    for fam in sorted(by_family):
+        items = by_family[fam]
+        print(f"  {fam:14} {len(items):4d}")
+    print()
+
+    # Detailed list, alphabetical within each family.
+    for fam in sorted(by_family):
+        print(f"== {fam} ({len(by_family[fam])}) ==")
+        for r in by_family[fam]:
+            sd = r["mod_size"] - r["van_size"]
+            print(f"  {r['name']:40} mod={r['mod_size']:7d}  van={r['van_size']:7d}  Δ={sd:+d}")
+        print()
+
+    if only_mod:
+        print(f"== only in modded ({len(only_mod)}) ==")
+        for n in only_mod:
+            print(f"  {n}")
+        print()
+    if only_van:
+        print(f"== only in vanilla ({len(only_van)}) ==")
+        for n in only_van:
+            print(f"  {n}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

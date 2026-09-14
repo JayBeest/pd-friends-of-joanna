@@ -1,0 +1,47 @@
+#!/bin/bash
+
+ROMID=${ROMID:-ntsc-final}
+
+addrs=$(grep -Ev '^ src/' build/$ROMID/pd.map | grep -Ev '^ \.text' | grep -Ev '^ build/' | grep -E " $1$" -A 1 | awk '{print $1}')
+start=$(echo "$addrs" | head -n 1)
+stop=$(echo "$addrs" | tail -n 1)
+
+start=$((start))
+
+if [ "$start" -ge $((0x7f000000)) ]; then
+	start=$(($start & 0x00ffffff))
+	stop=$(($stop & 0x00ffffff))
+	bin=game
+	vma=0x0
+elif [ "$start" -ge $((0x70003050)) ]; then
+	start=$(($start & 0x000fffff))
+	stop=$(($stop & 0x000fffff))
+	bin=lib
+	vma=0x3050
+elif [ "$start" -ge $((0x70000000)) ]; then
+	start=$(($start & 0x0000ffff))
+	stop=$(($stop & 0x0000ffff))
+	bin=boot
+	vma=0x1000
+else
+	echo "Not sure what this is: $start - $stop"
+	exit 1
+fi
+
+old=/tmp/extracted.asm
+new=/tmp/build.asm
+echo "$1" > /tmp/pd-func
+
+pd-parsemap build/$ROMID/pd.map > /tmp/build.map
+pd-dis extracted/$ROMID/segments/$bin.bin $start $stop $vma "$PDTOOLS/tmp/$ROMID.json" > $old
+pd-dis build/$ROMID/segments/$bin.bin $start $stop $vma /tmp/build.map > $new
+
+if [[ "$2" == "diffuse" ]]; then
+	diffuse $old $new
+elif [[ "$2" == "nvim" ]]; then
+	nvim -d $old $new
+else
+	meld $old $new
+fi
+
+rm -f $old $new /tmp/pd-func

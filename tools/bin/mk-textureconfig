@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+
+
+"""
+Converts C texture config into ini format
+
+SURFACETYPE_DEFAULT      0
+SURFACETYPE_STONE        1
+SURFACETYPE_WOOD         2
+SURFACETYPE_METAL        3
+SURFACETYPE_GLASS        4
+SURFACETYPE_SHALLOWWATER 5
+SURFACETYPE_SNOW         6
+SURFACETYPE_DIRT         7
+SURFACETYPE_MUD          8
+SURFACETYPE_TILE         9
+SURFACETYPE_METALOBJ     10
+SURFACETYPE_CHR          11
+SURFACETYPE_GLASSXLU     12
+SURFACETYPE_NONE         13
+SURFACETYPE_DEEPWATER    14
+
+
+example c input:
+
+g_Textures[0x0c31].soundsurfacetype = SURFACETYPE_DIRT;
+g_Textures[0x0c31].surfacetype = SURFACETYPE_DIRT;
+
+output:
+
+texture 0x0c31 {
+    soundsurfacetype 7
+    surfacetype 7
+}
+
+
+"""
+
+import re
+import sys
+from collections import defaultdict, OrderedDict
+
+SURFACE_MAP = {
+    "SURFACETYPE_DEFAULT": 0,
+    "SURFACETYPE_STONE": 1,
+    "SURFACETYPE_WOOD": 2,
+    "SURFACETYPE_METAL": 3,
+    "SURFACETYPE_GLASS": 4,
+    "SURFACETYPE_SHALLOWWATER": 5,
+    "SURFACETYPE_SNOW": 6,
+    "SURFACETYPE_DIRT": 7,
+    "SURFACETYPE_MUD": 8,
+    "SURFACETYPE_TILE": 9,
+    "SURFACETYPE_METALOBJ": 10,
+    "SURFACETYPE_CHR": 11,
+    "SURFACETYPE_GLASSXLU": 12,
+    "SURFACETYPE_NONE": 13,
+    "SURFACETYPE_DEEPWATER": 14,
+}
+
+texture_re = re.compile(
+    r'g_Textures\[(0x[0-9a-fA-F]+)\]\.(\w+)\s*=\s*(SURFACETYPE_\w+);'
+)
+
+# Use OrderedDict to preserve order of first appearance
+textures = defaultdict(dict)
+
+for line in sys.stdin:
+    m = texture_re.match(line.strip())
+    if m:
+        tex_id, field, surf_type = m.groups()
+        textures[tex_id][field] = SURFACE_MAP.get(surf_type, surf_type)
+
+# After EOF, emit all ini lines
+for tex_id in sorted(textures.keys()):
+    print(f"texture {tex_id} {{")
+    for field, value in textures[tex_id].items():
+        print(f"    {field} {value}")
+    print("}")

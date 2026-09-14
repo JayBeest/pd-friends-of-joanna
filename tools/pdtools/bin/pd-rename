@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ -z "$2" ]; then
+	echo "Not enough args" > /dev/stderr
+	exit 1
+fi
+
+sed -i "s%\<$1\>%$2%g" $(ag -wl "$1" "$PD/src/" "$PDTOOLS"/tmp/*.json)

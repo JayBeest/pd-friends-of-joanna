@@ -1,0 +1,94 @@
+#!/usr/bin/env php
+<?php
+
+$line = file_get_contents('php://stdin');
+
+$names = [
+	'',
+	/*0x01*/ 'ame',
+	/*0x02*/ 'arch',
+	/*0x03*/ 'ark',
+	/*0x04*/ 'ash',
+	/*0x05*/ 'azt',
+	/*0x06*/ 'cat',
+	/*0x07*/ 'cave',
+	/*0x08*/ 'arec',
+	/*0x09*/ 'crad',
+	/*0x0a*/ 'cryp',
+	/*0x0b*/ 'dam',
+	/*0x0c*/ 'depo',
+	/*0x0d*/ 'dest',
+	/*0x0e*/ 'dish',
+	/*0x0f*/ 'ear',
+	/*0x10*/ 'eld',
+	/*0x11*/ 'imp',
+	/*0x12*/ 'jun',
+	/*0x13*/ 'lee',
+	/*0x14*/ 'len',
+	/*0x15*/ 'lip',
+	/*0x16*/ 'lue',
+	/*0x17*/ 'oat',
+	/*0x18*/ 'pam',
+	/*0x19*/ 'pete',
+	/*0x1a*/ 'ref',
+	/*0x1b*/ 'rit',
+	/*0x1c*/ 'run',
+	/*0x1d*/ 'sevb',
+	/*0x1e*/ 'sev',
+	/*0x1f*/ 'sevx',
+	/*0x20*/ 'sevxb',
+	/*0x21*/ 'sho',
+	/*0x22*/ 'silo',
+	/*0x23*/ 'stat',
+	/*0x24*/ 'tra',
+	/*0x25*/ 'wax',
+	/*0x26*/ 'gun',
+	/*0x27*/ 'title',
+	/*0x28*/ 'mpmenu',
+	/*0x29*/ 'propobj',
+	/*0x2a*/ 'mpweapons',
+	/*0x2b*/ 'options',
+	/*0x2c*/ 'misc',
+	/*0x2d*/ 'uff',
+	/*0x2e*/ 'old',
+	/*0x2f*/ 'ate',
+	/*0x30*/ 'lam',
+	/*0x31*/ 'mp1',
+	/*0x32*/ 'mp2',
+	/*0x33*/ 'mp3',
+	/*0x34*/ 'mp4',
+	/*0x35*/ 'mp5',
+	/*0x36*/ 'mp6',
+	/*0x37*/ 'mp7',
+	/*0x38*/ 'mp8',
+	/*0x39*/ 'mp9',
+	/*0x3a*/ 'mp10',
+	/*0x3b*/ 'mp11',
+	/*0x3c*/ 'mp12',
+	/*0x3d*/ 'mp13',
+	/*0x3e*/ 'mp14',
+	/*0x3f*/ 'mp15',
+	/*0x40*/ 'mp16',
+	/*0x41*/ 'mp17',
+	/*0x42*/ 'mp18',
+	/*0x43*/ 'mp19',
+	/*0x44*/ 'mp20',
+];
+
+$line = preg_replace_callback('/0x[0-9a-f]{4,}/', function($match) use ($names) {
+	if (strlen($match[0]) != 6) {
+		return $match[0];
+	}
+
+	$value = hexdec($match[0]);
+	$bank = $value >> 9;
+	$offset = $value & 0x1ff;
+
+	if (!isset($names[$bank])) {
+		return $match[0];
+	}
+
+	return sprintf("L_%s(%d)", strtoupper($names[$bank]), $offset);
+}, $line);
+
+echo $line;

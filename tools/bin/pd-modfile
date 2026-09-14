@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+
+# This script searches for a file in the runtime filetables.
+#
+# Usage:
+#   pd-modfile --modsdir <mods_directory> --datadir <datadir> <filename> [--from-rom <ntsc-final|jpn>]
+#
+# Arguments:
+#   --modsdir: Directory where mods are found (default: data/mods)
+#   --datadir: Directory where ROMs and distribution-level binary files are stored (default: data)
+#   <filename>: Filename to search for
+#   --from-rom: Specify the ROM type (ntsc-final or jpn)
+
+import os
+import json
+import argparse
+import logging
+import sys
+
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib/packages/python/leylinelib"))
+
+from rompath import ROMPath
+from pd_rom_driver import PDROMDriver
+import rom_ls
+import rom_explorer
+import struct
+import zlib
+
+logging.basicConfig(level=logging.INFO)
+
+def read_filetable(filepath):
+    if not os.path.exists(filepath):
+        logging.error(f"File {filepath} does not exist.")
+        return None
+    with open(filepath, 'r') as file:
+        return json.load(file)
+
+def merge_filetables(mods_table, rom_table, source_rom_table):
+    merged_table = {}
+    
+    # First add ROM entries (these are the actual mounts)
+    for filename in rom_table:
+        entry = None
+        if filename:
+            entry = rom_table.get(filename)
+        merged_table[filename] = {
+            # 'file': entry.copy(),  # The actual mount info from ROM
+            'source': None         # Will be populated with mods metadata
+        }
+        if entry:
+            merged_table[filename]['file'] = entry.copy()
+
+    for filename in source_rom_table:
+        entry = None
+        if filename:
+            entry = source_rom_table.get('filename')
+        if entry:
+            merged_table[filename]['file'] = entry.copy()
+
+    # Then add/modify with mods filetable metadata
+    for entry in mods_table['files']:
+        filename = entry['name']
+        alias = entry.get('source', {}).get("alias")
+        if filename in merged_table:
+
+            # Add other mods metadata
+            if 'description' in entry:
+                merged_table[filename]['description'] = entry['description']
+            if 'prefix' in entry:
+                merged_table[filename]['prefix'] = entry['prefix']
+        else:
+            merged_table[filename] = entry.copy()
+            if alias:
+                merged_table[filename]["source"].update(source_rom_table[alias].copy())
+    
+    return merged_table
+
+def find_file(merged_table, filename, from_rom=None, by_alias:bool=False):
+    if not by_alias:
+        if from_rom == 'ntsc-final':
+            for key, value in merged_table.items():
+                if (value.get('source') and
+                    value['source'].get('rom') == 'gex'):  # Any gex source file
+                    return value
+        elif from_rom == 'jpn':
+            # Implement logic to search by JPN source name
+            pass
+        
+        return merged_table.get(filename, None)
+    else:
+        for key, value in merged_table.items():
+            if (
+                value.get('source') and
+                value.get('source').get('alias') == filename and
+                value['source'].get('rom') == from_rom):  # Any source file
+                return value
+
+def main():
+    parser = argparse.ArgumentParser(description="Search for a file in the runtime filetables")
+    parser.add_argument("--mod", required=True, help="mod to check")
+    parser.add_argument("--modsdir", default="data/mods", help="Directory where mods are found")
+    parser.add_argument("--datadir", default="data", help="Directory where ROMs and distribution-level binary files are stored")
+    parser.add_argument("filename", help="Filename to search for")
+    parser.add_argument("--from-rom", choices=['ntsc-final', 'jpn', 'gex'], required=True, help="Specify the ROM type")
+    parser.add_argument("--by-alias", action='store_true')
+    
+    args = parser.parse_args()
+
+    from pathlib import Path
+    args.modsdir = Path(args.modsdir).resolve()
+    
+    mods_table_path = os.path.join(args.modsdir, f"mod_{args.mod}/mod_{args.mod}_filetable.json")
+    rom_table_path = os.path.join(args.datadir, f"{args.from_rom}.z64", "files.json")
+
+    def read_romfiletable(rom):
+        r = {}
+        for o in PDROMDriver(Path(args.datadir) / str(rom + ".z64")).get_files_info():
+            r[o['filename']] = o
+        return r
+
+    rom_table = read_romfiletable("pd.ntsc-final")
+    if not rom_table:
+        breakpoint()
+        logging.error(f"ROM filetable for {args.from_rom} not found in datadir.")
+        return
+    
+    source_rom_table = read_romfiletable(args.from_rom)
+    if not source_rom_table:
+        breakpoint()
+        logging.error(f"ROM filetable for {args.from_rom} not found in datadir.")
+        return
+    
+    # init mods_table from manifest
+    mods_table = read_filetable(mods_table_path)
+    if not mods_table:
+        breakpoint()
+        logging.error(f"File table for {args.filename} not found in mods directory.")
+        return
+    # breakpoint()
+    # mods_table.update(PDROMDriver(Path(args.datadir) / str(args.from_rom + ".z64")).get_files_info())
+    
+    
+    merged_table = merge_filetables(mods_table, rom_table, source_rom_table)
+    
+    result = find_file(merged_table, args.filename, args.from_rom, args.by_alias)
+    
+    if result:
+        print(json.dumps(result, indent=4))
+    else:
+        logging.error(f"File {args.filename} not found.")
+
+if __name__ == "__main__":
+    main()
+

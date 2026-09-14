@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pd-fojo-tools"
+version = "0.1.0"
+description = "Friends of Joanna toolchain: build tools, modloader utilities, ROM analysis, and function-level diffs"
+requires-python = ">=3.10"
+dependencies = [
+    "tree-sitter>=0.23",
+    "tree-sitter-c>=0.23",
+]
+
+[project.optional-dependencies]
+img = ["Pillow"]
+
+[tool.setuptools.packages.find]
+where = ["lib/packages/python"]
+

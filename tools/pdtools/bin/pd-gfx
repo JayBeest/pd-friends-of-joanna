@@ -1,0 +1,48 @@
+#!/usr/bin/env php
+<?php
+
+$code = fread(STDIN, 10000);
+
+  /*
+  *param_1 = 0xe7000000;
+  param_1[1] = 0;
+  param_1[3] = 0;
+  param_1[2] = 0xba001301;
+  param_1[5] = 0;
+  param_1[4] = 0xb9000002;
+  param_1[7] = 0;
+  param_1[6] = 0xba001001;
+  */
+
+// Trim starting spaces
+$code = preg_replace('/^\s+/m', '', $code);
+
+// Move * to [0]
+$code = preg_replace('/\*(\S+)/', '$1[0]', $code);
+
+// Make all indexes hex
+$code = preg_replace_callback('/\[(.+?)\]/', function($match) {
+	$value = strpos($match[1], '0x') === 0 ? hexdec($match[1]) : intval($match[1]);
+	return sprintf('[0x%02x]', $value);
+}, $code);
+
+$lines = explode("\n", $code);
+sort($lines);
+$code = implode("\n", $lines);
+
+preg_match_all('/= (.*?);/', $code, $matches);
+$cmd = 'gfxdis.f3d -g gdl -x -d ';
+
+foreach ($matches[1] as $value) {
+	if (strpos($value, '0x') !== false) {
+		$value = hexdec($value);
+	}
+
+	$cmd .= sprintf('%08x', $value);
+}
+
+echo $cmd . "\n";
+
+$output = `$cmd`;
+$output = str_replace('(gdl', '(gdl++', $output);
+echo $output;

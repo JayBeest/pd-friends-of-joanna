@@ -1,0 +1,5 @@
+#!/bin/bash
+
+
+q=$1
+grep -e "define ${q^^}" $PD/src/include/constants.h

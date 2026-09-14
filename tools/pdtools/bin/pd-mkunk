@@ -1,0 +1,9 @@
+#!/usr/bin/env php
+<?php
+
+$start = substr($argv[1], 0, 2) == '0x' ? hexdec($argv[1]) : $argv[1];
+$end = substr($argv[2], 0, 2) == '0x' ? hexdec($argv[2]) : $argv[2];
+
+for ($i = $start; $i < $end; $i += 4) {
+	printf("\t/*0x%03x*/ u32 unk%03x;\n", $i, $i);
+}

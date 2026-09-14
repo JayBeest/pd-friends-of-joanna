@@ -1,0 +1,5 @@
+#!/bin/bash
+
+ROMID=${ROMID:-ntsc-final}
+
+pd-parsemap $PD/build/$ROMID/pd.map > $PDTOOLS/tmp/$ROMID.json

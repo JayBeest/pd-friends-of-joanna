@@ -1,0 +1,43 @@
+#!/bin/bash
+
+ROMID=${ROMID:-ntsc-final}
+
+file=$1
+func=$2
+
+if [ -n "$func" ]; then
+	addrs=$(grep -Ev '^ src/' build/$ROMID/pd.map | grep -Ev '^ \.text' | grep -E " $func$" -A 1 | awk '{print $1}')
+	start=$(echo "$addrs" | head -n 1)
+	stop=$(echo "$addrs" | tail -n 1)
+
+	if [[ "$file" == "library" ]]; then
+		start=$(($start & 0xffffff))
+		stop=$(($stop & 0xffffff))
+		start=$(($start - 0x3050))
+		stop=$(($stop - 0x3050))
+	elif [[ "$file" == "inflate" ]]; then
+		start=$(($start - 0x70200000))
+		stop=$(($stop - 0x70200000))
+	else
+		start=$(($start & 0xffffff))
+		stop=$(($stop & 0xffffff))
+	fi
+
+	args=" --start-address=$start --stop-address=$stop "
+fi
+
+old=$(mktemp)
+new=$(mktemp)
+
+mips64-linux-gnu-objdump -D --disassemble-zeroes --no-show-raw-insn -b binary -m mips -EB $args "extracted/$ROMID/segments/$1.bin" | tail +8 | column -t > $old
+mips64-linux-gnu-objdump -D --disassemble-zeroes --no-show-raw-insn -b binary -m mips -EB $args "build/$ROMID/segments/$1.bin" | tail +8 | column -t > $new
+
+olddata=$(awk '{$1=""; print substr($0, 2)}' < $old | column -t)
+newdata=$(awk '{$1=""; print substr($0, 2)}' < $new | column -t)
+
+echo "$olddata" > $old
+echo "$newdata" > $new
+
+diff --suppress-common-lines $old $new | wc -l
+
+rm -f $old $new

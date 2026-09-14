@@ -1,0 +1,44 @@
+#!/bin/bash
+
+set -e
+
+ROMID=${ROMID:-ntsc-final}
+
+test -f /tmp/pd-func || exit
+
+func=$(cat /tmp/pd-func)
+
+if [ -f "$PD/build/$ROMID/segments/$1.bin" ]; then
+	bin=$1
+else
+	addrs=$(grep -Ev '^ src/' $PD/build/$ROMID/pd.map | grep -Ev '^ \.text' | grep -Ev '^ build/' | grep -E " $func$" -A 1 | awk '{print $1}')
+	start=$(echo "$addrs" | head -n 1)
+	stop=$(echo "$addrs" | tail -n 1)
+
+	start=$((start))
+
+	if [ "$start" -ge $((0x7f000000)) ]; then
+		start=$(($start & 0x00ffffff))
+		stop=$(($stop & 0x00ffffff))
+		bin=game
+		vma=0x0
+	elif [ "$start" -ge $((0x70003050)) ]; then
+		start=$(($start & 0x000fffff))
+		stop=$(($stop & 0x000fffff))
+		bin=lib
+		vma=0x3050
+	elif [ "$start" -ge $((0x70000000)) ]; then
+		start=$(($start & 0x0000ffff))
+		stop=$(($stop & 0x0000ffff))
+		bin=boot
+		vma=0x1000
+	else
+		echo "Not sure what this is: $start - $stop"
+		exit 1
+	fi
+fi
+
+pd-parsemap build/$ROMID/pd.map > /tmp/build.map
+pd-dis build/$ROMID/segments/$bin.bin $start $stop $vma /tmp/build.map > /tmp/build.asm.new
+
+mv /tmp/build.asm.new /tmp/build.asm

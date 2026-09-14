@@ -1,0 +1,69 @@
+#!/usr/bin/env php
+<?php
+
+$code = file_get_contents('php://stdin');
+
+$code = str_replace('struct g_vars_80099fc0', 'g_Vars', $code);
+
+$code = preg_replace('/_?DAT_([0-9a-f]{8})/', 'var$1', $code);
+
+$code = preg_replace_callback('/_(\d+)_\d_/', function($match) {
+	return sprintf('unk%02x', $match[1]);
+}, $code);
+
+$code = preg_replace_callback('/FUN_([0-9a-f]{8})/', function($match) {
+	$addr = hexdec($match[1]) - 0x220000;
+	$addr |= 0x0f000000;
+	$addr = $addr & 0xffffffff;
+	return sprintf('func%08x', $addr);
+}, $code);
+
+$code = str_replace('field_0x', 'unk', $code);
+$code = str_replace('ram0x', 'var', $code);
+
+$code = preg_replace_callback('/ << ([0-9a-fx]+)\) < 0/', function($match) {
+	$shiftamount = $match[1];
+
+	if (strpos($shiftamount, '0x') === 0) {
+		$shiftamount = hexdec($shiftamount);
+	}
+
+	$mask = 1 << (31 - $shiftamount);
+
+	return sprintf(' & 0x%08x)', $mask);
+}, $code);
+
+$code = preg_replace_callback('/ << ([0-9a-fx]+)\) >= 0/', function($match) {
+	$shiftamount = $match[1];
+
+	if (strpos($shiftamount, '0x') === 0) {
+		$shiftamount = hexdec($shiftamount);
+	}
+
+	$mask = 1 << (31 - $shiftamount);
+
+	return sprintf(' & 0x%08x) == 0', $mask);
+}, $code);
+
+$code = str_replace('func_0x', 'func', $code);
+
+$PDTOOLS = getenv('PDTOOLS');
+// $PDTOOLS = $_ENV['PDTOOLS'];
+$ROMID = getenv('ROMID') ?? 'ntsc-final';
+// $ROMID = $_ENV['ROMID'] ?? 'ntsc-final';
+$map = json_decode(file_get_contents("$PDTOOLS/tmp/$ROMID.json"));
+
+// Replace unnamed functions with proper names
+$code = preg_replace_callback('/func([0-9a-f]{8})/', function($match) {
+	global $map;
+	$key = '7' . substr($match[1], 1);
+	return $map->functions->{$key} ?? $match[0];
+}, $code);
+
+// Replace unnamed variables with proper names
+$code = preg_replace_callback('/var([0-9a-f]{8})/', function($match) {
+	global $map;
+	return $map->variables->{$match[1]} ?? $match[0];
+}, $code);
+
+echo $code;

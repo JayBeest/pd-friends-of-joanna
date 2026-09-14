@@ -1,0 +1,6507 @@
+{
+  "format_version": "2.0",
+  "rom_info": {
+    "type": "goldeneye",
+    "variant": "ntsc",
+    "source": "goldeneye decompilation project filelist.u.csv",
+    "base_rom_sha1": "abe01e4aeb033b6c0836819f549c791b26cfde83"
+  },
+  "files": [
+    {
+      "id": 0,
+      "name": "ge007.u.117880.jfont_dl.bin",
+      "category": "fonts",
+      "rom_offset": "0x00117880",
+      "size": 192,
+      "compressed": false
+    },
+    {
+      "id": 1,
+      "name": "ge007.u.117940.jfont_chardata.bin",
+      "category": "fonts",
+      "rom_offset": "0x00117940",
+      "size": 46848,
+      "compressed": false
+    },
+    {
+      "id": 2,
+      "name": "ge007.u.123040.efont_chardata.bin",
+      "category": "fonts",
+      "rom_offset": "0x00123040",
+      "size": 6784,
+      "compressed": false
+    },
+    {
+      "id": 3,
+      "name": "animationtable_entries.bin",
+      "category": "animations",
+      "rom_offset": "0x00124ac0",
+      "size": 1482432,
+      "compressed": false
+    },
+    {
+      "id": 4,
+      "name": "animationtable_data.bin",
+      "category": "animations",
+      "rom_offset": "0x0028e980",
+      "size": 59360,
+      "compressed": false
+    },
+    {
+      "id": 5,
+      "name": "ge007.u.29D160.Globalimagetable.bin",
+      "category": "unknown",
+      "rom_offset": "0x0029d160",
+      "size": 2760,
+      "compressed": false
+    },
+    {
+      "id": 6,
+      "name": "rarewarelogo.bin",
+      "category": "unknown",
+      "rom_offset": "0x0029e560",
+      "size": 26608,
+      "compressed": false
+    },
+    {
+      "id": 7,
+      "name": "ge007.u.2A4D50.usedby7F008DE4.bin",
+      "category": "unknown",
+      "rom_offset": "0x002a4d50",
+      "size": 107904,
+      "compressed": false
+    },
+    {
+      "id": 8,
+      "name": "ramrom/ramrom_Dam_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002bf2d0",
+      "size": 20992,
+      "compressed": false
+    },
+    {
+      "id": 9,
+      "name": "ramrom/ramrom_Dam_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002c44d0",
+      "size": 8144,
+      "compressed": false
+    },
+    {
+      "id": 10,
+      "name": "ramrom/ramrom_Facility_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002c64a0",
+      "size": 6832,
+      "compressed": false
+    },
+    {
+      "id": 11,
+      "name": "ramrom/ramrom_Facility_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002c7f50",
+      "size": 9184,
+      "compressed": false
+    },
+    {
+      "id": 12,
+      "name": "ramrom/ramrom_Facility_3.bin",
+      "category": "levels",
+      "rom_offset": "0x002ca330",
+      "size": 7280,
+      "compressed": false
+    },
+    {
+      "id": 13,
+      "name": "ramrom/ramrom_Runway_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002cbfa0",
+      "size": 10064,
+      "compressed": false
+    },
+    {
+      "id": 14,
+      "name": "ramrom/ramrom_Runway_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002ce6f0",
+      "size": 10512,
+      "compressed": false
+    },
+    {
+      "id": 15,
+      "name": "ramrom/ramrom_BunkerI_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002d1000",
+      "size": 13200,
+      "compressed": false
+    },
+    {
+      "id": 16,
+      "name": "ramrom/ramrom_BunkerI_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002d4390",
+      "size": 21120,
+      "compressed": false
+    },
+    {
+      "id": 17,
+      "name": "ramrom/ramrom_Silo_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002d9610",
+      "size": 8592,
+      "compressed": false
+    },
+    {
+      "id": 18,
+      "name": "ramrom/ramrom_Silo_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002db7a0",
+      "size": 8144,
+      "compressed": false
+    },
+    {
+      "id": 19,
+      "name": "ramrom/ramrom_Frigate_1.bin",
+      "category": "levels",
+      "rom_offset": "0x002dd770",
+      "size": 6576,
+      "compressed": false
+    },
+    {
+      "id": 20,
+      "name": "ramrom/ramrom_Frigate_2.bin",
+      "category": "levels",
+      "rom_offset": "0x002df120",
+      "size": 13536,
+      "compressed": false
+    },
+    {
+      "id": 21,
+      "name": "ramrom/ramrom_Train.bin",
+      "category": "levels",
+      "rom_offset": "0x002e2600",
+      "size": 15856,
+      "compressed": false
+    },
+    {
+      "id": 22,
+      "name": "font/fontBankGothic_kerning.bin",
+      "category": "fonts",
+      "rom_offset": "0x002e63f0",
+      "size": 676,
+      "compressed": false
+    },
+    {
+      "id": 23,
+      "name": "font/fontBankGothic_fontchartable.bin",
+      "category": "fonts",
+      "rom_offset": "0x002e6694",
+      "size": 8716,
+      "compressed": false
+    },
+    {
+      "id": 24,
+      "name": "font/fontZurichBold_kerning.bin",
+      "category": "fonts",
+      "rom_offset": "0x002e88a0",
+      "size": 676,
+      "compressed": false
+    },
+    {
+      "id": 25,
+      "name": "font/fontZurichBold_fontchartable.bin",
+      "category": "fonts",
+      "rom_offset": "0x002e8b44",
+      "size": 12956,
+      "compressed": false
+    },
+    {
+      "id": 26,
+      "name": "music/sfx.ctl",
+      "category": "audio",
+      "rom_offset": "0x002ebde0",
+      "size": 23488,
+      "compressed": false
+    },
+    {
+      "id": 27,
+      "name": "music/sfx.tbl",
+      "category": "audio",
+      "rom_offset": "0x002f19a0",
+      "size": 797360,
+      "compressed": false
+    },
+    {
+      "id": 28,
+      "name": "music/instruments.ctl",
+      "category": "audio",
+      "rom_offset": "0x003b4450",
+      "size": 17312,
+      "compressed": false
+    },
+    {
+      "id": 29,
+      "name": "music/instruments.tbl",
+      "category": "audio",
+      "rom_offset": "0x003b87f0",
+      "size": 397216,
+      "compressed": false
+    },
+    {
+      "id": 30,
+      "name": "music/music.sbk",
+      "category": "audio",
+      "rom_offset": "0x00419790",
+      "size": 126667,
+      "compressed": false
+    },
+    {
+      "id": 31,
+      "name": "music/number_music_samples",
+      "category": "audio",
+      "rom_offset": "0x00419790",
+      "size": 4,
+      "compressed": false
+    },
+    {
+      "id": 32,
+      "name": "music/table_music_data.bin",
+      "category": "audio",
+      "rom_offset": "0x00419794",
+      "size": 504,
+      "compressed": false
+    },
+    {
+      "id": 33,
+      "name": "music/Mno_music.bin",
+      "category": "audio",
+      "rom_offset": "0x0041998c",
+      "size": 42,
+      "compressed": true
+    },
+    {
+      "id": 34,
+      "name": "music/Msolo_death_abrev.bin",
+      "category": "audio",
+      "rom_offset": "0x004199b6",
+      "size": 470,
+      "compressed": true
+    },
+    {
+      "id": 35,
+      "name": "music/Mintro_eye.bin",
+      "category": "audio",
+      "rom_offset": "0x00419b8c",
+      "size": 2222,
+      "compressed": true
+    },
+    {
+      "id": 36,
+      "name": "music/Mtrain.bin",
+      "category": "audio",
+      "rom_offset": "0x0041a43a",
+      "size": 3050,
+      "compressed": true
+    },
+    {
+      "id": 37,
+      "name": "music/Mdepot.bin",
+      "category": "audio",
+      "rom_offset": "0x0041b024",
+      "size": 3488,
+      "compressed": true
+    },
+    {
+      "id": 38,
+      "name": "music/Mjungle_unused.bin",
+      "category": "audio",
+      "rom_offset": "0x0041bdc4",
+      "size": 3480,
+      "compressed": true
+    },
+    {
+      "id": 39,
+      "name": "music/Mcitadel.bin",
+      "category": "audio",
+      "rom_offset": "0x0041cb5c",
+      "size": 3520,
+      "compressed": true
+    },
+    {
+      "id": 40,
+      "name": "music/Mfacility.bin",
+      "category": "audio",
+      "rom_offset": "0x0041d91c",
+      "size": 2766,
+      "compressed": true
+    },
+    {
+      "id": 41,
+      "name": "music/Mcontrol.bin",
+      "category": "audio",
+      "rom_offset": "0x0041e3ea",
+      "size": 2910,
+      "compressed": true
+    },
+    {
+      "id": 42,
+      "name": "music/Mdam.bin",
+      "category": "audio",
+      "rom_offset": "0x0041ef48",
+      "size": 3588,
+      "compressed": true
+    },
+    {
+      "id": 43,
+      "name": "music/Mfrigate.bin",
+      "category": "audio",
+      "rom_offset": "0x0041fd4c",
+      "size": 3552,
+      "compressed": true
+    },
+    {
+      "id": 44,
+      "name": "music/Marchives.bin",
+      "category": "audio",
+      "rom_offset": "0x00420b2c",
+      "size": 2388,
+      "compressed": true
+    },
+    {
+      "id": 45,
+      "name": "music/Msilo.bin",
+      "category": "audio",
+      "rom_offset": "0x00421480",
+      "size": 3696,
+      "compressed": true
+    },
+    {
+      "id": 46,
+      "name": "music/Mjungle_perimeter_unused.bin",
+      "category": "audio",
+      "rom_offset": "0x004222f0",
+      "size": 3948,
+      "compressed": true
+    },
+    {
+      "id": 47,
+      "name": "music/Mstreets.bin",
+      "category": "audio",
+      "rom_offset": "0x0042325c",
+      "size": 3330,
+      "compressed": true
+    },
+    {
+      "id": 48,
+      "name": "music/Mbunker1.bin",
+      "category": "audio",
+      "rom_offset": "0x00423f5e",
+      "size": 1650,
+      "compressed": true
+    },
+    {
+      "id": 49,
+      "name": "music/Mbunker2.bin",
+      "category": "audio",
+      "rom_offset": "0x004245d0",
+      "size": 1664,
+      "compressed": true
+    },
+    {
+      "id": 50,
+      "name": "music/Mstatue.bin",
+      "category": "audio",
+      "rom_offset": "0x00424c50",
+      "size": 2456,
+      "compressed": true
+    },
+    {
+      "id": 51,
+      "name": "music/Melevator_control.bin",
+      "category": "audio",
+      "rom_offset": "0x004255e8",
+      "size": 2522,
+      "compressed": true
+    },
+    {
+      "id": 52,
+      "name": "music/Mcradle.bin",
+      "category": "audio",
+      "rom_offset": "0x00425fc2",
+      "size": 3424,
+      "compressed": true
+    },
+    {
+      "id": 53,
+      "name": "music/Mnull1.bin",
+      "category": "audio",
+      "rom_offset": "0x00426d22",
+      "size": 42,
+      "compressed": true
+    },
+    {
+      "id": 54,
+      "name": "music/Melevator_wc.bin",
+      "category": "audio",
+      "rom_offset": "0x00426d4c",
+      "size": 1606,
+      "compressed": true
+    },
+    {
+      "id": 55,
+      "name": "music/Megyptian.bin",
+      "category": "audio",
+      "rom_offset": "0x00427392",
+      "size": 3482,
+      "compressed": true
+    },
+    {
+      "id": 56,
+      "name": "music/Mfolders.bin",
+      "category": "audio",
+      "rom_offset": "0x0042812c",
+      "size": 994,
+      "compressed": true
+    },
+    {
+      "id": 57,
+      "name": "music/Mwatchmusic.bin",
+      "category": "audio",
+      "rom_offset": "0x0042850e",
+      "size": 498,
+      "compressed": true
+    },
+    {
+      "id": 58,
+      "name": "music/Maztec.bin",
+      "category": "audio",
+      "rom_offset": "0x00428700",
+      "size": 3186,
+      "compressed": true
+    },
+    {
+      "id": 59,
+      "name": "music/Mwatercaverns.bin",
+      "category": "audio",
+      "rom_offset": "0x00429372",
+      "size": 3628,
+      "compressed": true
+    },
+    {
+      "id": 60,
+      "name": "music/Mdeathsolo.bin",
+      "category": "audio",
+      "rom_offset": "0x0042a19e",
+      "size": 870,
+      "compressed": true
+    },
+    {
+      "id": 61,
+      "name": "music/Msurface2.bin",
+      "category": "audio",
+      "rom_offset": "0x0042a504",
+      "size": 3510,
+      "compressed": true
+    },
+    {
+      "id": 62,
+      "name": "music/Mtrainx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042b2ba",
+      "size": 2208,
+      "compressed": true
+    },
+    {
+      "id": 63,
+      "name": "music/Mnull2.bin",
+      "category": "audio",
+      "rom_offset": "0x0042bb5a",
+      "size": 42,
+      "compressed": true
+    },
+    {
+      "id": 64,
+      "name": "music/Mfacilityx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042bb84",
+      "size": 2392,
+      "compressed": true
+    },
+    {
+      "id": 65,
+      "name": "music/Mdepotx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042c4dc",
+      "size": 1980,
+      "compressed": true
+    },
+    {
+      "id": 66,
+      "name": "music/Mcontrolx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042cc98",
+      "size": 1352,
+      "compressed": true
+    },
+    {
+      "id": 67,
+      "name": "music/Mwatercavernsx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042d1e0",
+      "size": 1876,
+      "compressed": true
+    },
+    {
+      "id": 68,
+      "name": "music/Mdamx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042d934",
+      "size": 1312,
+      "compressed": true
+    },
+    {
+      "id": 69,
+      "name": "music/Mfrigatex.bin",
+      "category": "audio",
+      "rom_offset": "0x0042de54",
+      "size": 1474,
+      "compressed": true
+    },
+    {
+      "id": 70,
+      "name": "music/Marchivesx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042e416",
+      "size": 1828,
+      "compressed": true
+    },
+    {
+      "id": 71,
+      "name": "music/Msilox.bin",
+      "category": "audio",
+      "rom_offset": "0x0042eb3a",
+      "size": 2292,
+      "compressed": true
+    },
+    {
+      "id": 72,
+      "name": "music/Mnull3.bin",
+      "category": "audio",
+      "rom_offset": "0x0042f42e",
+      "size": 42,
+      "compressed": true
+    },
+    {
+      "id": 73,
+      "name": "music/Mstreetsx.bin",
+      "category": "audio",
+      "rom_offset": "0x0042f458",
+      "size": 1644,
+      "compressed": true
+    },
+    {
+      "id": 74,
+      "name": "music/Mbunker1x.bin",
+      "category": "audio",
+      "rom_offset": "0x0042fac4",
+      "size": 1958,
+      "compressed": true
+    },
+    {
+      "id": 75,
+      "name": "music/Mbunker2x.bin",
+      "category": "audio",
+      "rom_offset": "0x0043026a",
+      "size": 1614,
+      "compressed": true
+    },
+    {
+      "id": 76,
+      "name": "music/Mjunglex.bin",
+      "category": "audio",
+      "rom_offset": "0x004308b8",
+      "size": 2070,
+      "compressed": true
+    },
+    {
+      "id": 77,
+      "name": "music/Mnint_rare_logo.bin",
+      "category": "audio",
+      "rom_offset": "0x004310ce",
+      "size": 1074,
+      "compressed": true
+    },
+    {
+      "id": 78,
+      "name": "music/Mstatuex.bin",
+      "category": "audio",
+      "rom_offset": "0x00431500",
+      "size": 1720,
+      "compressed": true
+    },
+    {
+      "id": 79,
+      "name": "music/Maztecx.bin",
+      "category": "audio",
+      "rom_offset": "0x00431bb8",
+      "size": 2262,
+      "compressed": true
+    },
+    {
+      "id": 80,
+      "name": "music/Megyptianx.bin",
+      "category": "audio",
+      "rom_offset": "0x0043248e",
+      "size": 2224,
+      "compressed": true
+    },
+    {
+      "id": 81,
+      "name": "music/Mcradlex.bin",
+      "category": "audio",
+      "rom_offset": "0x00432d3e",
+      "size": 1738,
+      "compressed": true
+    },
+    {
+      "id": 82,
+      "name": "music/Mcuba.bin",
+      "category": "audio",
+      "rom_offset": "0x00433408",
+      "size": 2122,
+      "compressed": true
+    },
+    {
+      "id": 83,
+      "name": "music/Mrunway.bin",
+      "category": "audio",
+      "rom_offset": "0x00433c52",
+      "size": 3358,
+      "compressed": true
+    },
+    {
+      "id": 84,
+      "name": "music/Mrunway_plane.bin",
+      "category": "audio",
+      "rom_offset": "0x00434970",
+      "size": 730,
+      "compressed": true
+    },
+    {
+      "id": 85,
+      "name": "music/Msurface2x.bin",
+      "category": "audio",
+      "rom_offset": "0x00434c4a",
+      "size": 1832,
+      "compressed": true
+    },
+    {
+      "id": 86,
+      "name": "music/Mwindblowing.bin",
+      "category": "audio",
+      "rom_offset": "0x00435372",
+      "size": 1314,
+      "compressed": true
+    },
+    {
+      "id": 87,
+      "name": "music/Mmultideath_alt.bin",
+      "category": "audio",
+      "rom_offset": "0x00435894",
+      "size": 524,
+      "compressed": true
+    },
+    {
+      "id": 88,
+      "name": "music/Mjungle.bin",
+      "category": "audio",
+      "rom_offset": "0x00435aa0",
+      "size": 1928,
+      "compressed": true
+    },
+    {
+      "id": 89,
+      "name": "music/Mrunwayx.bin",
+      "category": "audio",
+      "rom_offset": "0x00436228",
+      "size": 1570,
+      "compressed": true
+    },
+    {
+      "id": 90,
+      "name": "music/Msurface1.bin",
+      "category": "audio",
+      "rom_offset": "0x0043684a",
+      "size": 3432,
+      "compressed": true
+    },
+    {
+      "id": 91,
+      "name": "music/Mmultiplayerdeath.bin",
+      "category": "audio",
+      "rom_offset": "0x004375b2",
+      "size": 712,
+      "compressed": true
+    },
+    {
+      "id": 92,
+      "name": "music/Msurface1x.bin",
+      "category": "audio",
+      "rom_offset": "0x0043787a",
+      "size": 1832,
+      "compressed": true
+    },
+    {
+      "id": 93,
+      "name": "music/Msurface2_ending.bin",
+      "category": "audio",
+      "rom_offset": "0x00437fa2",
+      "size": 668,
+      "compressed": true
+    },
+    {
+      "id": 94,
+      "name": "music/Mstatue_ending.bin",
+      "category": "audio",
+      "rom_offset": "0x0043823e",
+      "size": 358,
+      "compressed": true
+    },
+    {
+      "id": 95,
+      "name": "music/Mfrigate_outro.bin",
+      "category": "audio",
+      "rom_offset": "0x004383a4",
+      "size": 700,
+      "compressed": true
+    },
+    {
+      "id": 96,
+      "name": "obseg/bg/bg_sev_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00438660",
+      "size": 69104,
+      "compressed": false
+    },
+    {
+      "id": 97,
+      "name": "obseg/bg/bg_silo_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00449450",
+      "size": 331584,
+      "compressed": false
+    },
+    {
+      "id": 98,
+      "name": "obseg/bg/bg_stat_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0049a390",
+      "size": 139472,
+      "compressed": false
+    },
+    {
+      "id": 99,
+      "name": "obseg/bg/bg_arec_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x004bc460",
+      "size": 189312,
+      "compressed": false
+    },
+    {
+      "id": 100,
+      "name": "obseg/bg/bg_arch_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x004ea7e0",
+      "size": 154352,
+      "compressed": false
+    },
+    {
+      "id": 101,
+      "name": "obseg/bg/bg_tra_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x005102d0",
+      "size": 132464,
+      "compressed": false
+    },
+    {
+      "id": 102,
+      "name": "obseg/bg/bg_dest_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00530840",
+      "size": 186816,
+      "compressed": false
+    },
+    {
+      "id": 103,
+      "name": "obseg/bg/bg_sevb_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0055e200",
+      "size": 109984,
+      "compressed": false
+    },
+    {
+      "id": 104,
+      "name": "obseg/bg/bg_azt_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00578fa0",
+      "size": 137808,
+      "compressed": false
+    },
+    {
+      "id": 105,
+      "name": "obseg/bg/bg_pete_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0059a9f0",
+      "size": 105520,
+      "compressed": false
+    },
+    {
+      "id": 106,
+      "name": "obseg/bg/bg_depo_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x005b4620",
+      "size": 182640,
+      "compressed": false
+    },
+    {
+      "id": 107,
+      "name": "obseg/bg/bg_ref_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x005e0f90",
+      "size": 38416,
+      "compressed": false
+    },
+    {
+      "id": 108,
+      "name": "obseg/bg/bg_cryp_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x005ea5a0",
+      "size": 87728,
+      "compressed": false
+    },
+    {
+      "id": 109,
+      "name": "obseg/bg/bg_dam_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x005ffc50",
+      "size": 197024,
+      "compressed": false
+    },
+    {
+      "id": 110,
+      "name": "obseg/bg/bg_ark_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0062fdf0",
+      "size": 200576,
+      "compressed": false
+    },
+    {
+      "id": 111,
+      "name": "obseg/bg/bg_run_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00660d70",
+      "size": 41936,
+      "compressed": false
+    },
+    {
+      "id": 112,
+      "name": "obseg/bg/bg_sevx_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0066b140",
+      "size": 116176,
+      "compressed": false
+    },
+    {
+      "id": 113,
+      "name": "obseg/bg/bg_jun_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x00687710",
+      "size": 86352,
+      "compressed": false
+    },
+    {
+      "id": 114,
+      "name": "obseg/bg/bg_dish_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x0069c860",
+      "size": 18544,
+      "compressed": false
+    },
+    {
+      "id": 115,
+      "name": "obseg/bg/bg_cave_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006a10d0",
+      "size": 148720,
+      "compressed": false
+    },
+    {
+      "id": 116,
+      "name": "obseg/bg/bg_cat_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006c55c0",
+      "size": 21808,
+      "compressed": false
+    },
+    {
+      "id": 117,
+      "name": "obseg/bg/bg_crad_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006caaf0",
+      "size": 66384,
+      "compressed": false
+    },
+    {
+      "id": 118,
+      "name": "obseg/bg/bg_imp_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006dae40",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 119,
+      "name": "obseg/bg/bg_ash_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006dae40",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 120,
+      "name": "obseg/bg/bg_sho_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006dae40",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 121,
+      "name": "obseg/bg/bg_ame_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006dae40",
+      "size": 40800,
+      "compressed": false
+    },
+    {
+      "id": 122,
+      "name": "obseg/bg/bg_rit_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006e4da0",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 123,
+      "name": "obseg/bg/bg_oat_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006e4da0",
+      "size": 28240,
+      "compressed": false
+    },
+    {
+      "id": 124,
+      "name": "obseg/bg/bg_lip_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ebbf0",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 125,
+      "name": "obseg/bg/bg_lee_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ebbf0",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 126,
+      "name": "obseg/bg/bg_ear_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ebbf0",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 127,
+      "name": "obseg/bg/bg_len_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ebbf0",
+      "size": 4000,
+      "compressed": false
+    },
+    {
+      "id": 128,
+      "name": "obseg/bg/bg_pam_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ecb90",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 129,
+      "name": "obseg/bg/bg_wax_all_p.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ecb90",
+      "size": 0,
+      "compressed": false
+    },
+    {
+      "id": 130,
+      "name": "obseg/chr/CarmourguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ecb90",
+      "size": 9344,
+      "compressed": true
+    },
+    {
+      "id": 131,
+      "name": "obseg/chr/CbaronsamediZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006ef010",
+      "size": 14064,
+      "compressed": true
+    },
+    {
+      "id": 132,
+      "name": "obseg/chr/CbluecamguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006f2700",
+      "size": 9968,
+      "compressed": true
+    },
+    {
+      "id": 133,
+      "name": "obseg/chr/CbluemanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006f4df0",
+      "size": 7696,
+      "compressed": true
+    },
+    {
+      "id": 134,
+      "name": "obseg/chr/CbluewomanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006f6c00",
+      "size": 7872,
+      "compressed": true
+    },
+    {
+      "id": 135,
+      "name": "obseg/chr/CboilerbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006f8ac0",
+      "size": 11280,
+      "compressed": true
+    },
+    {
+      "id": 136,
+      "name": "obseg/chr/CboilertrevZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006fb6d0",
+      "size": 13952,
+      "compressed": true
+    },
+    {
+      "id": 137,
+      "name": "obseg/chr/CborisZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x006fed50",
+      "size": 12576,
+      "compressed": true
+    },
+    {
+      "id": 138,
+      "name": "obseg/chr/CcamguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00701e70",
+      "size": 9952,
+      "compressed": true
+    },
+    {
+      "id": 139,
+      "name": "obseg/chr/CcardimanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00704550",
+      "size": 7680,
+      "compressed": true
+    },
+    {
+      "id": 140,
+      "name": "obseg/chr/CcheckmanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00706350",
+      "size": 7808,
+      "compressed": true
+    },
+    {
+      "id": 141,
+      "name": "obseg/chr/CcommguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007081d0",
+      "size": 9728,
+      "compressed": true
+    },
+    {
+      "id": 142,
+      "name": "obseg/chr/CdjbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0070a7d0",
+      "size": 11920,
+      "compressed": true
+    },
+    {
+      "id": 143,
+      "name": "obseg/chr/CfattechwomanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0070d660",
+      "size": 7968,
+      "compressed": true
+    },
+    {
+      "id": 144,
+      "name": "obseg/chr/Cgreatguard2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0070f580",
+      "size": 10016,
+      "compressed": true
+    },
+    {
+      "id": 145,
+      "name": "obseg/chr/CgreatguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00711ca0",
+      "size": 9856,
+      "compressed": true
+    },
+    {
+      "id": 146,
+      "name": "obseg/chr/CgreyguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00714320",
+      "size": 9936,
+      "compressed": true
+    },
+    {
+      "id": 147,
+      "name": "obseg/chr/CgreymanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007169f0",
+      "size": 7616,
+      "compressed": true
+    },
+    {
+      "id": 148,
+      "name": "obseg/chr/CheadalanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007187b0",
+      "size": 1488,
+      "compressed": true
+    },
+    {
+      "id": 149,
+      "name": "obseg/chr/CheadbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00718d80",
+      "size": 1392,
+      "compressed": true
+    },
+    {
+      "id": 150,
+      "name": "obseg/chr/CheadbalaclavaZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007192f0",
+      "size": 976,
+      "compressed": true
+    },
+    {
+      "id": 151,
+      "name": "obseg/chr/CheadbikeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007196c0",
+      "size": 1696,
+      "compressed": true
+    },
+    {
+      "id": 152,
+      "name": "obseg/chr/CheadbrosnanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00719d60",
+      "size": 3408,
+      "compressed": true
+    },
+    {
+      "id": 153,
+      "name": "obseg/chr/CheadbrosnanboilerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071aab0",
+      "size": 2976,
+      "compressed": true
+    },
+    {
+      "id": 154,
+      "name": "obseg/chr/CheadbrosnansnowZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071b650",
+      "size": 3712,
+      "compressed": true
+    },
+    {
+      "id": 155,
+      "name": "obseg/chr/CheadbrosnansuitZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071c4d0",
+      "size": 3456,
+      "compressed": true
+    },
+    {
+      "id": 156,
+      "name": "obseg/chr/CheadbrosnantimberZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071d250",
+      "size": 3008,
+      "compressed": true
+    },
+    {
+      "id": 157,
+      "name": "obseg/chr/CheadchrisZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071de10",
+      "size": 1344,
+      "compressed": true
+    },
+    {
+      "id": 158,
+      "name": "obseg/chr/CheaddaveZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071e350",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 159,
+      "name": "obseg/chr/CheaddesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071e8d0",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 160,
+      "name": "obseg/chr/CheadduncanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071ee00",
+      "size": 1312,
+      "compressed": true
+    },
+    {
+      "id": 161,
+      "name": "obseg/chr/CheaddwayneZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071f320",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 162,
+      "name": "obseg/chr/CheadgrahamZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071f8a0",
+      "size": 1392,
+      "compressed": true
+    },
+    {
+      "id": 163,
+      "name": "obseg/chr/CheadgrantZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0071fe10",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 164,
+      "name": "obseg/chr/CheadjimZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00720340",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 165,
+      "name": "obseg/chr/Cheadjoe2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00720870",
+      "size": 1056,
+      "compressed": true
+    },
+    {
+      "id": 166,
+      "name": "obseg/chr/CheadjoeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00720c90",
+      "size": 1392,
+      "compressed": true
+    },
+    {
+      "id": 167,
+      "name": "obseg/chr/CheadjoelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00721200",
+      "size": 1296,
+      "compressed": true
+    },
+    {
+      "id": 168,
+      "name": "obseg/chr/CheadkarlZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00721710",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 169,
+      "name": "obseg/chr/CheadkenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00721c70",
+      "size": 1360,
+      "compressed": true
+    },
+    {
+      "id": 170,
+      "name": "obseg/chr/CheadleeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007221c0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 171,
+      "name": "obseg/chr/CheadmandyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00722740",
+      "size": 1008,
+      "compressed": true
+    },
+    {
+      "id": 172,
+      "name": "obseg/chr/CheadmarionZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00722b30",
+      "size": 1040,
+      "compressed": true
+    },
+    {
+      "id": 173,
+      "name": "obseg/chr/CheadmarkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00722f40",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 174,
+      "name": "obseg/chr/CheadmartinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00723470",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 175,
+      "name": "obseg/chr/CheadmishkinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007239d0",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 176,
+      "name": "obseg/chr/CheadneilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00723f30",
+      "size": 1312,
+      "compressed": true
+    },
+    {
+      "id": 177,
+      "name": "obseg/chr/CheadpeteZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00724450",
+      "size": 1424,
+      "compressed": true
+    },
+    {
+      "id": 178,
+      "name": "obseg/chr/CheadrobinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007249e0",
+      "size": 1296,
+      "compressed": true
+    },
+    {
+      "id": 179,
+      "name": "obseg/chr/CheadsallyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00724ef0",
+      "size": 1024,
+      "compressed": true
+    },
+    {
+      "id": 180,
+      "name": "obseg/chr/CheadscottZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007252f0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 181,
+      "name": "obseg/chr/CheadshaunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00725870",
+      "size": 1504,
+      "compressed": true
+    },
+    {
+      "id": 182,
+      "name": "obseg/chr/CheadsteveeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00725e50",
+      "size": 1360,
+      "compressed": true
+    },
+    {
+      "id": 183,
+      "name": "obseg/chr/CheadstevehZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007263a0",
+      "size": 1360,
+      "compressed": true
+    },
+    {
+      "id": 184,
+      "name": "obseg/chr/CheadvivienZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007268f0",
+      "size": 1168,
+      "compressed": true
+    },
+    {
+      "id": 185,
+      "name": "obseg/chr/CjawsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00726d80",
+      "size": 11328,
+      "compressed": true
+    },
+    {
+      "id": 186,
+      "name": "obseg/chr/CjeanwomanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007299c0",
+      "size": 8208,
+      "compressed": true
+    },
+    {
+      "id": 187,
+      "name": "obseg/chr/CmaydayZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0072b9d0",
+      "size": 11168,
+      "compressed": true
+    },
+    {
+      "id": 188,
+      "name": "obseg/chr/CmoonfemaleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0072e570",
+      "size": 8528,
+      "compressed": true
+    },
+    {
+      "id": 189,
+      "name": "obseg/chr/CmoonguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007306c0",
+      "size": 9712,
+      "compressed": true
+    },
+    {
+      "id": 190,
+      "name": "obseg/chr/CnatalyaZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00732cb0",
+      "size": 14528,
+      "compressed": true
+    },
+    {
+      "id": 191,
+      "name": "obseg/chr/CnavyguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00736570",
+      "size": 9952,
+      "compressed": true
+    },
+    {
+      "id": 192,
+      "name": "obseg/chr/CoddjobZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00738c50",
+      "size": 12592,
+      "compressed": true
+    },
+    {
+      "id": 193,
+      "name": "obseg/chr/ColiveguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0073bd80",
+      "size": 9808,
+      "compressed": true
+    },
+    {
+      "id": 194,
+      "name": "obseg/chr/CorumovZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0073e3d0",
+      "size": 13360,
+      "compressed": true
+    },
+    {
+      "id": 195,
+      "name": "obseg/chr/CpilotZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00741800",
+      "size": 12416,
+      "compressed": true
+    },
+    {
+      "id": 196,
+      "name": "obseg/chr/CredmanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00744880",
+      "size": 10032,
+      "compressed": true
+    },
+    {
+      "id": 197,
+      "name": "obseg/chr/CrusguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00746fb0",
+      "size": 7216,
+      "compressed": true
+    },
+    {
+      "id": 198,
+      "name": "obseg/chr/CsnowbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00748be0",
+      "size": 13104,
+      "compressed": true
+    },
+    {
+      "id": 199,
+      "name": "obseg/chr/CsnowguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0074bf10",
+      "size": 11392,
+      "compressed": true
+    },
+    {
+      "id": 200,
+      "name": "obseg/chr/CspicebondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0074eb90",
+      "size": 14624,
+      "compressed": true
+    },
+    {
+      "id": 201,
+      "name": "obseg/chr/Csuit_lf_handZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007524b0",
+      "size": 12832,
+      "compressed": true
+    },
+    {
+      "id": 202,
+      "name": "obseg/chr/CsuitbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007556d0",
+      "size": 11664,
+      "compressed": true
+    },
+    {
+      "id": 203,
+      "name": "obseg/chr/CtechmanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00758460",
+      "size": 9904,
+      "compressed": true
+    },
+    {
+      "id": 204,
+      "name": "obseg/chr/CtechwomanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0075ab10",
+      "size": 8176,
+      "compressed": true
+    },
+    {
+      "id": 205,
+      "name": "obseg/chr/CtimberbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0075cb00",
+      "size": 11568,
+      "compressed": true
+    },
+    {
+      "id": 206,
+      "name": "obseg/chr/CtrevelyanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0075f830",
+      "size": 14288,
+      "compressed": true
+    },
+    {
+      "id": 207,
+      "name": "obseg/chr/CtrevguardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00763000",
+      "size": 9744,
+      "compressed": true
+    },
+    {
+      "id": 208,
+      "name": "obseg/chr/CvalentinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00765610",
+      "size": 12144,
+      "compressed": true
+    },
+    {
+      "id": 209,
+      "name": "obseg/chr/CxeniaZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00768580",
+      "size": 14832,
+      "compressed": true
+    },
+    {
+      "id": 210,
+      "name": "obseg/gun/Gak47Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076bf70",
+      "size": 2576,
+      "compressed": true
+    },
+    {
+      "id": 211,
+      "name": "obseg/gun/GaudiotapeZ.bin",
+      "category": "audio",
+      "rom_offset": "0x0076c980",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 212,
+      "name": "obseg/gun/GautoshotZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076cd10",
+      "size": 6160,
+      "compressed": true
+    },
+    {
+      "id": 213,
+      "name": "obseg/gun/GblackboxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076e520",
+      "size": 1536,
+      "compressed": true
+    },
+    {
+      "id": 214,
+      "name": "obseg/gun/GblueprintsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076eb20",
+      "size": 256,
+      "compressed": true
+    },
+    {
+      "id": 215,
+      "name": "obseg/gun/GbombcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076ec20",
+      "size": 1936,
+      "compressed": true
+    },
+    {
+      "id": 216,
+      "name": "obseg/gun/GbombdefuserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076f3b0",
+      "size": 1520,
+      "compressed": true
+    },
+    {
+      "id": 217,
+      "name": "obseg/gun/GbriefcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0076f9a0",
+      "size": 1936,
+      "compressed": true
+    },
+    {
+      "id": 218,
+      "name": "obseg/gun/GbugZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00770130",
+      "size": 2416,
+      "compressed": true
+    },
+    {
+      "id": 219,
+      "name": "obseg/gun/GbugdetectorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00770aa0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 220,
+      "name": "obseg/gun/GbungeeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00770df0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 221,
+      "name": "obseg/gun/GcameraZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771140",
+      "size": 1152,
+      "compressed": true
+    },
+    {
+      "id": 222,
+      "name": "obseg/gun/GcartblueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007715c0",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 223,
+      "name": "obseg/gun/GcartridgeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771820",
+      "size": 304,
+      "compressed": true
+    },
+    {
+      "id": 224,
+      "name": "obseg/gun/GcartrifleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771950",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 225,
+      "name": "obseg/gun/GcartshellZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771b60",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 226,
+      "name": "obseg/gun/GcircuitboardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771d60",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 227,
+      "name": "obseg/gun/GclipboardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00771ea0",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 228,
+      "name": "obseg/gun/GcreditcardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00772090",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 229,
+      "name": "obseg/gun/GdarkglassesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007723e0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 230,
+      "name": "obseg/gun/GdatathiefZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00772730",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 231,
+      "name": "obseg/gun/GdattapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00772870",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 232,
+      "name": "obseg/gun/GdoordecoderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007729e0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 233,
+      "name": "obseg/gun/GdoorexploderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00772f60",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 234,
+      "name": "obseg/gun/GdossierredZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007732b0",
+      "size": 864,
+      "compressed": true
+    },
+    {
+      "id": 235,
+      "name": "obseg/gun/GdynamiteZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00773610",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 236,
+      "name": "obseg/gun/GexplosivefloppyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00773960",
+      "size": 592,
+      "compressed": true
+    },
+    {
+      "id": 237,
+      "name": "obseg/gun/GexplosivepenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00773bb0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 238,
+      "name": "obseg/gun/GextinguisherZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00773f00",
+      "size": 2032,
+      "compressed": true
+    },
+    {
+      "id": 239,
+      "name": "obseg/gun/GfingergunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007746f0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 240,
+      "name": "obseg/gun/GfistZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00774a40",
+      "size": 5888,
+      "compressed": true
+    },
+    {
+      "id": 241,
+      "name": "obseg/gun/GflarepistolZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00776140",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 242,
+      "name": "obseg/gun/Gfnp90Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00776490",
+      "size": 3232,
+      "compressed": true
+    },
+    {
+      "id": 243,
+      "name": "obseg/gun/GgaskeyringZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00777130",
+      "size": 2608,
+      "compressed": true
+    },
+    {
+      "id": 244,
+      "name": "obseg/gun/GgoldbarZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00777b60",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 245,
+      "name": "obseg/gun/GgoldeneyekeyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00777eb0",
+      "size": 2480,
+      "compressed": true
+    },
+    {
+      "id": 246,
+      "name": "obseg/gun/GgoldengunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00778860",
+      "size": 6112,
+      "compressed": true
+    },
+    {
+      "id": 247,
+      "name": "obseg/gun/GgoldwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077a040",
+      "size": 6496,
+      "compressed": true
+    },
+    {
+      "id": 248,
+      "name": "obseg/gun/GgrenadeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077b9a0",
+      "size": 2608,
+      "compressed": true
+    },
+    {
+      "id": 249,
+      "name": "obseg/gun/GgrenadelaunchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077c3d0",
+      "size": 4224,
+      "compressed": true
+    },
+    {
+      "id": 250,
+      "name": "obseg/gun/GheroinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077d450",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 251,
+      "name": "obseg/gun/GjoypadZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077d7a0",
+      "size": 7856,
+      "compressed": true
+    },
+    {
+      "id": 252,
+      "name": "obseg/gun/GkeyanalysercaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077f650",
+      "size": 1936,
+      "compressed": true
+    },
+    {
+      "id": 253,
+      "name": "obseg/gun/GkeyboltZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0077fde0",
+      "size": 2544,
+      "compressed": true
+    },
+    {
+      "id": 254,
+      "name": "obseg/gun/GkeycardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007807d0",
+      "size": 304,
+      "compressed": true
+    },
+    {
+      "id": 255,
+      "name": "obseg/gun/GkeyyaleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00780900",
+      "size": 3408,
+      "compressed": true
+    },
+    {
+      "id": 256,
+      "name": "obseg/gun/GknifeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00781650",
+      "size": 6864,
+      "compressed": true
+    },
+    {
+      "id": 257,
+      "name": "obseg/gun/GlaserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00783120",
+      "size": 3568,
+      "compressed": true
+    },
+    {
+      "id": 258,
+      "name": "obseg/gun/GlectreZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00783f10",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 259,
+      "name": "obseg/gun/GlockexploderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00784260",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 260,
+      "name": "obseg/gun/Gm16Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007845b0",
+      "size": 2592,
+      "compressed": true
+    },
+    {
+      "id": 261,
+      "name": "obseg/gun/GmapZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00784fd0",
+      "size": 240,
+      "compressed": true
+    },
+    {
+      "id": 262,
+      "name": "obseg/gun/GmicrocameraZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007850c0",
+      "size": 1600,
+      "compressed": true
+    },
+    {
+      "id": 263,
+      "name": "obseg/gun/GmicrocodeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00785700",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 264,
+      "name": "obseg/gun/GmicrofilmZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00785a50",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 265,
+      "name": "obseg/gun/GmoneyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00785da0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 266,
+      "name": "obseg/gun/Gmp5kZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007860f0",
+      "size": 3040,
+      "compressed": true
+    },
+    {
+      "id": 267,
+      "name": "obseg/gun/Gmp5ksilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00786cd0",
+      "size": 3328,
+      "compressed": true
+    },
+    {
+      "id": 268,
+      "name": "obseg/gun/GpitongunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007879d0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 269,
+      "name": "obseg/gun/GplansZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00787d20",
+      "size": 464,
+      "compressed": true
+    },
+    {
+      "id": 270,
+      "name": "obseg/gun/GplastiqueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00787ef0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 271,
+      "name": "obseg/gun/GpolarizedglassesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00788240",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 272,
+      "name": "obseg/gun/GproximitymineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007887a0",
+      "size": 2032,
+      "compressed": true
+    },
+    {
+      "id": 273,
+      "name": "obseg/gun/GremotemineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00788f90",
+      "size": 2496,
+      "compressed": true
+    },
+    {
+      "id": 274,
+      "name": "obseg/gun/GrocketlaunchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00789950",
+      "size": 4640,
+      "compressed": true
+    },
+    {
+      "id": 275,
+      "name": "obseg/gun/GrugerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0078ab70",
+      "size": 7568,
+      "compressed": true
+    },
+    {
+      "id": 276,
+      "name": "obseg/gun/GsafecrackercaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0078c900",
+      "size": 1936,
+      "compressed": true
+    },
+    {
+      "id": 277,
+      "name": "obseg/gun/GshotgunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0078d090",
+      "size": 3808,
+      "compressed": true
+    },
+    {
+      "id": 278,
+      "name": "obseg/gun/GsilverwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0078df70",
+      "size": 6496,
+      "compressed": true
+    },
+    {
+      "id": 279,
+      "name": "obseg/gun/GskorpionZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0078f8d0",
+      "size": 4608,
+      "compressed": true
+    },
+    {
+      "id": 280,
+      "name": "obseg/gun/GsniperrifleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00790ad0",
+      "size": 4208,
+      "compressed": true
+    },
+    {
+      "id": 281,
+      "name": "obseg/gun/GspectreZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00791b40",
+      "size": 3200,
+      "compressed": true
+    },
+    {
+      "id": 282,
+      "name": "obseg/gun/GspooltapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007927c0",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 283,
+      "name": "obseg/gun/GspyfileZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00792b10",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 284,
+      "name": "obseg/gun/GstafflistZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00792e60",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 285,
+      "name": "obseg/gun/GtaserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00793000",
+      "size": 7776,
+      "compressed": true
+    },
+    {
+      "id": 286,
+      "name": "obseg/gun/GthrowknifeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00794e60",
+      "size": 6896,
+      "compressed": true
+    },
+    {
+      "id": 287,
+      "name": "obseg/gun/GtimedmineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00796950",
+      "size": 2752,
+      "compressed": true
+    },
+    {
+      "id": 288,
+      "name": "obseg/gun/GtriggerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00797410",
+      "size": 13312,
+      "compressed": true
+    },
+    {
+      "id": 289,
+      "name": "obseg/gun/Gtt33Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079a810",
+      "size": 6944,
+      "compressed": true
+    },
+    {
+      "id": 290,
+      "name": "obseg/gun/GuziZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079c330",
+      "size": 2320,
+      "compressed": true
+    },
+    {
+      "id": 291,
+      "name": "obseg/gun/GvideotapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079cc40",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 292,
+      "name": "obseg/gun/GwatchcommunicatorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079ce50",
+      "size": 5216,
+      "compressed": true
+    },
+    {
+      "id": 293,
+      "name": "obseg/gun/GwatchgeigercounterZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079e2b0",
+      "size": 5216,
+      "compressed": true
+    },
+    {
+      "id": 294,
+      "name": "obseg/gun/GwatchidentifierZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0079f710",
+      "size": 5216,
+      "compressed": true
+    },
+    {
+      "id": 295,
+      "name": "obseg/gun/GwatchlaserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a0b70",
+      "size": 13312,
+      "compressed": true
+    },
+    {
+      "id": 296,
+      "name": "obseg/gun/GwatchmagnetattractZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a3f70",
+      "size": 5200,
+      "compressed": true
+    },
+    {
+      "id": 297,
+      "name": "obseg/gun/GwatchmagnetrepelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a53c0",
+      "size": 5216,
+      "compressed": true
+    },
+    {
+      "id": 298,
+      "name": "obseg/gun/GweaponcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a6820",
+      "size": 1936,
+      "compressed": true
+    },
+    {
+      "id": 299,
+      "name": "obseg/gun/GwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a6fb0",
+      "size": 7312,
+      "compressed": true
+    },
+    {
+      "id": 300,
+      "name": "obseg/gun/GwppksilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007a8c40",
+      "size": 7488,
+      "compressed": true
+    },
+    {
+      "id": 301,
+      "name": "obseg/gun/GwristdartZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007aa980",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 302,
+      "name": "obseg/prop/PICBMZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007aacd0",
+      "size": 9600,
+      "compressed": true
+    },
+    {
+      "id": 303,
+      "name": "obseg/prop/PICBM_noseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ad250",
+      "size": 1968,
+      "compressed": true
+    },
+    {
+      "id": 304,
+      "name": "obseg/prop/Pak47magZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ada00",
+      "size": 480,
+      "compressed": true
+    },
+    {
+      "id": 305,
+      "name": "obseg/prop/Palarm1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007adbe0",
+      "size": 352,
+      "compressed": true
+    },
+    {
+      "id": 306,
+      "name": "obseg/prop/Palarm2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007add40",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 307,
+      "name": "obseg/prop/Pammo_crate1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007adee0",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 308,
+      "name": "obseg/prop/Pammo_crate2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ae120",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 309,
+      "name": "obseg/prop/Pammo_crate3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ae360",
+      "size": 592,
+      "compressed": true
+    },
+    {
+      "id": 310,
+      "name": "obseg/prop/Pammo_crate4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ae5b0",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 311,
+      "name": "obseg/prop/Pammo_crate5Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ae820",
+      "size": 704,
+      "compressed": true
+    },
+    {
+      "id": 312,
+      "name": "obseg/prop/PapcZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007aeae0",
+      "size": 7264,
+      "compressed": true
+    },
+    {
+      "id": 313,
+      "name": "obseg/prop/Parchsecdoor1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b0740",
+      "size": 480,
+      "compressed": true
+    },
+    {
+      "id": 314,
+      "name": "obseg/prop/Parchsecdoor2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b0920",
+      "size": 464,
+      "compressed": true
+    },
+    {
+      "id": 315,
+      "name": "obseg/prop/ParticZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b0af0",
+      "size": 3584,
+      "compressed": true
+    },
+    {
+      "id": 316,
+      "name": "obseg/prop/PartictrailerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b18f0",
+      "size": 2320,
+      "compressed": true
+    },
+    {
+      "id": 317,
+      "name": "obseg/prop/PbarricadeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b2200",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 318,
+      "name": "obseg/prop/Pbin1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b2440",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 319,
+      "name": "obseg/prop/Pblotter1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b2790",
+      "size": 224,
+      "compressed": true
+    },
+    {
+      "id": 320,
+      "name": "obseg/prop/PbodyarmourZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b2870",
+      "size": 1184,
+      "compressed": true
+    },
+    {
+      "id": 321,
+      "name": "obseg/prop/PbodyarmourvestZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b2d10",
+      "size": 1056,
+      "compressed": true
+    },
+    {
+      "id": 322,
+      "name": "obseg/prop/PbollardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b3130",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 323,
+      "name": "obseg/prop/PbombZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b3330",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 324,
+      "name": "obseg/prop/Pbook1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b34a0",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 325,
+      "name": "obseg/prop/Pbookshelf1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b3630",
+      "size": 1776,
+      "compressed": true
+    },
+    {
+      "id": 326,
+      "name": "obseg/prop/Pborg_crateZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b3d20",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 327,
+      "name": "obseg/prop/PboxcartridgesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b3e90",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 328,
+      "name": "obseg/prop/Pboxes2x4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b4090",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 329,
+      "name": "obseg/prop/Pboxes3x4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b44c0",
+      "size": 1088,
+      "compressed": true
+    },
+    {
+      "id": 330,
+      "name": "obseg/prop/Pboxes4x4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b4900",
+      "size": 1632,
+      "compressed": true
+    },
+    {
+      "id": 331,
+      "name": "obseg/prop/PbrakeunitZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b4f60",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 332,
+      "name": "obseg/prop/Pbridge_console1aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b52d0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 333,
+      "name": "obseg/prop/Pbridge_console1bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b5850",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 334,
+      "name": "obseg/prop/Pbridge_console2aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b5db0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 335,
+      "name": "obseg/prop/Pbridge_console2bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b6330",
+      "size": 1264,
+      "compressed": true
+    },
+    {
+      "id": 336,
+      "name": "obseg/prop/Pbridge_console3aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b6820",
+      "size": 1360,
+      "compressed": true
+    },
+    {
+      "id": 337,
+      "name": "obseg/prop/Pbridge_console3bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b6d70",
+      "size": 1424,
+      "compressed": true
+    },
+    {
+      "id": 338,
+      "name": "obseg/prop/PcarbmwZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b7300",
+      "size": 3296,
+      "compressed": true
+    },
+    {
+      "id": 339,
+      "name": "obseg/prop/Pcard_box1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b7fe0",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 340,
+      "name": "obseg/prop/Pcard_box2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b81e0",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 341,
+      "name": "obseg/prop/Pcard_box3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b8420",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 342,
+      "name": "obseg/prop/Pcard_box4_lgZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b8610",
+      "size": 432,
+      "compressed": true
+    },
+    {
+      "id": 343,
+      "name": "obseg/prop/Pcard_box5_lgZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b87c0",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 344,
+      "name": "obseg/prop/Pcard_box6_lgZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b89c0",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 345,
+      "name": "obseg/prop/PcarescortZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b8bb0",
+      "size": 3072,
+      "compressed": true
+    },
+    {
+      "id": 346,
+      "name": "obseg/prop/PcargolfZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007b97b0",
+      "size": 3120,
+      "compressed": true
+    },
+    {
+      "id": 347,
+      "name": "obseg/prop/PcarweirdZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ba3e0",
+      "size": 4416,
+      "compressed": true
+    },
+    {
+      "id": 348,
+      "name": "obseg/prop/PcarzilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bb520",
+      "size": 5632,
+      "compressed": true
+    },
+    {
+      "id": 349,
+      "name": "obseg/prop/PcctvZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bcb20",
+      "size": 896,
+      "compressed": true
+    },
+    {
+      "id": 350,
+      "name": "obseg/prop/PchraudiotapeZ.bin",
+      "category": "audio",
+      "rom_offset": "0x007bcea0",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 351,
+      "name": "obseg/prop/PchrautoshotZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bd400",
+      "size": 864,
+      "compressed": true
+    },
+    {
+      "id": 352,
+      "name": "obseg/prop/PchrblackboxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bd760",
+      "size": 2176,
+      "compressed": true
+    },
+    {
+      "id": 353,
+      "name": "obseg/prop/PchrblueprintsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bdfe0",
+      "size": 336,
+      "compressed": true
+    },
+    {
+      "id": 354,
+      "name": "obseg/prop/PchrbombcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007be130",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 355,
+      "name": "obseg/prop/PchrbombdefuserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007be320",
+      "size": 2272,
+      "compressed": true
+    },
+    {
+      "id": 356,
+      "name": "obseg/prop/PchrbriefcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bec00",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 357,
+      "name": "obseg/prop/PchrbugZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bed90",
+      "size": 3504,
+      "compressed": true
+    },
+    {
+      "id": 358,
+      "name": "obseg/prop/PchrbugdetectorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bfb40",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 359,
+      "name": "obseg/prop/PchrbungeeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bfcb0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 360,
+      "name": "obseg/prop/PchrcameraZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007bfe20",
+      "size": 1680,
+      "compressed": true
+    },
+    {
+      "id": 361,
+      "name": "obseg/prop/PchrcircuitboardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c04b0",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 362,
+      "name": "obseg/prop/PchrclipboardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c0650",
+      "size": 640,
+      "compressed": true
+    },
+    {
+      "id": 363,
+      "name": "obseg/prop/PchrcreditcardZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c08d0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 364,
+      "name": "obseg/prop/PchrdarkglassesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c0a40",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 365,
+      "name": "obseg/prop/PchrdatathiefZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c0bb0",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 366,
+      "name": "obseg/prop/PchrdattapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c0d50",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 367,
+      "name": "obseg/prop/PchrdoordecoderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c0f40",
+      "size": 2144,
+      "compressed": true
+    },
+    {
+      "id": 368,
+      "name": "obseg/prop/PchrdoorexploderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c17a0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 369,
+      "name": "obseg/prop/PchrdossierredZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c1910",
+      "size": 1232,
+      "compressed": true
+    },
+    {
+      "id": 370,
+      "name": "obseg/prop/PchrdynamiteZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c1de0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 371,
+      "name": "obseg/prop/PchrexplosivepenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c1f50",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 372,
+      "name": "obseg/prop/PchrextinguisherZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c20c0",
+      "size": 1280,
+      "compressed": true
+    },
+    {
+      "id": 373,
+      "name": "obseg/prop/PchrfingergunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c25c0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 374,
+      "name": "obseg/prop/PchrflarepistolZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c2730",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 375,
+      "name": "obseg/prop/Pchrfnp90Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c28a0",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 376,
+      "name": "obseg/prop/PchrgaskeyringZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c2d00",
+      "size": 3856,
+      "compressed": true
+    },
+    {
+      "id": 377,
+      "name": "obseg/prop/PchrgoldbarZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c3c10",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 378,
+      "name": "obseg/prop/PchrgoldenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c3d80",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 379,
+      "name": "obseg/prop/PchrgoldeneyekeyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c3ff0",
+      "size": 3744,
+      "compressed": true
+    },
+    {
+      "id": 380,
+      "name": "obseg/prop/PchrgoldwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c4e90",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 381,
+      "name": "obseg/prop/PchrgrenadeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5000",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 382,
+      "name": "obseg/prop/PchrgrenadelaunchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5370",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 383,
+      "name": "obseg/prop/PchrgrenaderoundZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5700",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 384,
+      "name": "obseg/prop/PchrheroinZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5970",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 385,
+      "name": "obseg/prop/PchrkalashZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5ae0",
+      "size": 1008,
+      "compressed": true
+    },
+    {
+      "id": 386,
+      "name": "obseg/prop/PchrkeyanalysercaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c5ed0",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 387,
+      "name": "obseg/prop/PchrkeyboltZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c60c0",
+      "size": 3744,
+      "compressed": true
+    },
+    {
+      "id": 388,
+      "name": "obseg/prop/PchrkeyyaleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c6f60",
+      "size": 5216,
+      "compressed": true
+    },
+    {
+      "id": 389,
+      "name": "obseg/prop/PchrknifeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c83c0",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 390,
+      "name": "obseg/prop/PchrlaserZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c85c0",
+      "size": 960,
+      "compressed": true
+    },
+    {
+      "id": 391,
+      "name": "obseg/prop/PchrlectreZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c8980",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 392,
+      "name": "obseg/prop/PchrlockexploderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c8af0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 393,
+      "name": "obseg/prop/Pchrm16Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c8c60",
+      "size": 976,
+      "compressed": true
+    },
+    {
+      "id": 394,
+      "name": "obseg/prop/PchrmapZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9030",
+      "size": 336,
+      "compressed": true
+    },
+    {
+      "id": 395,
+      "name": "obseg/prop/PchrmicrocameraZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9180",
+      "size": 2288,
+      "compressed": true
+    },
+    {
+      "id": 396,
+      "name": "obseg/prop/PchrmicrocodeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9a70",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 397,
+      "name": "obseg/prop/PchrmicrofilmZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9be0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 398,
+      "name": "obseg/prop/PchrmoneyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9d50",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 399,
+      "name": "obseg/prop/Pchrmp5kZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007c9ec0",
+      "size": 896,
+      "compressed": true
+    },
+    {
+      "id": 400,
+      "name": "obseg/prop/Pchrmp5ksilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ca240",
+      "size": 1040,
+      "compressed": true
+    },
+    {
+      "id": 401,
+      "name": "obseg/prop/PchrpitongunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ca650",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 402,
+      "name": "obseg/prop/PchrplansZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ca7c0",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 403,
+      "name": "obseg/prop/PchrplastiqueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007caa50",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 404,
+      "name": "obseg/prop/PchrpolarizedglassesZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007caeb0",
+      "size": 2240,
+      "compressed": true
+    },
+    {
+      "id": 405,
+      "name": "obseg/prop/PchrproximitymineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cb770",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 406,
+      "name": "obseg/prop/PchrremotemineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cbbd0",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 407,
+      "name": "obseg/prop/PchrrocketZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cc030",
+      "size": 1456,
+      "compressed": true
+    },
+    {
+      "id": 408,
+      "name": "obseg/prop/PchrrocketlaunchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cc5e0",
+      "size": 992,
+      "compressed": true
+    },
+    {
+      "id": 409,
+      "name": "obseg/prop/PchrrugerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cc9c0",
+      "size": 992,
+      "compressed": true
+    },
+    {
+      "id": 410,
+      "name": "obseg/prop/PchrsafecrackercaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ccda0",
+      "size": 496,
+      "compressed": true
+    },
+    {
+      "id": 411,
+      "name": "obseg/prop/PchrshotgunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ccf90",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 412,
+      "name": "obseg/prop/PchrsilverwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cd2e0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 413,
+      "name": "obseg/prop/PchrskorpionZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cd450",
+      "size": 896,
+      "compressed": true
+    },
+    {
+      "id": 414,
+      "name": "obseg/prop/PchrsniperrifleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cd7d0",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 415,
+      "name": "obseg/prop/PchrspectreZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cdb60",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 416,
+      "name": "obseg/prop/PchrspooltapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cded0",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 417,
+      "name": "obseg/prop/PchrspyfileZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ce040",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 418,
+      "name": "obseg/prop/PchrstafflistZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ce1b0",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 419,
+      "name": "obseg/prop/PchrtesttubeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ce3d0",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 420,
+      "name": "obseg/prop/PchrthrowknifeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ce590",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 421,
+      "name": "obseg/prop/PchrtimedmineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ce7b0",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 422,
+      "name": "obseg/prop/Pchrtt33Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cece0",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 423,
+      "name": "obseg/prop/PchruziZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cef70",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 424,
+      "name": "obseg/prop/PchrvideotapeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cf240",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 425,
+      "name": "obseg/prop/PchrweaponcaseZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cf510",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 426,
+      "name": "obseg/prop/PchrwppkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cf710",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 427,
+      "name": "obseg/prop/PchrwppksilZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cf950",
+      "size": 736,
+      "compressed": true
+    },
+    {
+      "id": 428,
+      "name": "obseg/prop/PchrwristdartZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cfc30",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 429,
+      "name": "obseg/prop/Pconsole1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007cfda0",
+      "size": 1664,
+      "compressed": true
+    },
+    {
+      "id": 430,
+      "name": "obseg/prop/Pconsole2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d0420",
+      "size": 1664,
+      "compressed": true
+    },
+    {
+      "id": 431,
+      "name": "obseg/prop/Pconsole3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d0aa0",
+      "size": 1680,
+      "compressed": true
+    },
+    {
+      "id": 432,
+      "name": "obseg/prop/Pconsole_sev2aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d1130",
+      "size": 1056,
+      "compressed": true
+    },
+    {
+      "id": 433,
+      "name": "obseg/prop/Pconsole_sev2bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d1550",
+      "size": 1216,
+      "compressed": true
+    },
+    {
+      "id": 434,
+      "name": "obseg/prop/Pconsole_sev2cZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d1a10",
+      "size": 1088,
+      "compressed": true
+    },
+    {
+      "id": 435,
+      "name": "obseg/prop/Pconsole_sev2dZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d1e50",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 436,
+      "name": "obseg/prop/Pconsole_sev_GEaZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d2280",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 437,
+      "name": "obseg/prop/Pconsole_sev_GEbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d26b0",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 438,
+      "name": "obseg/prop/Pconsole_sevaZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d2ae0",
+      "size": 1152,
+      "compressed": true
+    },
+    {
+      "id": 439,
+      "name": "obseg/prop/Pconsole_sevbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d2f60",
+      "size": 1136,
+      "compressed": true
+    },
+    {
+      "id": 440,
+      "name": "obseg/prop/Pconsole_sevcZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d33d0",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 441,
+      "name": "obseg/prop/Pconsole_sevdZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d3800",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 442,
+      "name": "obseg/prop/Pcryptdoor1aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d3c30",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 443,
+      "name": "obseg/prop/Pcryptdoor1bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d3dc0",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 444,
+      "name": "obseg/prop/Pcryptdoor2aZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d3f50",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 445,
+      "name": "obseg/prop/Pcryptdoor2bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d40e0",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 446,
+      "name": "obseg/prop/Pcryptdoor3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d4270",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 447,
+      "name": "obseg/prop/Pcryptdoor4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d44e0",
+      "size": 384,
+      "compressed": true
+    },
+    {
+      "id": 448,
+      "name": "obseg/prop/PdamchaindoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d4660",
+      "size": 640,
+      "compressed": true
+    },
+    {
+      "id": 449,
+      "name": "obseg/prop/PdamgatedoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d48e0",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 450,
+      "name": "obseg/prop/PdamtundoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d4b00",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 451,
+      "name": "obseg/prop/Pdepot_door_steelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d4e70",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 452,
+      "name": "obseg/prop/Pdepot_gate_entryZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d5010",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 453,
+      "name": "obseg/prop/Pdesk1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d5250",
+      "size": 384,
+      "compressed": true
+    },
+    {
+      "id": 454,
+      "name": "obseg/prop/Pdesk2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d53d0",
+      "size": 384,
+      "compressed": true
+    },
+    {
+      "id": 455,
+      "name": "obseg/prop/Pdesk_arecibo1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d5550",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 456,
+      "name": "obseg/prop/Pdesk_lamp2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d5790",
+      "size": 768,
+      "compressed": true
+    },
+    {
+      "id": 457,
+      "name": "obseg/prop/Pdest_engineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d5a90",
+      "size": 6384,
+      "compressed": true
+    },
+    {
+      "id": 458,
+      "name": "obseg/prop/Pdest_exocetZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d7380",
+      "size": 1632,
+      "compressed": true
+    },
+    {
+      "id": 459,
+      "name": "obseg/prop/Pdest_gunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d79e0",
+      "size": 1648,
+      "compressed": true
+    },
+    {
+      "id": 460,
+      "name": "obseg/prop/Pdest_harpoonZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d8050",
+      "size": 2208,
+      "compressed": true
+    },
+    {
+      "id": 461,
+      "name": "obseg/prop/Pdest_seawolfZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d88f0",
+      "size": 4016,
+      "compressed": true
+    },
+    {
+      "id": 462,
+      "name": "obseg/prop/Pdisc_readerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d98a0",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 463,
+      "name": "obseg/prop/Pdisk_drive1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d9a60",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 464,
+      "name": "obseg/prop/Pdoor_azt_chairZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d9bf0",
+      "size": 384,
+      "compressed": true
+    },
+    {
+      "id": 465,
+      "name": "obseg/prop/Pdoor_azt_deskZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007d9d70",
+      "size": 1088,
+      "compressed": true
+    },
+    {
+      "id": 466,
+      "name": "obseg/prop/Pdoor_azt_desk_topZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007da1b0",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 467,
+      "name": "obseg/prop/Pdoor_aztecZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007da540",
+      "size": 560,
+      "compressed": true
+    },
+    {
+      "id": 468,
+      "name": "obseg/prop/Pdoor_dest1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007da770",
+      "size": 768,
+      "compressed": true
+    },
+    {
+      "id": 469,
+      "name": "obseg/prop/Pdoor_dest2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007daa70",
+      "size": 960,
+      "compressed": true
+    },
+    {
+      "id": 470,
+      "name": "obseg/prop/Pdoor_eyelidZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dae30",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 471,
+      "name": "obseg/prop/Pdoor_irisZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007db390",
+      "size": 2640,
+      "compressed": true
+    },
+    {
+      "id": 472,
+      "name": "obseg/prop/Pdoor_mfZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dbde0",
+      "size": 752,
+      "compressed": true
+    },
+    {
+      "id": 473,
+      "name": "obseg/prop/Pdoor_roller1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dc0d0",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 474,
+      "name": "obseg/prop/Pdoor_roller2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dc440",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 475,
+      "name": "obseg/prop/Pdoor_roller3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dc680",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 476,
+      "name": "obseg/prop/Pdoor_roller4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dc8c0",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 477,
+      "name": "obseg/prop/Pdoor_rollertrainZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dcb20",
+      "size": 304,
+      "compressed": true
+    },
+    {
+      "id": 478,
+      "name": "obseg/prop/Pdoor_st_arec1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dcc50",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 479,
+      "name": "obseg/prop/Pdoor_st_arec2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dceb0",
+      "size": 736,
+      "compressed": true
+    },
+    {
+      "id": 480,
+      "name": "obseg/prop/Pdoor_winZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dd190",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 481,
+      "name": "obseg/prop/PdoorconsoleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dd330",
+      "size": 1136,
+      "compressed": true
+    },
+    {
+      "id": 482,
+      "name": "obseg/prop/PdoorpanelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dd7a0",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 483,
+      "name": "obseg/prop/Pdoorprison1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ddb10",
+      "size": 336,
+      "compressed": true
+    },
+    {
+      "id": 484,
+      "name": "obseg/prop/PdoorstatgateZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ddc60",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 485,
+      "name": "obseg/prop/PexplosionbitZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dde60",
+      "size": 288,
+      "compressed": true
+    },
+    {
+      "id": 486,
+      "name": "obseg/prop/Pfiling_cabinet1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ddf80",
+      "size": 384,
+      "compressed": true
+    },
+    {
+      "id": 487,
+      "name": "obseg/prop/PflagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007de100",
+      "size": 304,
+      "compressed": true
+    },
+    {
+      "id": 488,
+      "name": "obseg/prop/PfloppyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007de230",
+      "size": 800,
+      "compressed": true
+    },
+    {
+      "id": 489,
+      "name": "obseg/prop/Pfnp90magZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007de550",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 490,
+      "name": "obseg/prop/Pgas_plant_met1_do1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007de6f0",
+      "size": 896,
+      "compressed": true
+    },
+    {
+      "id": 491,
+      "name": "obseg/prop/Pgas_plant_sw2_do1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dea70",
+      "size": 480,
+      "compressed": true
+    },
+    {
+      "id": 492,
+      "name": "obseg/prop/Pgas_plant_sw3_do1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dec50",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 493,
+      "name": "obseg/prop/Pgas_plant_sw4_do1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dee50",
+      "size": 352,
+      "compressed": true
+    },
+    {
+      "id": 494,
+      "name": "obseg/prop/Pgas_plant_sw_do1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007defb0",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 495,
+      "name": "obseg/prop/Pgas_plant_wc_cub1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007df240",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 496,
+      "name": "obseg/prop/PgasbarrelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007df450",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 497,
+      "name": "obseg/prop/PgasbarrelsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007df660",
+      "size": 1344,
+      "compressed": true
+    },
+    {
+      "id": 498,
+      "name": "obseg/prop/Pgasplant_clear_doorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007dfba0",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 499,
+      "name": "obseg/prop/PgastankZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e0100",
+      "size": 1456,
+      "compressed": true
+    },
+    {
+      "id": 500,
+      "name": "obseg/prop/Pglassware1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e06b0",
+      "size": 352,
+      "compressed": true
+    },
+    {
+      "id": 501,
+      "name": "obseg/prop/Pglassware2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e0810",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 502,
+      "name": "obseg/prop/Pglassware3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e0aa0",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 503,
+      "name": "obseg/prop/Pglassware4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e0cb0",
+      "size": 1408,
+      "compressed": true
+    },
+    {
+      "id": 504,
+      "name": "obseg/prop/PgoldeneyelogoZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e1230",
+      "size": 3760,
+      "compressed": true
+    },
+    {
+      "id": 505,
+      "name": "obseg/prop/PgoldenshellsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e20e0",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 506,
+      "name": "obseg/prop/PgroundgunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e22e0",
+      "size": 2000,
+      "compressed": true
+    },
+    {
+      "id": 507,
+      "name": "obseg/prop/Pgun_runway1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e2ab0",
+      "size": 1856,
+      "compressed": true
+    },
+    {
+      "id": 508,
+      "name": "obseg/prop/PhatberetZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e31f0",
+      "size": 672,
+      "compressed": true
+    },
+    {
+      "id": 509,
+      "name": "obseg/prop/PhatberetblueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3490",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 510,
+      "name": "obseg/prop/PhatberetredZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3760",
+      "size": 736,
+      "compressed": true
+    },
+    {
+      "id": 511,
+      "name": "obseg/prop/PhatchboltZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3a40",
+      "size": 208,
+      "compressed": true
+    },
+    {
+      "id": 512,
+      "name": "obseg/prop/PhatchdoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3b10",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 513,
+      "name": "obseg/prop/PhatchsevxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3d30",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 514,
+      "name": "obseg/prop/PhatfurryZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e3ea0",
+      "size": 560,
+      "compressed": true
+    },
+    {
+      "id": 515,
+      "name": "obseg/prop/PhatfurryblackZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e40d0",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 516,
+      "name": "obseg/prop/PhatfurrybrownZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e42f0",
+      "size": 528,
+      "compressed": true
+    },
+    {
+      "id": 517,
+      "name": "obseg/prop/PhathelmetZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e4500",
+      "size": 560,
+      "compressed": true
+    },
+    {
+      "id": 518,
+      "name": "obseg/prop/PhathelmetgreyZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e4730",
+      "size": 560,
+      "compressed": true
+    },
+    {
+      "id": 519,
+      "name": "obseg/prop/PhatmoonZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e4960",
+      "size": 992,
+      "compressed": true
+    },
+    {
+      "id": 520,
+      "name": "obseg/prop/PhatpeakedZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e4d40",
+      "size": 784,
+      "compressed": true
+    },
+    {
+      "id": 521,
+      "name": "obseg/prop/PhattbirdZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e5050",
+      "size": 592,
+      "compressed": true
+    },
+    {
+      "id": 522,
+      "name": "obseg/prop/PhattbirdbrownZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e52a0",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 523,
+      "name": "obseg/prop/PhelicopterZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e5510",
+      "size": 16928,
+      "compressed": true
+    },
+    {
+      "id": 524,
+      "name": "obseg/prop/PhindZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007e9730",
+      "size": 6000,
+      "compressed": true
+    },
+    {
+      "id": 525,
+      "name": "obseg/prop/PjeepZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eaea0",
+      "size": 4448,
+      "compressed": true
+    },
+    {
+      "id": 526,
+      "name": "obseg/prop/Pjerry_can1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ec000",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 527,
+      "name": "obseg/prop/Pjungle3_treeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ec260",
+      "size": 1920,
+      "compressed": true
+    },
+    {
+      "id": 528,
+      "name": "obseg/prop/Pjungle5_treeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ec9e0",
+      "size": 1328,
+      "compressed": true
+    },
+    {
+      "id": 529,
+      "name": "obseg/prop/Pkey_holderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ecf10",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 530,
+      "name": "obseg/prop/Pkeyboard1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ed260",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 531,
+      "name": "obseg/prop/Pkit_units1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ed3d0",
+      "size": 672,
+      "compressed": true
+    },
+    {
+      "id": 532,
+      "name": "obseg/prop/PlabbenchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ed670",
+      "size": 976,
+      "compressed": true
+    },
+    {
+      "id": 533,
+      "name": "obseg/prop/PlandmineZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eda40",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 534,
+      "name": "obseg/prop/PlegalpageZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007edcb0",
+      "size": 4032,
+      "compressed": true
+    },
+    {
+      "id": 535,
+      "name": "obseg/prop/Pletter_tray1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eec70",
+      "size": 352,
+      "compressed": true
+    },
+    {
+      "id": 536,
+      "name": "obseg/prop/Plocker3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eedd0",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 537,
+      "name": "obseg/prop/Plocker4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eef60",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 538,
+      "name": "obseg/prop/Pm16magZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ef0f0",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 539,
+      "name": "obseg/prop/PmagnumshellsZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ef230",
+      "size": 512,
+      "compressed": true
+    },
+    {
+      "id": 540,
+      "name": "obseg/prop/Pmainframe1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ef430",
+      "size": 768,
+      "compressed": true
+    },
+    {
+      "id": 541,
+      "name": "obseg/prop/Pmainframe2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ef730",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 542,
+      "name": "obseg/prop/Pmetal_chair1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007efa00",
+      "size": 832,
+      "compressed": true
+    },
+    {
+      "id": 543,
+      "name": "obseg/prop/Pmetal_crate1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007efd40",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 544,
+      "name": "obseg/prop/Pmetal_crate2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007eff00",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 545,
+      "name": "obseg/prop/Pmetal_crate3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f00c0",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 546,
+      "name": "obseg/prop/Pmetal_crate4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f0280",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 547,
+      "name": "obseg/prop/PmilcopterZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f0440",
+      "size": 6368,
+      "compressed": true
+    },
+    {
+      "id": 548,
+      "name": "obseg/prop/PmiltruckZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f1d20",
+      "size": 8960,
+      "compressed": true
+    },
+    {
+      "id": 549,
+      "name": "obseg/prop/Pmissile_rack2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f4020",
+      "size": 2576,
+      "compressed": true
+    },
+    {
+      "id": 550,
+      "name": "obseg/prop/Pmissile_rackZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f4a30",
+      "size": 992,
+      "compressed": true
+    },
+    {
+      "id": 551,
+      "name": "obseg/prop/PmodemboxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f4e10",
+      "size": 832,
+      "compressed": true
+    },
+    {
+      "id": 552,
+      "name": "obseg/prop/PmotorbikeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f5150",
+      "size": 3776,
+      "compressed": true
+    },
+    {
+      "id": 553,
+      "name": "obseg/prop/Pmp5kmagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f6010",
+      "size": 336,
+      "compressed": true
+    },
+    {
+      "id": 554,
+      "name": "obseg/prop/PnintendologoZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f6160",
+      "size": 10976,
+      "compressed": true
+    },
+    {
+      "id": 555,
+      "name": "obseg/prop/Poil_drum1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f8c40",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 556,
+      "name": "obseg/prop/Poil_drum2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f8eb0",
+      "size": 752,
+      "compressed": true
+    },
+    {
+      "id": 557,
+      "name": "obseg/prop/Poil_drum3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f91a0",
+      "size": 752,
+      "compressed": true
+    },
+    {
+      "id": 558,
+      "name": "obseg/prop/Poil_drum5Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f9490",
+      "size": 752,
+      "compressed": true
+    },
+    {
+      "id": 559,
+      "name": "obseg/prop/Poil_drum6Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f9780",
+      "size": 784,
+      "compressed": true
+    },
+    {
+      "id": 560,
+      "name": "obseg/prop/Poil_drum7Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f9a90",
+      "size": 768,
+      "compressed": true
+    },
+    {
+      "id": 561,
+      "name": "obseg/prop/PpadlockZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007f9d90",
+      "size": 2640,
+      "compressed": true
+    },
+    {
+      "id": 562,
+      "name": "obseg/prop/PpalmZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fa7e0",
+      "size": 1104,
+      "compressed": true
+    },
+    {
+      "id": 563,
+      "name": "obseg/prop/PpalmtreeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fac30",
+      "size": 1232,
+      "compressed": true
+    },
+    {
+      "id": 564,
+      "name": "obseg/prop/Pphone1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fb100",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 565,
+      "name": "obseg/prop/PplaneZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fb240",
+      "size": 9696,
+      "compressed": true
+    },
+    {
+      "id": 566,
+      "name": "obseg/prop/Pplant11Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fd820",
+      "size": 960,
+      "compressed": true
+    },
+    {
+      "id": 567,
+      "name": "obseg/prop/Pplant1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fdbe0",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 568,
+      "name": "obseg/prop/Pplant2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fdf70",
+      "size": 864,
+      "compressed": true
+    },
+    {
+      "id": 569,
+      "name": "obseg/prop/Pplant2bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fe2d0",
+      "size": 1040,
+      "compressed": true
+    },
+    {
+      "id": 570,
+      "name": "obseg/prop/Pplant3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fe6e0",
+      "size": 1104,
+      "compressed": true
+    },
+    {
+      "id": 571,
+      "name": "obseg/prop/Pradio_unit1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007feb30",
+      "size": 432,
+      "compressed": true
+    },
+    {
+      "id": 572,
+      "name": "obseg/prop/Pradio_unit2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007fece0",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 573,
+      "name": "obseg/prop/Pradio_unit3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007feea0",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 574,
+      "name": "obseg/prop/Pradio_unit4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ff060",
+      "size": 448,
+      "compressed": true
+    },
+    {
+      "id": 575,
+      "name": "obseg/prop/ProofgunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ff220",
+      "size": 1632,
+      "compressed": true
+    },
+    {
+      "id": 576,
+      "name": "obseg/prop/PsafeZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ff880",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 577,
+      "name": "obseg/prop/PsafedoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x007ffbd0",
+      "size": 1264,
+      "compressed": true
+    },
+    {
+      "id": 578,
+      "name": "obseg/prop/Psat1_reflectZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008000c0",
+      "size": 5488,
+      "compressed": true
+    },
+    {
+      "id": 579,
+      "name": "obseg/prop/PsatboxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00801630",
+      "size": 288,
+      "compressed": true
+    },
+    {
+      "id": 580,
+      "name": "obseg/prop/PsatdishZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00801750",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 581,
+      "name": "obseg/prop/Psec_panelZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00801bb0",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 582,
+      "name": "obseg/prop/Psev_door3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00801d50",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 583,
+      "name": "obseg/prop/Psev_door3_windZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00801fe0",
+      "size": 912,
+      "compressed": true
+    },
+    {
+      "id": 584,
+      "name": "obseg/prop/Psev_door4_windZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00802370",
+      "size": 992,
+      "compressed": true
+    },
+    {
+      "id": 585,
+      "name": "obseg/prop/Psev_doorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00802750",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 586,
+      "name": "obseg/prop/Psev_door_v1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00802aa0",
+      "size": 816,
+      "compressed": true
+    },
+    {
+      "id": 587,
+      "name": "obseg/prop/Psev_trislideZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00802dd0",
+      "size": 944,
+      "compressed": true
+    },
+    {
+      "id": 588,
+      "name": "obseg/prop/PsevdishZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00803180",
+      "size": 3872,
+      "compressed": true
+    },
+    {
+      "id": 589,
+      "name": "obseg/prop/PsevdoormetslideZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008040a0",
+      "size": 736,
+      "compressed": true
+    },
+    {
+      "id": 590,
+      "name": "obseg/prop/PsevdoornowindZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00804380",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 591,
+      "name": "obseg/prop/PsevdoorwindZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008044f0",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 592,
+      "name": "obseg/prop/PsevdoorwoodZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00804920",
+      "size": 944,
+      "compressed": true
+    },
+    {
+      "id": 593,
+      "name": "obseg/prop/PshuttleZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00804cd0",
+      "size": 10752,
+      "compressed": true
+    },
+    {
+      "id": 594,
+      "name": "obseg/prop/Pshuttle_door_lZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008076d0",
+      "size": 3120,
+      "compressed": true
+    },
+    {
+      "id": 595,
+      "name": "obseg/prop/Pshuttle_door_rZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00808300",
+      "size": 3328,
+      "compressed": true
+    },
+    {
+      "id": 596,
+      "name": "obseg/prop/PsilencerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00809000",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 597,
+      "name": "obseg/prop/Psilo_lift_doorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008091a0",
+      "size": 576,
+      "compressed": true
+    },
+    {
+      "id": 598,
+      "name": "obseg/prop/PsilotopdoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008093e0",
+      "size": 752,
+      "compressed": true
+    },
+    {
+      "id": 599,
+      "name": "obseg/prop/PskorpionmagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008096d0",
+      "size": 352,
+      "compressed": true
+    },
+    {
+      "id": 600,
+      "name": "obseg/prop/PspectremagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00809830",
+      "size": 368,
+      "compressed": true
+    },
+    {
+      "id": 601,
+      "name": "obseg/prop/PspeedboatZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008099a0",
+      "size": 3392,
+      "compressed": true
+    },
+    {
+      "id": 602,
+      "name": "obseg/prop/Pst_pete_room_1iZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0080a6e0",
+      "size": 12608,
+      "compressed": true
+    },
+    {
+      "id": 603,
+      "name": "obseg/prop/Pst_pete_room_2iZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0080d820",
+      "size": 12768,
+      "compressed": true
+    },
+    {
+      "id": 604,
+      "name": "obseg/prop/Pst_pete_room_3tZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00810a00",
+      "size": 12096,
+      "compressed": true
+    },
+    {
+      "id": 605,
+      "name": "obseg/prop/Pst_pete_room_5cZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00813940",
+      "size": 13712,
+      "compressed": true
+    },
+    {
+      "id": 606,
+      "name": "obseg/prop/Pst_pete_room_6cZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00816ed0",
+      "size": 13328,
+      "compressed": true
+    },
+    {
+      "id": 607,
+      "name": "obseg/prop/Psteel_door1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081a2e0",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 608,
+      "name": "obseg/prop/Psteel_door2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081a550",
+      "size": 688,
+      "compressed": true
+    },
+    {
+      "id": 609,
+      "name": "obseg/prop/Psteel_door2bZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081a800",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 610,
+      "name": "obseg/prop/Psteel_door3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081aad0",
+      "size": 720,
+      "compressed": true
+    },
+    {
+      "id": 611,
+      "name": "obseg/prop/Pstool1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081ada0",
+      "size": 704,
+      "compressed": true
+    },
+    {
+      "id": 612,
+      "name": "obseg/prop/Pswipe_card2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081b060",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 613,
+      "name": "obseg/prop/Pswivel_chair1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081b1f0",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 614,
+      "name": "obseg/prop/PtankZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081b480",
+      "size": 6816,
+      "compressed": true
+    },
+    {
+      "id": 615,
+      "name": "obseg/prop/PtigerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081cf20",
+      "size": 7824,
+      "compressed": true
+    },
+    {
+      "id": 616,
+      "name": "obseg/prop/Ptorpedo_rackZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081edb0",
+      "size": 2176,
+      "compressed": true
+    },
+    {
+      "id": 617,
+      "name": "obseg/prop/Ptrain_door2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081f630",
+      "size": 976,
+      "compressed": true
+    },
+    {
+      "id": 618,
+      "name": "obseg/prop/Ptrain_door3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081fa00",
+      "size": 1056,
+      "compressed": true
+    },
+    {
+      "id": 619,
+      "name": "obseg/prop/Ptrain_doorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0081fe20",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 620,
+      "name": "obseg/prop/PtrainextdoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00820090",
+      "size": 832,
+      "compressed": true
+    },
+    {
+      "id": 621,
+      "name": "obseg/prop/Ptt33magZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008203d0",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 622,
+      "name": "obseg/prop/Ptuning_console1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00820510",
+      "size": 1312,
+      "compressed": true
+    },
+    {
+      "id": 623,
+      "name": "obseg/prop/Ptv1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00820a30",
+      "size": 464,
+      "compressed": true
+    },
+    {
+      "id": 624,
+      "name": "obseg/prop/Ptv4screenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00820c00",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 625,
+      "name": "obseg/prop/Ptv_holderZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00820da0",
+      "size": 1744,
+      "compressed": true
+    },
+    {
+      "id": 626,
+      "name": "obseg/prop/PtvscreenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00821470",
+      "size": 208,
+      "compressed": true
+    },
+    {
+      "id": 627,
+      "name": "obseg/prop/PuzimagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00821540",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 628,
+      "name": "obseg/prop/PvertdoorZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00821680",
+      "size": 1552,
+      "compressed": true
+    },
+    {
+      "id": 629,
+      "name": "obseg/prop/PwalletbondZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00821c90",
+      "size": 5552,
+      "compressed": true
+    },
+    {
+      "id": 630,
+      "name": "obseg/prop/PwindowZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823240",
+      "size": 240,
+      "compressed": true
+    },
+    {
+      "id": 631,
+      "name": "obseg/prop/Pwindow_cor11Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823330",
+      "size": 224,
+      "compressed": true
+    },
+    {
+      "id": 632,
+      "name": "obseg/prop/Pwindow_lib_lg1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823410",
+      "size": 224,
+      "compressed": true
+    },
+    {
+      "id": 633,
+      "name": "obseg/prop/Pwindow_lib_sm1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x008234f0",
+      "size": 240,
+      "compressed": true
+    },
+    {
+      "id": 634,
+      "name": "obseg/prop/Pwood_lg_crate1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x008235e0",
+      "size": 640,
+      "compressed": true
+    },
+    {
+      "id": 635,
+      "name": "obseg/prop/Pwood_lg_crate2Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823860",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 636,
+      "name": "obseg/prop/Pwood_md_crate3Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823a80",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 637,
+      "name": "obseg/prop/Pwood_sm_crate4Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823ca0",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 638,
+      "name": "obseg/prop/Pwood_sm_crate5Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00823f00",
+      "size": 608,
+      "compressed": true
+    },
+    {
+      "id": 639,
+      "name": "obseg/prop/Pwood_sm_crate6Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00824160",
+      "size": 544,
+      "compressed": true
+    },
+    {
+      "id": 640,
+      "name": "obseg/prop/Pwooden_table1Z.bin",
+      "category": "unknown",
+      "rom_offset": "0x00824380",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 641,
+      "name": "obseg/prop/PwppkmagZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008246f0",
+      "size": 320,
+      "compressed": true
+    },
+    {
+      "id": 642,
+      "name": "obseg/stan/Tbg_ame_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00824830",
+      "size": 6448,
+      "compressed": true
+    },
+    {
+      "id": 643,
+      "name": "obseg/stan/Tbg_arch_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00826160",
+      "size": 23792,
+      "compressed": true
+    },
+    {
+      "id": 644,
+      "name": "obseg/stan/Tbg_arec_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0082be50",
+      "size": 33616,
+      "compressed": true
+    },
+    {
+      "id": 645,
+      "name": "obseg/stan/Tbg_ark_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008341a0",
+      "size": 36800,
+      "compressed": true
+    },
+    {
+      "id": 646,
+      "name": "obseg/stan/Tbg_ash_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0083d160",
+      "size": 6448,
+      "compressed": true
+    },
+    {
+      "id": 647,
+      "name": "obseg/stan/Tbg_azt_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0083ea90",
+      "size": 21888,
+      "compressed": true
+    },
+    {
+      "id": 648,
+      "name": "obseg/stan/Tbg_cat_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00844010",
+      "size": 10032,
+      "compressed": true
+    },
+    {
+      "id": 649,
+      "name": "obseg/stan/Tbg_cave_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00846740",
+      "size": 20208,
+      "compressed": true
+    },
+    {
+      "id": 650,
+      "name": "obseg/stan/Tbg_crad_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0084b630",
+      "size": 10512,
+      "compressed": true
+    },
+    {
+      "id": 651,
+      "name": "obseg/stan/Tbg_cryp_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0084df40",
+      "size": 12400,
+      "compressed": true
+    },
+    {
+      "id": 652,
+      "name": "obseg/stan/Tbg_dam_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00850fb0",
+      "size": 41952,
+      "compressed": true
+    },
+    {
+      "id": 653,
+      "name": "obseg/stan/Tbg_depo_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0085b390",
+      "size": 28480,
+      "compressed": true
+    },
+    {
+      "id": 654,
+      "name": "obseg/stan/Tbg_dest_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008622d0",
+      "size": 26864,
+      "compressed": true
+    },
+    {
+      "id": 655,
+      "name": "obseg/stan/Tbg_dish_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00868bc0",
+      "size": 2832,
+      "compressed": true
+    },
+    {
+      "id": 656,
+      "name": "obseg/stan/Tbg_imp_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008696d0",
+      "size": 6448,
+      "compressed": true
+    },
+    {
+      "id": 657,
+      "name": "obseg/stan/Tbg_jun_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0086b000",
+      "size": 29008,
+      "compressed": true
+    },
+    {
+      "id": 658,
+      "name": "obseg/stan/Tbg_len_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00872150",
+      "size": 2752,
+      "compressed": true
+    },
+    {
+      "id": 659,
+      "name": "obseg/stan/Tbg_oat_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00872c10",
+      "size": 6400,
+      "compressed": true
+    },
+    {
+      "id": 660,
+      "name": "obseg/stan/Tbg_pete_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00874510",
+      "size": 18064,
+      "compressed": true
+    },
+    {
+      "id": 661,
+      "name": "obseg/stan/Tbg_ref_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00878ba0",
+      "size": 7632,
+      "compressed": true
+    },
+    {
+      "id": 662,
+      "name": "obseg/stan/Tbg_run_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0087a970",
+      "size": 6784,
+      "compressed": true
+    },
+    {
+      "id": 663,
+      "name": "obseg/stan/Tbg_sev_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0087c3f0",
+      "size": 15824,
+      "compressed": true
+    },
+    {
+      "id": 664,
+      "name": "obseg/stan/Tbg_sevb_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008801c0",
+      "size": 20288,
+      "compressed": true
+    },
+    {
+      "id": 665,
+      "name": "obseg/stan/Tbg_sevx_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x00885100",
+      "size": 37680,
+      "compressed": true
+    },
+    {
+      "id": 666,
+      "name": "obseg/stan/Tbg_silo_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0088e430",
+      "size": 37024,
+      "compressed": true
+    },
+    {
+      "id": 667,
+      "name": "obseg/stan/Tbg_stat_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008974d0",
+      "size": 20160,
+      "compressed": true
+    },
+    {
+      "id": 668,
+      "name": "obseg/stan/Tbg_tra_all_p_stanZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0089c390",
+      "size": 9168,
+      "compressed": true
+    },
+    {
+      "id": 669,
+      "name": "obseg/brief/UbriefarchZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e760",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 670,
+      "name": "obseg/brief/UbriefarkZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e780",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 671,
+      "name": "obseg/brief/UbriefaztZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e7a0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 672,
+      "name": "obseg/brief/UbriefcaveZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e7c0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 673,
+      "name": "obseg/brief/UbriefcontrolZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e7e0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 674,
+      "name": "obseg/brief/UbriefcradZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e800",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 675,
+      "name": "obseg/brief/UbriefcrypZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e820",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 676,
+      "name": "obseg/brief/UbriefdamZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e840",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 677,
+      "name": "obseg/brief/UbriefdepoZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e860",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 678,
+      "name": "obseg/brief/UbriefdestZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e880",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 679,
+      "name": "obseg/brief/UbriefjunZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e8a0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 680,
+      "name": "obseg/brief/UbriefpeteZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e8c0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 681,
+      "name": "obseg/brief/UbriefrunZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e8e0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 682,
+      "name": "obseg/brief/UbriefsevbZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e900",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 683,
+      "name": "obseg/brief/UbriefsevbunkerZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e920",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 684,
+      "name": "obseg/brief/UbriefsevxZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e940",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 685,
+      "name": "obseg/brief/UbriefsevxbZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e960",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 686,
+      "name": "obseg/brief/UbriefsiloZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e980",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 687,
+      "name": "obseg/brief/UbriefstatueZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e9a0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 688,
+      "name": "obseg/brief/UbrieftraZ",
+      "category": "unknown",
+      "rom_offset": "0x0089e9c0",
+      "size": 32,
+      "compressed": true
+    },
+    {
+      "id": 689,
+      "name": "obseg/setup/Ump_setupameZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0089e9e0",
+      "size": 1824,
+      "compressed": true
+    },
+    {
+      "id": 690,
+      "name": "obseg/setup/u/Ump_setuparchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x0089f100",
+      "size": 11680,
+      "compressed": true
+    },
+    {
+      "id": 691,
+      "name": "obseg/setup/Ump_setuparkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a1ea0",
+      "size": 7488,
+      "compressed": true
+    },
+    {
+      "id": 692,
+      "name": "obseg/setup/Ump_setupashZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a3be0",
+      "size": 1776,
+      "compressed": true
+    },
+    {
+      "id": 693,
+      "name": "obseg/setup/Ump_setupcaveZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a42d0",
+      "size": 9568,
+      "compressed": true
+    },
+    {
+      "id": 694,
+      "name": "obseg/setup/Ump_setupcradZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a6830",
+      "size": 2400,
+      "compressed": true
+    },
+    {
+      "id": 695,
+      "name": "obseg/setup/Ump_setupcrypZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a7190",
+      "size": 3424,
+      "compressed": true
+    },
+    {
+      "id": 696,
+      "name": "obseg/setup/Ump_setupdishZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a7ef0",
+      "size": 1008,
+      "compressed": true
+    },
+    {
+      "id": 697,
+      "name": "obseg/setup/Ump_setupimpZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a82e0",
+      "size": 1600,
+      "compressed": true
+    },
+    {
+      "id": 698,
+      "name": "obseg/setup/Ump_setupoatZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a8920",
+      "size": 848,
+      "compressed": true
+    },
+    {
+      "id": 699,
+      "name": "obseg/setup/Ump_setuprefZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a8c70",
+      "size": 1040,
+      "compressed": true
+    },
+    {
+      "id": 700,
+      "name": "obseg/setup/Ump_setupsevbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008a9080",
+      "size": 4880,
+      "compressed": true
+    },
+    {
+      "id": 701,
+      "name": "obseg/setup/Ump_setupstatueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008aa390",
+      "size": 3712,
+      "compressed": true
+    },
+    {
+      "id": 702,
+      "name": "obseg/setup/UsetuparchZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ab210",
+      "size": 17936,
+      "compressed": true
+    },
+    {
+      "id": 703,
+      "name": "obseg/setup/UsetuparkZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008af820",
+      "size": 15248,
+      "compressed": true
+    },
+    {
+      "id": 704,
+      "name": "obseg/setup/UsetupaztZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008b33b0",
+      "size": 10496,
+      "compressed": true
+    },
+    {
+      "id": 705,
+      "name": "obseg/setup/UsetupcaveZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008b5cb0",
+      "size": 15968,
+      "compressed": true
+    },
+    {
+      "id": 706,
+      "name": "obseg/setup/UsetupcontrolZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008b9b10",
+      "size": 15104,
+      "compressed": true
+    },
+    {
+      "id": 707,
+      "name": "obseg/setup/u/UsetupcradZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008bd610",
+      "size": 7216,
+      "compressed": true
+    },
+    {
+      "id": 708,
+      "name": "obseg/setup/UsetupcrypZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008bf240",
+      "size": 7824,
+      "compressed": true
+    },
+    {
+      "id": 709,
+      "name": "obseg/setup/UsetupdamZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008c10d0",
+      "size": 17104,
+      "compressed": true
+    },
+    {
+      "id": 710,
+      "name": "obseg/setup/UsetupdepoZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008c53a0",
+      "size": 12176,
+      "compressed": true
+    },
+    {
+      "id": 711,
+      "name": "obseg/setup/u/UsetupdestZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008c8330",
+      "size": 9040,
+      "compressed": true
+    },
+    {
+      "id": 712,
+      "name": "obseg/setup/u/UsetupjunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ca680",
+      "size": 14080,
+      "compressed": true
+    },
+    {
+      "id": 713,
+      "name": "obseg/setup/u/UsetuplenZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008cdd80",
+      "size": 1488,
+      "compressed": true
+    },
+    {
+      "id": 714,
+      "name": "obseg/setup/UsetuppeteZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ce350",
+      "size": 12160,
+      "compressed": true
+    },
+    {
+      "id": 715,
+      "name": "obseg/setup/UsetuprunZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008d12d0",
+      "size": 6240,
+      "compressed": true
+    },
+    {
+      "id": 716,
+      "name": "obseg/setup/UsetupsevbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008d2b30",
+      "size": 9824,
+      "compressed": true
+    },
+    {
+      "id": 717,
+      "name": "obseg/setup/UsetupsevbunkerZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008d5190",
+      "size": 6704,
+      "compressed": true
+    },
+    {
+      "id": 718,
+      "name": "obseg/setup/UsetupsevxZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008d6bc0",
+      "size": 17168,
+      "compressed": true
+    },
+    {
+      "id": 719,
+      "name": "obseg/setup/UsetupsevxbZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008daed0",
+      "size": 16624,
+      "compressed": true
+    },
+    {
+      "id": 720,
+      "name": "obseg/setup/u/UsetupsiloZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008defc0",
+      "size": 10832,
+      "compressed": true
+    },
+    {
+      "id": 721,
+      "name": "obseg/setup/u/UsetupstatueZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e1a10",
+      "size": 10192,
+      "compressed": true
+    },
+    {
+      "id": 722,
+      "name": "obseg/setup/u/UsetuptraZ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e41e0",
+      "size": 12848,
+      "compressed": true
+    },
+    {
+      "id": 723,
+      "name": "obseg/text/LameE",
+      "category": "unknown",
+      "rom_offset": "0x008e7410",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 724,
+      "name": "obseg/text/LameJ",
+      "category": "unknown",
+      "rom_offset": "0x008e7420",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 725,
+      "name": "obseg/text/LarchE",
+      "category": "unknown",
+      "rom_offset": "0x008e7430",
+      "size": 1584,
+      "compressed": true
+    },
+    {
+      "id": 726,
+      "name": "obseg/text/LarchJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e7a60",
+      "size": 1632,
+      "compressed": true
+    },
+    {
+      "id": 727,
+      "name": "obseg/text/LarecE",
+      "category": "unknown",
+      "rom_offset": "0x008e80c0",
+      "size": 1488,
+      "compressed": true
+    },
+    {
+      "id": 728,
+      "name": "obseg/text/u/LarecJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e8690",
+      "size": 1424,
+      "compressed": true
+    },
+    {
+      "id": 729,
+      "name": "obseg/text/LarkE",
+      "category": "unknown",
+      "rom_offset": "0x008e8c20",
+      "size": 1696,
+      "compressed": true
+    },
+    {
+      "id": 730,
+      "name": "obseg/text/u/LarkJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e92c0",
+      "size": 1712,
+      "compressed": true
+    },
+    {
+      "id": 731,
+      "name": "obseg/text/LashE",
+      "category": "unknown",
+      "rom_offset": "0x008e9970",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 732,
+      "name": "obseg/text/LashJ",
+      "category": "unknown",
+      "rom_offset": "0x008e9980",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 733,
+      "name": "obseg/text/LaztE",
+      "category": "unknown",
+      "rom_offset": "0x008e9990",
+      "size": 1088,
+      "compressed": true
+    },
+    {
+      "id": 734,
+      "name": "obseg/text/u/LaztJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008e9dd0",
+      "size": 1200,
+      "compressed": true
+    },
+    {
+      "id": 735,
+      "name": "obseg/text/LcatE",
+      "category": "unknown",
+      "rom_offset": "0x008ea280",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 736,
+      "name": "obseg/text/LcatJ",
+      "category": "unknown",
+      "rom_offset": "0x008ea290",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 737,
+      "name": "obseg/text/LcaveE",
+      "category": "unknown",
+      "rom_offset": "0x008ea2a0",
+      "size": 1024,
+      "compressed": true
+    },
+    {
+      "id": 738,
+      "name": "obseg/text/LcaveJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ea6a0",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 739,
+      "name": "obseg/text/LcradE",
+      "category": "unknown",
+      "rom_offset": "0x008eab00",
+      "size": 1232,
+      "compressed": true
+    },
+    {
+      "id": 740,
+      "name": "obseg/text/u/LcradJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008eafd0",
+      "size": 1200,
+      "compressed": true
+    },
+    {
+      "id": 741,
+      "name": "obseg/text/LcrypE",
+      "category": "unknown",
+      "rom_offset": "0x008eb480",
+      "size": 592,
+      "compressed": true
+    },
+    {
+      "id": 742,
+      "name": "obseg/text/u/LcrypJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008eb6d0",
+      "size": 704,
+      "compressed": true
+    },
+    {
+      "id": 743,
+      "name": "obseg/text/LdamE",
+      "category": "unknown",
+      "rom_offset": "0x008eb990",
+      "size": 1104,
+      "compressed": true
+    },
+    {
+      "id": 744,
+      "name": "obseg/text/u/LdamJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ebde0",
+      "size": 1136,
+      "compressed": true
+    },
+    {
+      "id": 745,
+      "name": "obseg/text/LdepoE",
+      "category": "unknown",
+      "rom_offset": "0x008ec250",
+      "size": 880,
+      "compressed": true
+    },
+    {
+      "id": 746,
+      "name": "obseg/text/u/LdepoJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ec5c0",
+      "size": 832,
+      "compressed": true
+    },
+    {
+      "id": 747,
+      "name": "obseg/text/LdestE",
+      "category": "unknown",
+      "rom_offset": "0x008ec900",
+      "size": 1168,
+      "compressed": true
+    },
+    {
+      "id": 748,
+      "name": "obseg/text/LdestJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ecd90",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 749,
+      "name": "obseg/text/LdishE",
+      "category": "unknown",
+      "rom_offset": "0x008ed1f0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 750,
+      "name": "obseg/text/LdishJ",
+      "category": "unknown",
+      "rom_offset": "0x008ed200",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 751,
+      "name": "obseg/text/LearE",
+      "category": "unknown",
+      "rom_offset": "0x008ed210",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 752,
+      "name": "obseg/text/LearJ",
+      "category": "unknown",
+      "rom_offset": "0x008ed220",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 753,
+      "name": "obseg/text/LeldE",
+      "category": "unknown",
+      "rom_offset": "0x008ed230",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 754,
+      "name": "obseg/text/LeldJ",
+      "category": "unknown",
+      "rom_offset": "0x008ed240",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 755,
+      "name": "obseg/text/LgunE",
+      "category": "unknown",
+      "rom_offset": "0x008ed250",
+      "size": 1824,
+      "compressed": true
+    },
+    {
+      "id": 756,
+      "name": "obseg/text/u/LgunJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ed970",
+      "size": 1872,
+      "compressed": true
+    },
+    {
+      "id": 757,
+      "name": "obseg/text/LimpE",
+      "category": "unknown",
+      "rom_offset": "0x008ee0c0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 758,
+      "name": "obseg/text/LimpJ",
+      "category": "unknown",
+      "rom_offset": "0x008ee0d0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 759,
+      "name": "obseg/text/LjunE",
+      "category": "unknown",
+      "rom_offset": "0x008ee0e0",
+      "size": 1312,
+      "compressed": true
+    },
+    {
+      "id": 760,
+      "name": "obseg/text/u/LjunJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ee600",
+      "size": 1344,
+      "compressed": true
+    },
+    {
+      "id": 761,
+      "name": "obseg/text/LleeE",
+      "category": "unknown",
+      "rom_offset": "0x008eeb40",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 762,
+      "name": "obseg/text/LleeJ",
+      "category": "unknown",
+      "rom_offset": "0x008eeb50",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 763,
+      "name": "obseg/text/LlenE",
+      "category": "unknown",
+      "rom_offset": "0x008eeb60",
+      "size": 1600,
+      "compressed": true
+    },
+    {
+      "id": 764,
+      "name": "obseg/text/u/LlenJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ef1a0",
+      "size": 688,
+      "compressed": true
+    },
+    {
+      "id": 765,
+      "name": "obseg/text/LlipE",
+      "category": "unknown",
+      "rom_offset": "0x008ef450",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 766,
+      "name": "obseg/text/LlipJ",
+      "category": "unknown",
+      "rom_offset": "0x008ef460",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 767,
+      "name": "obseg/text/LlueE",
+      "category": "unknown",
+      "rom_offset": "0x008ef470",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 768,
+      "name": "obseg/text/LlueJ",
+      "category": "unknown",
+      "rom_offset": "0x008ef480",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 769,
+      "name": "obseg/text/LmiscE",
+      "category": "unknown",
+      "rom_offset": "0x008ef490",
+      "size": 672,
+      "compressed": true
+    },
+    {
+      "id": 770,
+      "name": "obseg/text/u/LmiscJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008ef730",
+      "size": 736,
+      "compressed": true
+    },
+    {
+      "id": 771,
+      "name": "obseg/text/LmpmenuE",
+      "category": "unknown",
+      "rom_offset": "0x008efa10",
+      "size": 416,
+      "compressed": true
+    },
+    {
+      "id": 772,
+      "name": "obseg/text/u/LmpmenuJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008efbb0",
+      "size": 400,
+      "compressed": true
+    },
+    {
+      "id": 773,
+      "name": "obseg/text/LmpweaponsE",
+      "category": "unknown",
+      "rom_offset": "0x008efd40",
+      "size": 192,
+      "compressed": true
+    },
+    {
+      "id": 774,
+      "name": "obseg/text/u/LmpweaponsJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008efe00",
+      "size": 224,
+      "compressed": true
+    },
+    {
+      "id": 775,
+      "name": "obseg/text/LoatE",
+      "category": "unknown",
+      "rom_offset": "0x008efee0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 776,
+      "name": "obseg/text/LoatJ",
+      "category": "unknown",
+      "rom_offset": "0x008efef0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 777,
+      "name": "obseg/text/LoptionsE",
+      "category": "unknown",
+      "rom_offset": "0x008eff00",
+      "size": 560,
+      "compressed": true
+    },
+    {
+      "id": 778,
+      "name": "obseg/text/u/LoptionsJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f0130",
+      "size": 592,
+      "compressed": true
+    },
+    {
+      "id": 779,
+      "name": "obseg/text/LpamE",
+      "category": "unknown",
+      "rom_offset": "0x008f0380",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 780,
+      "name": "obseg/text/LpamJ",
+      "category": "unknown",
+      "rom_offset": "0x008f0390",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 781,
+      "name": "obseg/text/LpeteE",
+      "category": "unknown",
+      "rom_offset": "0x008f03a0",
+      "size": 1152,
+      "compressed": true
+    },
+    {
+      "id": 782,
+      "name": "obseg/text/u/LpeteJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f0820",
+      "size": 1136,
+      "compressed": true
+    },
+    {
+      "id": 783,
+      "name": "obseg/text/LpropobjE",
+      "category": "unknown",
+      "rom_offset": "0x008f0c90",
+      "size": 672,
+      "compressed": true
+    },
+    {
+      "id": 784,
+      "name": "obseg/text/u/LpropobjJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f0f30",
+      "size": 704,
+      "compressed": true
+    },
+    {
+      "id": 785,
+      "name": "obseg/text/LrefE",
+      "category": "unknown",
+      "rom_offset": "0x008f11f0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 786,
+      "name": "obseg/text/LrefJ",
+      "category": "unknown",
+      "rom_offset": "0x008f1200",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 787,
+      "name": "obseg/text/LritE",
+      "category": "unknown",
+      "rom_offset": "0x008f1210",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 788,
+      "name": "obseg/text/LritJ",
+      "category": "unknown",
+      "rom_offset": "0x008f1220",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 789,
+      "name": "obseg/text/LrunE",
+      "category": "unknown",
+      "rom_offset": "0x008f1230",
+      "size": 624,
+      "compressed": true
+    },
+    {
+      "id": 790,
+      "name": "obseg/text/LrunJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f14a0",
+      "size": 656,
+      "compressed": true
+    },
+    {
+      "id": 791,
+      "name": "obseg/text/LsevE",
+      "category": "unknown",
+      "rom_offset": "0x008f1730",
+      "size": 1376,
+      "compressed": true
+    },
+    {
+      "id": 792,
+      "name": "obseg/text/u/LsevJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f1c90",
+      "size": 1296,
+      "compressed": true
+    },
+    {
+      "id": 793,
+      "name": "obseg/text/LsevbE",
+      "category": "unknown",
+      "rom_offset": "0x008f21a0",
+      "size": 1872,
+      "compressed": true
+    },
+    {
+      "id": 794,
+      "name": "obseg/text/u/LsevbJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f28f0",
+      "size": 2032,
+      "compressed": true
+    },
+    {
+      "id": 795,
+      "name": "obseg/text/LsevxE",
+      "category": "unknown",
+      "rom_offset": "0x008f30e0",
+      "size": 1120,
+      "compressed": true
+    },
+    {
+      "id": 796,
+      "name": "obseg/text/u/LsevxJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f3540",
+      "size": 960,
+      "compressed": true
+    },
+    {
+      "id": 797,
+      "name": "obseg/text/LsevxbE",
+      "category": "unknown",
+      "rom_offset": "0x008f3900",
+      "size": 1168,
+      "compressed": true
+    },
+    {
+      "id": 798,
+      "name": "obseg/text/LsevxbJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f3d90",
+      "size": 1104,
+      "compressed": true
+    },
+    {
+      "id": 799,
+      "name": "obseg/text/LshoE",
+      "category": "unknown",
+      "rom_offset": "0x008f41e0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 800,
+      "name": "obseg/text/LshoJ",
+      "category": "unknown",
+      "rom_offset": "0x008f41f0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 801,
+      "name": "obseg/text/LsiloE",
+      "category": "unknown",
+      "rom_offset": "0x008f4200",
+      "size": 1456,
+      "compressed": true
+    },
+    {
+      "id": 802,
+      "name": "obseg/text/u/LsiloJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f47b0",
+      "size": 1504,
+      "compressed": true
+    },
+    {
+      "id": 803,
+      "name": "obseg/text/LstatE",
+      "category": "unknown",
+      "rom_offset": "0x008f4d90",
+      "size": 2336,
+      "compressed": true
+    },
+    {
+      "id": 804,
+      "name": "obseg/text/u/LstatJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f56b0",
+      "size": 2160,
+      "compressed": true
+    },
+    {
+      "id": 805,
+      "name": "obseg/text/LtitleE",
+      "category": "unknown",
+      "rom_offset": "0x008f5f20",
+      "size": 2752,
+      "compressed": true
+    },
+    {
+      "id": 806,
+      "name": "obseg/text/u/LtitleJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f69e0",
+      "size": 2960,
+      "compressed": true
+    },
+    {
+      "id": 807,
+      "name": "obseg/text/LtraE",
+      "category": "unknown",
+      "rom_offset": "0x008f7570",
+      "size": 1072,
+      "compressed": true
+    },
+    {
+      "id": 808,
+      "name": "obseg/text/u/LtraJ.bin",
+      "category": "unknown",
+      "rom_offset": "0x008f79a0",
+      "size": 1056,
+      "compressed": true
+    },
+    {
+      "id": 809,
+      "name": "obseg/text/LwaxE",
+      "category": "unknown",
+      "rom_offset": "0x008f7dc0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 810,
+      "name": "obseg/text/LwaxJ",
+      "category": "unknown",
+      "rom_offset": "0x008f7dd0",
+      "size": 16,
+      "compressed": true
+    },
+    {
+      "id": 811,
+      "name": "obseg/ob__ob_end.seg",
+      "category": "unknown",
+      "rom_offset": "0x008f7de0",
+      "size": 16,
+      "compressed": false
+    }
+  ]
+}

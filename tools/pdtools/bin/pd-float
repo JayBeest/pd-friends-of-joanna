@@ -1,0 +1,24 @@
+#!/usr/bin/env php
+<?php
+
+$value = file_get_contents('php://stdin');
+
+$value = preg_replace_callback('/0x[0-9a-f]{8}/', function($match) {
+	$value = hexdec($match[0]);
+
+	$binary  = chr(($value >> 24) & 0xff);
+	$binary .= chr(($value >> 16) & 0xff);
+	$binary .= chr(($value >> 8) & 0xff);
+	$binary .= chr($value & 0xff);
+
+	$decimal = unpack('G', $binary)[1];
+
+	return $decimal;
+	if (strpos($decimal, 'E') === false) {
+		return $decimal;
+	}
+
+	return $match[0];
+}, $value);
+
+echo $value;

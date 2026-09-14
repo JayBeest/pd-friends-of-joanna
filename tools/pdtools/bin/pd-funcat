@@ -1,0 +1,35 @@
+#!/usr/bin/env php
+<?php
+
+$file = $argv[1];
+$offset = hexdec($argv[2]);
+// $ROMID = $_ENV['ROMID'] ?? 'ntsc-final';
+$ROMID = getenv('ROMID') ?? 'ntsc-final';
+// $PD = $_ENV['PD'];
+$PD = getenv('PD');
+
+if ($file == 'game') {
+	$offset |= 0x7f000000;
+} elseif ($file == 'lib') {
+	$offset |= 0x70000000;
+}
+
+$offset = sprintf('%016x', $offset);
+
+$map = file_get_contents("$PD/build/$ROMID/pd.map");
+preg_match_all('/^\s+0x([0-9a-f]+)\s+(\S+)$/m', $map, $matches, PREG_SET_ORDER);
+
+$func = null;
+$best = null;
+
+foreach ($matches as $match) {
+	if ($match[1] <= $offset && $match[1] > $best) {
+		$best = $match[1];
+		$func = $match[2];
+	}
+}
+
+preg_match_all("%build/[^/]+/([^\n\(]+)\(\.text\)%s", explode(" $func\n", $map)[0], $matches, PREG_SET_ORDER);
+$filename = str_replace('.o', '.c', $matches[count($matches) - 1][1]);
+
+echo "$func ($filename)\n";

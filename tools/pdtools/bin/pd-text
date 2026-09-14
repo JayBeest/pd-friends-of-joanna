@@ -1,0 +1,93 @@
+#!/usr/bin/env php
+<?php
+
+// $PD = $_ENV['PD'];
+$PD = getenv('PD');
+// $ROMID = $_ENV['ROMID'] ?? 'ntsc-final';
+$ROMID = getenv('ROMID') ?? 'ntsc-final';
+
+$files = [
+	0x02 => 'ameE',
+	0x04 => 'archE',
+	0x06 => 'arkE',
+	0x08 => 'ashE',
+	0x0a => 'aztE',
+	0x0c => 'catE',
+	0x0e => 'caveE',
+	0x10 => 'arecE',
+	0x12 => 'cradE',
+	0x14 => 'crypE',
+	0x16 => 'damE',
+	0x18 => 'depoE',
+	0x1a => 'destE',
+	0x1c => 'dishE',
+	0x1e => 'earE',
+	0x20 => 'eldE',
+	0x22 => 'impE',
+	0x24 => 'junE',
+	0x26 => 'leeE',
+	0x28 => 'lenE',
+	0x2a => 'lipE',
+	0x2c => 'lueE',
+	0x2e => 'oatE',
+	0x30 => 'pamE',
+	0x32 => 'peteE',
+	0x34 => 'refE',
+	0x36 => 'ritE',
+	0x38 => 'runE',
+	0x3a => 'sevbE',
+	0x3c => 'sevE',
+	0x3e => 'sevxE',
+	0x40 => 'sevxbE',
+	0x42 => 'shoE',
+	0x44 => 'siloE',
+	0x46 => 'statE',
+	0x48 => 'traE',
+	0x4a => 'waxE',
+	0x4c => 'gunE',
+	0x4e => 'titleE',
+	0x50 => 'mpmenuE',
+	0x52 => 'propobjE',
+	0x54 => 'mpweaponsE',
+	0x56 => 'optionsE',
+	0x58 => 'miscE',
+	0x5a => 'uffE',
+	0x5c => 'oldE',
+	0x5e => 'ateE',
+	0x60 => 'lamE',
+	0x62 => 'mp1E',
+	0x64 => 'mp2E',
+	0x66 => 'mp3E',
+	0x68 => 'mp4E',
+	0x6a => 'mp5E',
+	0x6c => 'mp6E',
+	0x6e => 'mp7E',
+	0x70 => 'mp8E',
+	0x72 => 'mp9E',
+	0x74 => 'mp10E',
+	0x76 => 'mp11E',
+	0x78 => 'mp12E',
+	0x7a => 'mp13E',
+	0x7c => 'mp14E',
+	0x7e => 'mp15E',
+	0x80 => 'mp16E',
+	0x82 => 'mp17E',
+	0x84 => 'mp18E',
+	0x86 => 'mp19E',
+	0x88 => 'mp20E',
+];
+
+$id = hexdec($argv[1]);
+
+$bank = ($id >> 8) & 0xfe;
+$offset = $id & 0x1ff;
+$file = $files[$bank];
+
+$file = "$PD/src/files/lang/$ROMID/$file.c";
+
+$c = file_get_contents($file);
+
+$id = sprintf('% 3d', $offset);
+
+preg_match("%/\*$id\*\/ \"(.*?)\",$%m", $c, $match);
+echo $match[1] . "\n";

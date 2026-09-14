@@ -1,0 +1,102 @@
+#!/usr/bin/env php
+<?php
+
+// $PD = $_ENV['PD'];
+$PD = getenv('PD')
+// $ROMID = $_ENV['ROMID'] ?? 'ntsc-final';
+$ROMID = _getenv('ROMID') ?? 'ntsc-final';
+
+$map = parsemap();
+
+function parsemap()
+{
+	global $PD, $ROMID;
+
+	$map = file_get_contents("$PD/build/$ROMID/pd.map");
+	$lines = explode("\n", $map);
+	$infile = false;
+	$prevromaddr = null;
+	$lengths = [];
+
+	foreach ($lines as $line) {
+		if (preg_match("%^ \.text\s+0x00000000([0-9a-f]{8})\s+0x([0-9a-f]+)\s+build/$ROMID/(.*?)/%", $line, $match)) {
+			// .text line (file start)
+			$filestart = hexdec($match[1]);
+			$filelen = hexdec($match[2]);
+			$segment = $match[3];
+			$infile = true;
+			$prevromaddr = null;
+			$prevfuncname = null;
+		} elseif ($infile && preg_match('/^\s+0x00000000([0-9a-f]{8})\s+(\S+)$/', $line, $match)) {
+			// Function line
+			$romaddr = hexdec($match[1]);
+			$funcname = $match[2];
+
+			if ($prevfuncname) {
+				$lengths[$segment][$prevfuncname] = $romaddr - $prevromaddr;
+			}
+
+			$prevromaddr = $romaddr;
+			$prevfuncname = $funcname;
+		} elseif ($infile) {
+			$infile = false;
+			$lengths[$segment][$prevfuncname] = ($filestart + $filelen) - $prevromaddr;
+		}
+	}
+
+	return $lengths;
+}
+
+function do_stats($name, $segment, $lengths)
+{
+	global $PD;
+
+	$num_done = 0;
+	$num_left = 0;
+	$todo = "\n" . trim(`ag --nofilename "^glabel \S+\$" "$PD/src/$name"`) . "\n";
+
+	foreach ($lengths as $funcname => $len) {
+		if (strpos($todo, "\nglabel $funcname\n") === false) {
+			$num_done += $len;
+		} else {
+			$num_left += $len;
+		}
+	}
+
+	$segment->done = $num_done / 4;
+	$segment->left = $num_left / 4;
+	$segment->total = $segment->done + $segment->left;
+}
+
+$segments = [
+	'boot'    => (object) ['label' => 'boot   ', 'done' => 0, 'total' => 0],
+	'lib'     => (object) ['label' => 'lib    ', 'done' => 0, 'total' => 0],
+	'inflate' => (object) ['label' => 'inflate', 'done' => 0, 'total' => 0],
+	'game'    => (object) ['label' => 'game   ', 'done' => 0, 'total' => 0],
+];
+
+$stats = [];
+
+foreach ($segments as $name => $segment) {
+	do_stats($name, $segment, $map[$name]);
+}
+
+$totals = (object) ['done' => 0, 'total' => 0];
+
+foreach ($segments as $segment) {
+	printf("%s  % 7s/% 7s  % 6s%%\n",
+		$segment->label,
+		number_format($segment->done),
+		number_format($segment->total),
+		number_format($segment->done / $segment->total * 100, 2)
+	);
+
+	$totals->done += $segment->done;
+	$totals->total += $segment->total;
+}
+
+printf("TOTAL    % 7s/% 7s  % 6s%%\n",
+	number_format($totals->done),
+	number_format($totals->total),
+	number_format($totals->done / $totals->total * 100, 2)
+);

@@ -1,0 +1,39 @@
+--- filediff.py	2020-01-01 00:00:00.000000000 +0000
++++ filediff.py	2020-01-01 00:00:00.000000000 +0000
+@@ -180,6 +180,7 @@
+         self.syncpoints = []
+         self.in_nested_textview_gutter_expose = False
+         self._cached_match = CachedSequenceMatcher(self.scheduler)
++        self.savedscroll = None
+ 
+         for buf in self.textbuffer:
+             buf.undo_sequence = self.undosequence
+@@ -1251,7 +1252,7 @@
+         while next(step) is None:
+             yield 1
+ 
+-        if not refresh:
++        if not refresh and self.savedscroll is None:
+             for buf in self.textbuffer:
+                 buf.place_cursor(buf.get_start_iter())
+ 
+@@ -1260,6 +1261,9 @@
+             self.scheduler.add_task(
+                 lambda: self.go_to_chunk(target_chunk, centered=True), True)
+ 
++        if self.savedscroll:
++            self.scrolledwindow[1].get_vadjustment().set_value(self.savedscroll);
++
+         self.queue_draw()
+         self._connect_buffer_handlers()
+         self._set_merge_action_sensitivity()
+@@ -1299,6 +1303,9 @@
+                     self.fileentry_toolitem[i].set_visible(False)
+ 
+     def notify_file_changed(self, data):
++        self.savedscroll = self.scrolledwindow[1].get_vadjustment().get_value()
++        self.set_file(1, self.textbuffer[1].data.gfile, self.textbuffer[1].data.encoding)
++        return
+         try:
+             pane = [b.data for b in self.textbuffer].index(data)
+         except ValueError:

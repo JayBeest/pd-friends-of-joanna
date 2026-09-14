@@ -1,0 +1,37 @@
+#!/usr/bin/env php
+<?php
+
+$pd = getenv('PD');
+
+if ($argv[1][0] == '-') {
+	$addr = hexdec($argv[1]) * -1;
+} else {
+	$addr = hexdec($argv[1]);
+}
+
+if ($addr < 0) {
+	$addr = 0x80000000 - ($addr * -1) + 0x80000000;
+}
+
+$map = file_get_contents("$pd/build/ntsc-final/pd.map");
+$regex = sprintf('/^\s+0x%016x\s+(\S+)$/m', $addr);
+
+if (preg_match($regex, $map, $match)) {
+	printf("%s\n", $match[1]);
+} else {
+	// Find symbol before it
+	$bestaddr = 0;
+	$bestsym = 0;
+	preg_match_all('/^\s+0x([0-9a-f]{16})\s+(\S+)$/m', $map, $matches, PREG_SET_ORDER);
+
+	foreach ($matches as $match) {
+		$matchaddr = hexdec($match[1]);
+
+		if ($matchaddr < $addr && $matchaddr > $bestaddr) {
+			$bestaddr = $matchaddr;
+			$bestsym = $match[2];
+		}
+	}
+
+	printf("%s+0x%x\n", $bestsym, $addr - $bestaddr);
+}

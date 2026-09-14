@@ -1,0 +1,27 @@
+#!/usr/bin/env php
+<?php
+
+$PD = getenv('PD');
+
+$filename = 'types.h';
+// if ($argv[1] == 'gvars' || $argv[1] == 'g_vars') {
+// 	$filename = 'gvars/gvars.h';
+// 	$argv[1] = 'g_vars';
+// } else {
+// 	$filename = 'types.h';
+// }
+
+$filename = "$PD/src/include/$filename";
+
+$contents = file_get_contents($filename);
+
+if (!preg_match("/\n(struct {$argv[1]} .*?\n};)/s", $contents, $match)) {
+	exit(1);
+}
+
+$pos = strpos($contents, $match[1]);
+$before = substr($contents, 0, $pos);
+$line = substr_count($before, "\n") + 1;
+
+echo "// line $line:\n";
+echo $match[1] . "\n";

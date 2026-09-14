@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+# This script is used to create a mod directory for a specific ROM.
+# it will be in build/$ROMID/mod
+
+set -euo pipefail
+
+cd $PD
+
+init_layout () {
+  rsync mod/ build/$ROMID/mod -av --delete
+
+  mkdir build/$ROMID/mod/files -p
+}
+
+copy_setup () {
+  for i in $(find build/ -name Usetup*Z ); do \
+    cp $i build/$ROMID/mod/files/;
+  done
+
+  for i in $(find build/$ROMID/mod/files -name Usetup*Z ); do \
+    # if file isn't in modconfig.txt rm it
+    if ! grep -q `basename $i` build/$ROMID/mod/modconfig.txt; then
+      echo "removing $i"
+      rm "$i"
+    fi
+  done
+}
+
+init_layout
+copy_setup
+

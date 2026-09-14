@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+ROMID=${ROMID:-ntsc-final}
+
+if [[ "$1" == "src/game"* ]]; then
+	segment=game
+elif [[ "$1" == "src/lib"* ]]; then
+	segment=lib
+elif [[ "$1" == "src/boot"* ]]; then
+	segment=boot
+elif [[ "$1" == "src/inflate"* ]]; then
+	segment=inflate
+else
+	echo "Couldn't determine segment"
+	exit 1
+fi
+
+inotifywait -m -e close_write "$1" | while read dir; do
+        make build/$ROMID/segments/$segment.bin && pd-diffreload || true
+done

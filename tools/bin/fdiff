@@ -1,0 +1,1572 @@
+#!/usr/bin/env python3
+"""fdiff — function-level diff tool for C codebases.
+
+Uses tree-sitter to parse C files and extract function definitions,
+with SQLite for persistent caching across invocations.
+
+Usage:
+  fdiff show <commit> [--repo <path>] [--file-filter <glob>]
+  fdiff compare <commit> --to <target> [--repo <path>] [--detect-renames]
+  fdiff match <source> <target>
+  fdiff audit --source-repo <path> --range <from>..<to> [--author <name>] --to <target> [--rollup-only]
+
+  <target> can be: a commit/ref, a directory path, WORKTREE, or STAGED
+  fdiff cache-stats [--repo <path>]
+  fdiff cache-clear [--repo <path>]
+
+Examples:
+  fdiff show HEAD~1
+  fdiff show abc1234 --file-filter 'src/game/*.c'
+  fdiff compare abc1234 --to ./pd-modloader/
+  fdiff compare HEAD~3 --to HEAD
+  fdiff match ./foj/src/game/body.c::bodyCalculateHeadOffset \\
+              ./ml/src/game/body.c::bodyCalculateHeadOffset
+  fdiff compare abc1234 --to HEAD --detect-renames
+"""
+
+# --- venv auto-activation ---
+# If not already running from the tool-root venv, re-exec under it.
+import os, sys
+_VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.venv')
+_VENV_PY = os.path.join(_VENV, 'bin', 'python3')
+if os.path.isfile(_VENV_PY) and sys.prefix != _VENV:
+    os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+
+import argparse
+import difflib
+import fnmatch
+import hashlib
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import tree_sitter_c as tsc
+    import tree_sitter as ts
+except ImportError:
+    print("fdiff requires tree-sitter and tree-sitter-c:", file=sys.stderr)
+    print("  pip install tree-sitter tree-sitter-c", file=sys.stderr)
+    sys.exit(1)
+
+# ── Tree-sitter setup ──────────────────────────────────────────────
+
+_lang = ts.Language(tsc.language())
+_parser = ts.Parser(_lang)
+
+# ── Data types ──────────────────────────────────────────────────────
+
+# Symbol kinds
+KIND_FUNCTION = 'function'
+KIND_STRUCT   = 'struct'
+KIND_ENUM     = 'enum'
+KIND_TYPEDEF  = 'typedef'
+KIND_MACRO    = 'macro'
+KIND_GLOBAL   = 'global'
+
+KIND_TAGS = {
+    KIND_FUNCTION: '',
+    KIND_STRUCT:   '[struct] ',
+    KIND_ENUM:     '[enum] ',
+    KIND_TYPEDEF:  '[typedef] ',
+    KIND_MACRO:    '[macro] ',
+    KIND_GLOBAL:   '[global] ',
+}
+
+class FuncInfo:
+    __slots__ = ('name', 'file_path', 'start_line', 'end_line', 'body', 'body_hash', 'signature', 'kind')
+
+    def __init__(self, name, file_path, start_line, end_line, body, signature='', kind=KIND_FUNCTION):
+        self.name = name
+        self.file_path = file_path
+        self.start_line = start_line
+        self.end_line = end_line
+        self.body = body
+        self.body_hash = hashlib.sha256(body.encode()).hexdigest()[:16]
+        self.signature = signature
+        self.kind = kind
+
+    @property
+    def line_count(self):
+        return self.end_line - self.start_line + 1
+
+    @property
+    def tag(self):
+        return KIND_TAGS.get(self.kind, '')
+
+# ── Tree-sitter extraction ─────────────────────────────────────────
+
+def _get_func_name(node):
+    """Extract function name from a function_definition node."""
+    declarator = node.child_by_field_name('declarator')
+    if declarator is None:
+        return None
+    # Walk into nested declarators (pointers, etc.)
+    while declarator.type in ('pointer_declarator', 'parenthesized_declarator'):
+        for child in declarator.children:
+            if child.type in ('function_declarator', 'pointer_declarator',
+                              'parenthesized_declarator', 'identifier'):
+                declarator = child
+                break
+        else:
+            break
+    if declarator.type == 'function_declarator':
+        inner = declarator.child_by_field_name('declarator')
+        if inner:
+            declarator = inner
+    # Handle pointer declarators wrapping the identifier
+    while declarator.type == 'pointer_declarator':
+        for child in declarator.children:
+            if child.type == 'identifier':
+                declarator = child
+                break
+        else:
+            break
+    if declarator.type == 'identifier':
+        return declarator.text.decode()
+    return None
+
+
+def _get_signature(node, source_bytes):
+    """Extract the function signature (everything before the body)."""
+    body = node.child_by_field_name('body')
+    if body:
+        sig_end = body.start_byte
+        return source_bytes[:sig_end].decode(errors='replace').strip()
+    return ''
+
+
+def extract_functions(source: str, file_path: str = '<unknown>') -> list[FuncInfo]:
+    """Parse C source and return a list of FuncInfo for each function definition."""
+    return [s for s in extract_symbols(source, file_path) if s.kind == KIND_FUNCTION]
+
+
+def _get_struct_or_enum_name(node):
+    """Extract name from a struct_specifier or enum_specifier node."""
+    for child in node.children:
+        if child.type == 'type_identifier':
+            return child.text.decode()
+    return None
+
+
+def _get_typedef_name(node):
+    """Extract the defined name from a type_definition node."""
+    # The type_identifier at the end is the name being defined
+    for child in reversed(node.children):
+        if child.type == 'type_identifier':
+            return child.text.decode()
+    return None
+
+
+def _get_decl_name(node):
+    """Extract variable name from a top-level declaration (global/extern)."""
+    for child in node.children:
+        if child.type == 'identifier':
+            return child.text.decode()
+        if child.type == 'array_declarator':
+            for sub in child.children:
+                if sub.type == 'identifier':
+                    return sub.text.decode()
+        if child.type == 'pointer_declarator':
+            for sub in child.children:
+                if sub.type == 'identifier':
+                    return sub.text.decode()
+        if child.type == 'init_declarator':
+            for sub in child.children:
+                if sub.type == 'identifier':
+                    return sub.text.decode()
+                if sub.type == 'array_declarator':
+                    for subsub in sub.children:
+                        if subsub.type == 'identifier':
+                            return subsub.text.decode()
+    return None
+
+
+def _is_func_prototype(node):
+    """Check if a declaration is a function prototype (not a variable)."""
+    for child in node.children:
+        if child.type == 'function_declarator':
+            return True
+        if child.type == 'init_declarator':
+            for sub in child.children:
+                if sub.type == 'function_declarator':
+                    return True
+    return False
+
+
+def _has_body(node):
+    """Check if a struct/enum specifier has a field/enumerator list."""
+    for child in node.children:
+        if child.type in ('field_declaration_list', 'enumerator_list'):
+            return True
+    return False
+
+
+def extract_symbols(source: str, file_path: str = '<unknown>') -> list[FuncInfo]:
+    """Parse C/H source and return FuncInfo for all top-level symbols.
+
+    Extracts: functions, structs, enums, typedefs, macros, and globals.
+    Also recurses into ERROR nodes to recover symbols from regions where
+    tree-sitter's C parser fails (e.g. #if VERSION inside function bodies)."""
+    source_bytes = source.encode()
+    tree = _parser.parse(source_bytes)
+    symbols = []
+
+    def _make(name, node, kind, sig=''):
+        start_line = node.start_point.row + 1
+        end_line = node.end_point.row + 1
+        body_text = source_bytes[node.start_byte:node.end_byte].decode(errors='replace')
+        symbols.append(FuncInfo(name, file_path, start_line, end_line, body_text, sig, kind))
+
+    def _process_node(node):
+        # Functions
+        if node.type == 'function_definition':
+            name = _get_func_name(node)
+            if name:
+                sig = _get_signature(node, source_bytes[node.start_byte:node.end_byte])
+                _make(name, node, KIND_FUNCTION, sig)
+
+        # #define FOO ... and #define FOO(...) ...
+        elif node.type in ('preproc_def', 'preproc_function_def'):
+            for child in node.children:
+                if child.type == 'identifier':
+                    _make(child.text.decode(), node, KIND_MACRO)
+                    break
+
+        # typedef ... Name;
+        elif node.type == 'type_definition':
+            name = _get_typedef_name(node)
+            if name:
+                _make(name, node, KIND_TYPEDEF)
+
+        elif node.type == 'struct_specifier' and _has_body(node):
+            name = _get_struct_or_enum_name(node)
+            if name:
+                _make(name, node, KIND_STRUCT)
+
+        elif node.type == 'enum_specifier' and _has_body(node):
+            name = _get_struct_or_enum_name(node)
+            if name:
+                _make(name, node, KIND_ENUM)
+
+        # Top-level declarations: globals and externs
+        elif node.type == 'declaration':
+            if _is_func_prototype(node):
+                return
+            for child in node.children:
+                if child.type == 'struct_specifier' and _has_body(child):
+                    sname = _get_struct_or_enum_name(child)
+                    if sname:
+                        _make(sname, node, KIND_STRUCT)
+                elif child.type == 'enum_specifier' and _has_body(child):
+                    ename = _get_struct_or_enum_name(child)
+                    if ename:
+                        _make(ename, node, KIND_ENUM)
+            name = _get_decl_name(node)
+            if name:
+                _make(name, node, KIND_GLOBAL)
+
+        # Recurse into ERROR nodes to recover symbols from parse failures
+        elif node.type == 'ERROR':
+            for child in node.children:
+                _process_node(child)
+
+    for node in tree.root_node.children:
+        _process_node(node)
+
+    return symbols
+
+# ── Git helpers ─────────────────────────────────────────────────────
+
+def git_run(args, repo_path='.', check=True):
+    """Run a git command and return stdout."""
+    result = subprocess.run(
+        ['git'] + args,
+        cwd=repo_path, capture_output=True, text=True, check=check
+    )
+    return result.stdout
+
+_SOURCE_EXTS = ('.c', '.h', '.cpp')
+
+def _is_source_file(f):
+    return any(f.endswith(ext) for ext in _SOURCE_EXTS)
+
+def git_changed_files(commit, repo_path='.'):
+    """Get list of C/H files changed in a commit."""
+    out = git_run(['diff-tree', '--no-commit-id', '-r', '--name-only', '--diff-filter=ACMR', commit], repo_path)
+    return [f for f in out.strip().split('\n') if f and _is_source_file(f)]
+
+def git_changed_files_range(commit_a, commit_b, repo_path='.'):
+    """Get list of C/H files changed between two commits."""
+    out = git_run(['diff', '--name-only', '--diff-filter=ACMR', commit_a, commit_b], repo_path)
+    return [f for f in out.strip().split('\n') if f and _is_source_file(f)]
+
+def git_file_content(commit, file_path, repo_path='.'):
+    """Get file content at a specific commit. Returns None if not found."""
+    try:
+        return git_run(['show', f'{commit}:{file_path}'], repo_path)
+    except subprocess.CalledProcessError:
+        return None
+
+def git_parent(commit, repo_path='.'):
+    """Get parent commit hash."""
+    return git_run(['rev-parse', f'{commit}^'], repo_path).strip()
+
+def git_resolve(commit, repo_path='.'):
+    """Resolve a commit-ish to a full hash."""
+    return git_run(['rev-parse', commit], repo_path).strip()
+
+def git_repo_root(repo_path='.'):
+    """Get the repo root directory."""
+    return git_run(['rev-parse', '--show-toplevel'], repo_path).strip()
+
+def git_log_commits(range_spec, repo_path='.', author=None):
+    """List commit hashes in chronological order (oldest first) for a range, optionally filtered by author."""
+    cmd = ['log', '--reverse', '--format=%H', range_spec]
+    if author:
+        cmd.append(f'--author={author}')
+    out = git_run(cmd, repo_path)
+    return [h for h in out.strip().split('\n') if h]
+
+def git_commit_summary(commit, repo_path='.'):
+    """Get short hash + subject for a commit."""
+    return git_run(['log', '-1', '--format=%h %s', commit], repo_path).strip()
+
+# ── SQLite cache ────────────────────────────────────────────────────
+
+SCHEMA_VERSION = '2'
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS func_cache (
+    source_key   TEXT NOT NULL,  -- commit:filepath or dir:filepath:mtime
+    func_name    TEXT NOT NULL,
+    file_path    TEXT NOT NULL,
+    start_line   INTEGER NOT NULL,
+    end_line     INTEGER NOT NULL,
+    body_hash    TEXT NOT NULL,
+    body_text    TEXT NOT NULL,
+    signature    TEXT NOT NULL DEFAULT '',
+    kind         TEXT NOT NULL DEFAULT 'function',
+    PRIMARY KEY (source_key, file_path, func_name, start_line)
+);
+CREATE INDEX IF NOT EXISTS idx_source_key ON func_cache(source_key);
+CREATE INDEX IF NOT EXISTS idx_func_name ON func_cache(func_name);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+def _migrate_db(conn):
+    """Migrate cache DB to current schema version."""
+    row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    current = row[0] if row else '1'
+    if current == SCHEMA_VERSION:
+        return
+    if current == '1':
+        # Add kind column — just drop and rebuild since it's a cache
+        conn.execute('DROP TABLE IF EXISTS func_cache')
+        conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+        (SCHEMA_VERSION,)
+    )
+    conn.commit()
+
+def _cache_path(repo_path='.'):
+    """Get the cache database path for a repository."""
+    root = git_repo_root(repo_path)
+    cache_dir = Path.home() / '.cache' / 'fdiff'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    repo_hash = hashlib.sha256(root.encode()).hexdigest()[:12]
+    repo_name = Path(root).name
+    return cache_dir / f'{repo_name}-{repo_hash}.db'
+
+def _get_db(repo_path='.'):
+    db_path = _cache_path(repo_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.executescript(SCHEMA)
+    _migrate_db(conn)
+    return conn
+
+def cache_get(db, source_key, file_path=None):
+    """Retrieve cached functions. Returns list of FuncInfo or empty list."""
+    if file_path:
+        rows = db.execute(
+            "SELECT func_name, file_path, start_line, end_line, body_text, signature, kind "
+            "FROM func_cache WHERE source_key=? AND file_path=?",
+            (source_key, file_path)
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT func_name, file_path, start_line, end_line, body_text, signature, kind "
+            "FROM func_cache WHERE source_key=?",
+            (source_key,)
+        ).fetchall()
+    return [FuncInfo(r[0], r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows]
+
+def cache_put(db, source_key, functions):
+    """Store functions in cache."""
+    db.executemany(
+        "INSERT OR REPLACE INTO func_cache "
+        "(source_key, func_name, file_path, start_line, end_line, body_hash, body_text, signature, kind) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(source_key, f.name, f.file_path, f.start_line, f.end_line,
+          f.body_hash, f.body, f.signature, f.kind) for f in functions]
+    )
+    db.commit()
+
+def cache_has(db, source_key, file_path):
+    """Check if a source_key+file_path combo is cached."""
+    row = db.execute(
+        "SELECT 1 FROM func_cache WHERE source_key=? AND file_path=? LIMIT 1",
+        (source_key, file_path)
+    ).fetchone()
+    return row is not None
+
+def _dir_source_key(file_path):
+    """Source key for a file on disk based on path + mtime."""
+    stat = os.stat(file_path)
+    return f"dir:{file_path}:{stat.st_mtime_ns}"
+
+# ── Core operations ─────────────────────────────────────────────────
+
+def get_commit_functions(commit, files, repo_path='.', db=None):
+    """Get all functions from specific files at a commit. Uses cache."""
+    resolved = git_resolve(commit, repo_path)
+    all_funcs = []
+    for fpath in files:
+        source_key = f"{resolved}:{fpath}"
+        if db and cache_has(db, source_key, fpath):
+            all_funcs.extend(cache_get(db, source_key, fpath))
+            continue
+        content = git_file_content(resolved, fpath, repo_path)
+        if content is None:
+            continue
+        funcs = extract_symbols(content, fpath)
+        if db and funcs:
+            cache_put(db, source_key, funcs)
+        all_funcs.extend(funcs)
+    return all_funcs
+
+def get_dir_functions(dir_path, files, db=None):
+    """Get all functions from specific files in a directory. Uses cache."""
+    all_funcs = []
+    for fpath in files:
+        full = os.path.join(dir_path, fpath)
+        if not os.path.isfile(full):
+            continue
+        source_key = _dir_source_key(full)
+        if db and cache_has(db, source_key, fpath):
+            all_funcs.extend(cache_get(db, source_key, fpath))
+            continue
+        with open(full, 'r', errors='replace') as f:
+            content = f.read()
+        funcs = extract_symbols(content, fpath)
+        if db and funcs:
+            cache_put(db, source_key, funcs)
+        all_funcs.extend(funcs)
+    return all_funcs
+
+def git_staged_content(file_path, repo_path='.'):
+    """Get file content from the git index (staged). Returns None if not found."""
+    try:
+        return git_run(['show', f':0:{file_path}'], repo_path)
+    except subprocess.CalledProcessError:
+        return None
+
+def get_staged_functions(files, repo_path='.', db=None):
+    """Get all functions from specific files in the git index (staged state)."""
+    all_funcs = []
+    for fpath in files:
+        content = git_staged_content(fpath, repo_path)
+        if content is None:
+            continue
+        # No caching — staged state is transient
+        funcs = extract_symbols(content, fpath)
+        all_funcs.extend(funcs)
+    return all_funcs
+
+# Virtual target names
+TARGET_WORKTREE = 'WORKTREE'
+TARGET_STAGED = 'STAGED'
+
+def resolve_target_functions(target, files, repo_path='.', db=None):
+    """Resolve a target spec to a list of functions and a display label.
+
+    target can be: WORKTREE, STAGED, a directory path, or a git commit/ref.
+    Returns (funcs, label, db_to_close_or_None).
+    """
+    up = target.upper()
+    if up == TARGET_WORKTREE:
+        root = git_repo_root(repo_path)
+        return get_dir_functions(root, files, db), 'WORKTREE', None
+    elif up == TARGET_STAGED:
+        return get_staged_functions(files, repo_path, db), 'STAGED', None
+    elif os.path.isdir(target):
+        tgt_db = _get_db(target) if os.path.isdir(os.path.join(target, '.git')) else None
+        funcs = get_dir_functions(target, files, tgt_db)
+        label = os.path.basename(os.path.abspath(target))
+        return funcs, label, tgt_db
+    else:
+        tgt_db = _get_db(repo_path) if db is None else None
+        use_db = db or tgt_db
+        commit = git_resolve(target, repo_path)
+        funcs = get_commit_functions(commit, files, repo_path, use_db)
+        return funcs, target, tgt_db
+
+def find_changed_functions(commit, repo_path='.', file_filter=None, db=None):
+    """Find functions that were added/modified/removed in a commit."""
+    changed_files = git_changed_files(commit, repo_path)
+    if file_filter:
+        changed_files = [f for f in changed_files if fnmatch.fnmatch(f, file_filter)]
+    if not changed_files:
+        return [], [], []
+
+    resolved = git_resolve(commit, repo_path)
+    # Functions at commit (after)
+    after_funcs = get_commit_functions(resolved, changed_files, repo_path, db)
+    after_by_key = {(f.file_path, f.name): f for f in after_funcs}
+
+    # Functions at parent (before)
+    try:
+        parent = git_parent(resolved, repo_path)
+        before_funcs = get_commit_functions(parent, changed_files, repo_path, db)
+    except subprocess.CalledProcessError:
+        before_funcs = []  # Initial commit
+    before_by_key = {(f.file_path, f.name): f for f in before_funcs}
+
+    added = []
+    modified = []
+    removed = []
+
+    all_keys = set(after_by_key.keys()) | set(before_by_key.keys())
+    for key in sorted(all_keys):
+        before = before_by_key.get(key)
+        after = after_by_key.get(key)
+        if before is None and after is not None:
+            added.append(after)
+        elif before is not None and after is None:
+            removed.append(before)
+        elif before.body_hash != after.body_hash:
+            modified.append((before, after))
+
+    return added, modified, removed
+
+def compare_functions(source_funcs, target_funcs, detect_renames=False):
+    """Compare two sets of functions. Returns matched, source_only, target_only, renames."""
+    src_by_key = {}
+    for f in source_funcs:
+        src_by_key.setdefault((f.file_path, f.name), []).append(f)
+    tgt_by_key = {}
+    for f in target_funcs:
+        tgt_by_key.setdefault((f.file_path, f.name), []).append(f)
+
+    matched = []     # (src_func, tgt_func, status)
+    src_only = []
+    tgt_only = []
+
+    matched_src_keys = set()
+    matched_tgt_keys = set()
+
+    # First pass: exact name+file matches
+    for key in sorted(set(src_by_key.keys()) & set(tgt_by_key.keys())):
+        sf = src_by_key[key][0]
+        tf = tgt_by_key[key][0]
+        if sf.body_hash == tf.body_hash:
+            status = 'identical'
+        else:
+            status = 'diverged'
+        matched.append((sf, tf, status))
+        matched_src_keys.add(key)
+        matched_tgt_keys.add(key)
+
+    # Second pass: same name, different file (moved)
+    src_remaining = {k: v for k, v in src_by_key.items() if k not in matched_src_keys}
+    tgt_remaining = {k: v for k, v in tgt_by_key.items() if k not in matched_tgt_keys}
+
+    src_by_name = {}
+    for (fp, name), funcs in src_remaining.items():
+        src_by_name.setdefault(name, []).extend(funcs)
+    tgt_by_name = {}
+    for (fp, name), funcs in tgt_remaining.items():
+        tgt_by_name.setdefault(name, []).extend(funcs)
+
+    for name in sorted(set(src_by_name.keys()) & set(tgt_by_name.keys())):
+        sf = src_by_name[name][0]
+        tf = tgt_by_name[name][0]
+        status = 'moved-identical' if sf.body_hash == tf.body_hash else 'moved-diverged'
+        matched.append((sf, tf, status))
+        matched_src_keys.add((sf.file_path, sf.name))
+        matched_tgt_keys.add((tf.file_path, tf.name))
+
+    # Collect unmatched
+    for key, funcs in src_by_key.items():
+        if key not in matched_src_keys:
+            src_only.extend(funcs)
+    for key, funcs in tgt_by_key.items():
+        if key not in matched_tgt_keys:
+            tgt_only.extend(funcs)
+
+    # Rename detection via fuzzy body matching
+    renames = []
+    if detect_renames and src_only and tgt_only:
+        still_src = []
+        still_tgt = list(tgt_only)
+        for sf in src_only:
+            best_ratio = 0
+            best_tf = None
+            for tf in still_tgt:
+                ratio = difflib.SequenceMatcher(None, sf.body, tf.body).quick_ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_tf = tf
+            if best_tf and best_ratio > 0.6:
+                # Confirm with full ratio
+                full_ratio = difflib.SequenceMatcher(None, sf.body, best_tf.body).ratio()
+                if full_ratio > 0.6:
+                    renames.append((sf, best_tf, f'renamed ({full_ratio:.0%} similar)'))
+                    still_tgt.remove(best_tf)
+                    continue
+            still_src.append(sf)
+        src_only = still_src
+        tgt_only = still_tgt
+
+    return matched, src_only, tgt_only, renames
+
+# ── Diff helpers ────────────────────────────────────────────────────
+
+def func_unified_diff(func_a, func_b, context=3):
+    """Generate a unified diff between two function bodies.
+
+    Uses standard unified diff headers (a/path, b/path) so the output
+    is compatible with filterdiff, patch, delta, diff-so-fancy, etc.
+    Function name and line number are appended after a tab, which is the
+    conventional place for extra metadata in unified diffs.
+    """
+    a_lines = func_a.body.splitlines(keepends=True)
+    b_lines = func_b.body.splitlines(keepends=True)
+    label_a = f'a/{func_a.file_path}\t{func_a.tag}{func_a.name}() L{func_a.start_line}'
+    label_b = f'b/{func_b.file_path}\t{func_b.tag}{func_b.name}() L{func_b.start_line}'
+    return ''.join(difflib.unified_diff(a_lines, b_lines, fromfile=label_a, tofile=label_b, n=context))
+
+def divergence_summary(func_a, func_b):
+    """One-line summary of where two function bodies differ."""
+    a_lines = func_a.body.splitlines()
+    b_lines = func_b.body.splitlines()
+    sm = difflib.SequenceMatcher(None, a_lines, b_lines)
+    changed_lines_a = set()
+    changed_lines_b = set()
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != 'equal':
+            changed_lines_a.update(range(func_a.start_line + i1, func_a.start_line + i2))
+            changed_lines_b.update(range(func_b.start_line + j1, func_b.start_line + j2))
+    ratio = sm.ratio()
+    return changed_lines_a, changed_lines_b, ratio
+
+# ── Output formatting ──────────────────────────────────────────────
+
+C_RESET = '\033[0m'
+C_BOLD = '\033[1m'
+C_GREEN = '\033[32m'
+C_RED = '\033[31m'
+C_YELLOW = '\033[33m'
+C_CYAN = '\033[36m'
+C_DIM = '\033[2m'
+
+def _use_color():
+    return sys.stdout.isatty()
+
+def _c(code, text):
+    if _use_color():
+        return f'{code}{text}{C_RESET}'
+    return text
+
+def _range_str(line_set):
+    """Compact representation of a set of line numbers."""
+    if not line_set:
+        return ''
+    lines = sorted(line_set)
+    ranges = []
+    start = prev = lines[0]
+    for l in lines[1:]:
+        if l == prev + 1:
+            prev = l
+        else:
+            ranges.append(f'L{start}' if start == prev else f'L{start}-L{prev}')
+            start = prev = l
+    ranges.append(f'L{start}' if start == prev else f'L{start}-L{prev}')
+    return ', '.join(ranges)
+
+def print_show(added, modified, removed, verbose=False):
+    """Print results of 'show' command."""
+    # Group by file
+    files = set()
+    for f in added:
+        files.add(f.file_path)
+    for b, a in modified:
+        files.add(a.file_path)
+    for f in removed:
+        files.add(f.file_path)
+
+    if not files:
+        print(_c(C_DIM, '  (no function changes detected)'))
+        return
+
+    added_by_file = {}
+    for f in added:
+        added_by_file.setdefault(f.file_path, []).append(f)
+    mod_by_file = {}
+    for b, a in modified:
+        mod_by_file.setdefault(a.file_path, []).append((b, a))
+    rem_by_file = {}
+    for f in removed:
+        rem_by_file.setdefault(f.file_path, []).append(f)
+
+    for fp in sorted(files):
+        print(f'  {_c(C_BOLD, fp)}:')
+        for f in added_by_file.get(fp, []):
+            print(f'    {_c(C_GREEN, "+")} {f.tag}{f.name}  {_c(C_DIM, f"[added, {f.line_count} lines]")}')
+        for before, after in mod_by_file.get(fp, []):
+            _, _, ratio = divergence_summary(before, after)
+            delta = after.line_count - before.line_count
+            delta_str = f'+{delta}' if delta > 0 else str(delta)
+            print(f'    {_c(C_YELLOW, "~")} {after.tag}{after.name}  {_c(C_DIM, f"[modified, {after.line_count} lines ({delta_str}), {ratio:.0%} similar]")}')
+            if verbose:
+                print(func_unified_diff(before, after))
+        for f in rem_by_file.get(fp, []):
+            print(f'    {_c(C_RED, "-")} {f.tag}{f.name}  {_c(C_DIM, f"[removed, was {f.line_count} lines]")}')
+
+def print_compare(matched, src_only, tgt_only, renames, verbose=False, source_label='source', target_label='target'):
+    """Print results of 'compare' command."""
+    identical = [(s, t, st) for s, t, st in matched if 'identical' in st]
+    diverged = [(s, t, st) for s, t, st in matched if 'diverged' in st]
+
+    if diverged:
+        print(f'\n{_c(C_BOLD, "Diverged functions:")} ({len(diverged)})')
+        for sf, tf, status in diverged:
+            _, _, ratio = divergence_summary(sf, tf)
+            loc = ''
+            if sf.file_path != tf.file_path:
+                loc = f'  {_c(C_DIM, f"({sf.file_path} → {tf.file_path})")}'
+            print(f'  {_c(C_YELLOW, "~")} {sf.tag}{sf.name}  {_c(C_DIM, f"[{ratio:.0%} similar, {sf.line_count}→{tf.line_count} lines]")}{loc}')
+            if verbose:
+                print(func_unified_diff(sf, tf))
+
+    if renames:
+        print(f'\n{_c(C_BOLD, "Likely renames:")} ({len(renames)})')
+        for sf, tf, status in renames:
+            print(f'  {_c(C_CYAN, "→")} {sf.file_path}::{sf.tag}{sf.name} → {tf.file_path}::{tf.tag}{tf.name}  {_c(C_DIM, f"[{status}]")}')
+            if verbose:
+                print(func_unified_diff(sf, tf))
+
+    if src_only:
+        print(f'\n{_c(C_BOLD, f"Only in {source_label}:")} ({len(src_only)})')
+        for f in sorted(src_only, key=lambda x: (x.file_path, x.name)):
+            print(f'  {_c(C_RED, "-")} {f.file_path}::{f.tag}{f.name}  {_c(C_DIM, f"[{f.line_count} lines]")}')
+
+    if tgt_only:
+        print(f'\n{_c(C_BOLD, f"Only in {target_label}:")} ({len(tgt_only)})')
+        for f in sorted(tgt_only, key=lambda x: (x.file_path, x.name)):
+            print(f'  {_c(C_GREEN, "+")} {f.file_path}::{f.tag}{f.name}  {_c(C_DIM, f"[{f.line_count} lines]")}')
+
+    if identical:
+        print(f'\n{_c(C_DIM, f"Identical: {len(identical)} functions")}')
+
+    total = len(matched) + len(src_only) + len(tgt_only) + len(renames)
+    print(f'\n{_c(C_DIM, f"Total: {total} functions compared")}')
+
+# ── Dependency analysis ─────────────────────────────────────────────
+
+def _collect_body_identifiers(body_text):
+    """Collect all identifier and type_identifier tokens from C source."""
+    tree = _parser.parse(body_text.encode())
+    tokens = set()
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in ('identifier', 'type_identifier'):
+            tokens.add(node.text.decode())
+        stack.extend(node.children)
+    return tokens
+
+
+def _extract_local_type_map(body_text):
+    """Extract var -> type_name for params and local declarations."""
+    tree = _parser.parse(body_text.encode())
+    type_map = {}
+
+    def _type_name(node):
+        if node.type in ('type_identifier', 'primitive_type', 'sized_type_specifier'):
+            return node.text.decode()
+        if node.type == 'struct_specifier':
+            for ch in node.children:
+                if ch.type == 'type_identifier':
+                    return ch.text.decode()
+        return None
+
+    def _extract_names(node, tname):
+        if not tname:
+            return
+        if node.type == 'identifier':
+            type_map[node.text.decode()] = tname
+            return
+        for ch in node.children:
+            if ch.type == 'identifier':
+                type_map[ch.text.decode()] = tname
+                return
+            if ch.type in ('init_declarator', 'pointer_declarator', 'array_declarator'):
+                _extract_names(ch, tname)
+
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in ('parameter_declaration', 'declaration'):
+            tname = None
+            for child in node.children:
+                t = _type_name(child)
+                if t:
+                    tname = t
+                else:
+                    _extract_names(child, tname)
+        else:
+            stack.extend(node.children)
+    return type_map
+
+
+def _build_global_type_map(symbols):
+    """Map global variable names to their declared type name."""
+    gmap = {}
+    for sym in symbols:
+        if sym.kind != KIND_GLOBAL:
+            continue
+        tree = _parser.parse(sym.body.encode())
+        for node in tree.root_node.children:
+            if node.type != 'declaration':
+                continue
+            for child in node.children:
+                if child.type in ('type_identifier', 'primitive_type', 'sized_type_specifier'):
+                    gmap[sym.name] = child.text.decode()
+                    break
+                if child.type == 'struct_specifier':
+                    for sub in child.children:
+                        if sub.type == 'type_identifier':
+                            gmap[sym.name] = sub.text.decode()
+                            break
+            break
+    return gmap
+
+
+def _resolve_field_deps(body_text, local_types, global_types, changed_names):
+    """Find struct deps via field access (. and ->)."""
+    tree = _parser.parse(body_text.encode())
+    deps = set()
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == 'field_expression':
+            arg = node.child_by_field_name('argument')
+            if arg and arg.type == 'identifier':
+                var = arg.text.decode()
+                typ = local_types.get(var) or global_types.get(var)
+                if typ and typ in changed_names:
+                    deps.add(typ)
+        stack.extend(node.children)
+    return deps
+
+
+def _build_dep_graph(changed, global_types):
+    """Build symbol-level DAG among changed symbols.
+
+    Returns dict: (file, name) -> set of (file, name) keys it depends on.
+    """
+    changed_names = {sym.name for sym in changed.values()}
+    name_to_keys = {}
+    for key, sym in changed.items():
+        name_to_keys.setdefault(sym.name, set()).add(key)
+
+    graph = {key: set() for key in changed}
+
+    for key, sym in changed.items():
+        refs = _collect_body_identifiers(sym.body)
+        if sym.kind == KIND_FUNCTION:
+            ltypes = _extract_local_type_map(sym.body)
+            refs |= _resolve_field_deps(sym.body, ltypes, global_types, changed_names)
+        for ref_name in refs & changed_names:
+            for dep_key in name_to_keys.get(ref_name, ()):
+                if dep_key != key:
+                    graph[key].add(dep_key)
+
+    return graph
+
+
+def _tarjan_scc(graph):
+    """Tarjan's SCC. Returns list of components (each a list of keys)."""
+    idx = [0]
+    stack = []
+    on_stack = set()
+    index = {}
+    low = {}
+    result = []
+
+    def _sc(v):
+        index[v] = low[v] = idx[0]
+        idx[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in graph.get(v, ()):
+            if w not in index:
+                _sc(w)
+                low[v] = min(low[v], low[w])
+            elif w in on_stack:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            result.append(comp)
+
+    for v in graph:
+        if v not in index:
+            _sc(v)
+    return result
+
+
+def _assign_layers(sccs, graph):
+    """Assign layers: 0 = no deps, N = max(dep layers) + 1."""
+    key_to_scc = {}
+    for i, scc in enumerate(sccs):
+        for k in scc:
+            key_to_scc[k] = i
+
+    scc_deps = {i: set() for i in range(len(sccs))}
+    for k, deps in graph.items():
+        si = key_to_scc[k]
+        for dk in deps:
+            di = key_to_scc[dk]
+            if si != di:
+                scc_deps[si].add(di)
+
+    cache = {}
+    def _layer(si):
+        if si in cache:
+            return cache[si]
+        if not scc_deps[si]:
+            cache[si] = 0
+        else:
+            cache[si] = max(_layer(d) for d in scc_deps[si]) + 1
+        return cache[si]
+
+    for i in range(len(sccs)):
+        _layer(i)
+
+    return {k: cache[key_to_scc[k]] for k in graph}
+
+# ── Commands ────────────────────────────────────────────────────────
+
+def cmd_show(args):
+    db = _get_db(args.repo)
+    print(f'{_c(C_BOLD, "Functions changed in")} {args.commit}:')
+    added, modified, removed = find_changed_functions(
+        args.commit, args.repo, args.file_filter, db)
+    print_show(added, modified, removed, verbose=args.verbose)
+    print(f'\n{_c(C_DIM, f"  {len(added)} added, {len(modified)} modified, {len(removed)} removed")}')
+    db.close()
+
+def cmd_compare(args):
+    db = _get_db(args.repo)
+
+    # Get changed files in source commit
+    source_commit = git_resolve(args.commit, args.repo)
+    changed_files = git_changed_files(source_commit, args.repo)
+    if args.file_filter:
+        changed_files = [f for f in changed_files if fnmatch.fnmatch(f, args.file_filter)]
+
+    if not changed_files:
+        print(_c(C_DIM, 'No C files changed in this commit.'))
+        db.close()
+        return
+
+    # Source: functions at the commit
+    source_funcs = get_commit_functions(source_commit, changed_files, args.repo, db)
+
+    # Target: functions at another commit, directory, WORKTREE, or STAGED
+    target_funcs, target_label, tgt_db = resolve_target_functions(
+        args.to, changed_files, args.repo, db)
+    if tgt_db:
+        tgt_db.close()
+
+    matched, src_only, tgt_only, renames = compare_functions(
+        source_funcs, target_funcs, detect_renames=args.detect_renames)
+
+    print(f'{_c(C_BOLD, "Comparing")} {args.commit} → {target_label}')
+    print(f'{_c(C_DIM, f"  files: {len(changed_files)}")}')
+    print_compare(matched, src_only, tgt_only, renames,
+                  verbose=args.verbose,
+                  source_label=args.commit, target_label=target_label)
+    db.close()
+
+def cmd_match(args):
+    """Compare specific functions by file::funcname notation."""
+    db = None
+
+    def parse_spec(spec):
+        """Parse 'path::funcname' or 'commit:path::funcname'."""
+        if '::' not in spec:
+            print(f"Error: expected '::' in spec: {spec}", file=sys.stderr)
+            sys.exit(1)
+        before, funcname = spec.rsplit('::', 1)
+        return before, funcname
+
+    def get_func_from_spec(spec):
+        path, funcname = parse_spec(spec)
+        if os.path.isfile(path):
+            with open(path, 'r', errors='replace') as f:
+                content = f.read()
+            funcs = extract_symbols(content, path)
+        elif ':' in path:
+            # commit:filepath
+            commit, fpath = path.split(':', 1)
+            content = git_file_content(commit, fpath, args.repo)
+            if content is None:
+                print(f"Error: can't read {path}", file=sys.stderr)
+                sys.exit(1)
+            funcs = extract_symbols(content, fpath)
+        else:
+            print(f"Error: can't find {path}", file=sys.stderr)
+            sys.exit(1)
+        matches = [f for f in funcs if f.name == funcname]
+        if not matches:
+            print(f"Error: function '{funcname}' not found in {path}", file=sys.stderr)
+            available = [f.name for f in funcs]
+            if available:
+                print(f"  Available: {', '.join(sorted(set(available)))}", file=sys.stderr)
+            sys.exit(1)
+        return matches[0]
+
+    sf = get_func_from_spec(args.source)
+    tf = get_func_from_spec(args.target)
+
+    if sf.body_hash == tf.body_hash:
+        print(f'{_c(C_GREEN, "✓")} {sf.name} is identical ({sf.line_count} lines)')
+    else:
+        _, _, ratio = divergence_summary(sf, tf)
+        print(f'{_c(C_YELLOW, "~")} {sf.name} diverged ({ratio:.0%} similar, {sf.line_count} vs {tf.line_count} lines)')
+        print()
+        print(func_unified_diff(sf, tf))
+
+def cmd_cache_stats(args):
+    db_path = _cache_path(args.repo)
+    if not db_path.exists():
+        print('No cache database found.')
+        return
+    db = _get_db(args.repo)
+    row = db.execute("SELECT COUNT(*), COUNT(DISTINCT source_key), COUNT(DISTINCT file_path) FROM func_cache").fetchone()
+    size_mb = db_path.stat().st_size / (1024 * 1024)
+    print(f'Cache: {db_path}')
+    print(f'  {row[0]} function entries')
+    print(f'  {row[1]} source snapshots')
+    print(f'  {row[2]} unique files')
+    print(f'  {size_mb:.1f} MB on disk')
+    db.close()
+
+def cmd_cache_clear(args):
+    db_path = _cache_path(args.repo)
+    if db_path.exists():
+        db_path.unlink()
+        print(f'Removed {db_path}')
+    else:
+        print('No cache to clear.')
+
+def cmd_audit(args):
+    """Audit: for each commit by an author in source repo, find what functions they
+    wrote, then compare their final version of each function against the target."""
+    source_repo = args.source_repo
+    target = args.to
+    verbose = args.verbose
+    rollup_only = args.rollup_only
+    output_file = args.output
+
+    # Get the source repo's cache
+    src_db = _get_db(source_repo)
+
+    # Get commits
+    commits = git_log_commits(args.range, source_repo, author=args.author)
+    if not commits:
+        print("No commits found for the given range/author.", file=sys.stderr)
+        src_db.close()
+        return
+
+    author_name = args.author or '(all)'
+    print(f'{_c(C_BOLD, "Audit:")} {len(commits)} commits by {author_name} in {source_repo}')
+    print(f'{_c(C_DIM, f"Range: {args.range}")}')
+    print()
+
+    # Phase 1: Walk commits, build per-commit detail + accumulate author's final state
+    # For each function the author touched, keep the version from their LAST commit
+    author_final = {}       # (file_path, func_name) -> FuncInfo (author's final version)
+    per_commit = []         # [(commit_hash, summary, added, modified, removed)]
+    all_files_touched = set()
+
+    for commit_hash in commits:
+        summary = git_commit_summary(commit_hash, source_repo)
+        changed_files = git_changed_files(commit_hash, source_repo)
+        if args.file_filter:
+            changed_files = [f for f in changed_files if fnmatch.fnmatch(f, args.file_filter)]
+        if not changed_files:
+            per_commit.append((commit_hash, summary, [], [], []))
+            continue
+
+        all_files_touched.update(changed_files)
+
+        # Get functions at this commit (after state)
+        after_funcs = get_commit_functions(commit_hash, changed_files, source_repo, src_db)
+        after_by_key = {(f.file_path, f.name): f for f in after_funcs}
+
+        # Get functions at parent (before state)
+        try:
+            parent = git_parent(commit_hash, source_repo)
+            before_funcs = get_commit_functions(parent, changed_files, source_repo, src_db)
+        except subprocess.CalledProcessError:
+            before_funcs = []
+        before_by_key = {(f.file_path, f.name): f for f in before_funcs}
+
+        added = []
+        modified = []
+        removed = []
+
+        all_keys = set(after_by_key.keys()) | set(before_by_key.keys())
+        for key in sorted(all_keys):
+            before = before_by_key.get(key)
+            after = after_by_key.get(key)
+            if before is None and after is not None:
+                added.append(after)
+                author_final[key] = after
+            elif before is not None and after is None:
+                removed.append(before)
+                author_final.pop(key, None)
+            elif before.body_hash != after.body_hash:
+                modified.append((before, after))
+                author_final[key] = after
+
+        per_commit.append((commit_hash, summary, added, modified, removed))
+
+    src_db.close()
+
+    # Phase 2: Get target state for all files the author touched
+    target_by_key = {}
+    all_files_list = sorted(all_files_touched)
+
+    target_funcs, target_label, tgt_db = resolve_target_functions(
+        target, all_files_list, args.repo)
+    if tgt_db:
+        tgt_db.close()
+
+    for f in target_funcs:
+        target_by_key[(f.file_path, f.name)] = f
+
+    # Filter out symbols for files that don't exist in the target.
+    # This avoids false "missing" reports for files that were merged in and
+    # reverted (e.g. port-net) — if the file isn't in the target at all,
+    # those symbols aren't relevant to the comparison.
+    target_files = {f.file_path for f in target_funcs}
+    # Also check the target directly for files that exist but have no symbols
+    target_root = None
+    up = target.upper()
+    if up == TARGET_WORKTREE:
+        target_root = git_repo_root(args.repo)
+    elif os.path.isdir(target):
+        target_root = os.path.abspath(target)
+    if target_root:
+        for fp in all_files_list:
+            if os.path.isfile(os.path.join(target_root, fp)):
+                target_files.add(fp)
+
+    skipped_files = {}  # file_path -> count of symbols skipped
+    filtered_final = {}
+    for key, af in author_final.items():
+        if key[0] in target_files:
+            filtered_final[key] = af
+        else:
+            skipped_files[key[0]] = skipped_files.get(key[0], 0) + 1
+    author_final = filtered_final
+
+    # Phase 3: Compare author's final state vs target
+    identical = []
+    integrated = []     # (author_func, target_func, ratio)
+    missing = []        # in author's work but not in target
+    target_extra = []   # in target but not in author's work (for touched files only)
+
+    for key in sorted(author_final.keys()):
+        af = author_final[key]
+        tf = target_by_key.get(key)
+        if tf is None:
+            # Try same funcname, different file
+            candidates = [(k, v) for k, v in target_by_key.items() if k[1] == af.name and k not in author_final]
+            if candidates:
+                _, tf = candidates[0]
+        if tf is None:
+            missing.append(af)
+        elif af.body_hash == tf.body_hash:
+            identical.append((af, tf))
+        else:
+            _, _, ratio = divergence_summary(af, tf)
+            integrated.append((af, tf, ratio))
+
+    # Build output
+    lines = []
+
+    def out(s=''):
+        lines.append(s)
+
+    out(f'{"=" * 72}')
+    out(f' AUDIT: {author_name} commits ({source_repo})')
+    out(f'        → {target_label}')
+    out(f' Range: {args.range}')
+    out(f' Commits: {len(commits)}, Files: {len(all_files_touched)}')
+    out(f'{"=" * 72}')
+    out()
+
+    # Per-commit detail
+    if not rollup_only:
+        out(f'{"─" * 72}')
+        out(' PER-COMMIT DETAIL')
+        out(f'{"─" * 72}')
+        for commit_hash, summary, added, modified, removed in per_commit:
+            func_count = len(added) + len(modified) + len(removed)
+            if func_count == 0:
+                continue
+            out()
+            out(f'  {_c(C_BOLD, summary)}')
+            for f in added:
+                out(f'    {_c(C_GREEN, "+")} {f.file_path}::{f.tag}{f.name}  [{f.line_count} lines]')
+            for before, after in modified:
+                _, _, r = divergence_summary(before, after)
+                out(f'    {_c(C_YELLOW, "~")} {after.file_path}::{after.tag}{after.name}  [{after.line_count} lines, {r:.0%} from prev]')
+            for f in removed:
+                out(f'    {_c(C_RED, "-")} {f.file_path}::{f.tag}{f.name}  [was {f.line_count} lines]')
+
+        out()
+    out(f'{"─" * 72}')
+    out(f' ROLLUP: {author_name} final state vs {target_label}')
+    out(f'{"─" * 72}')
+
+    if identical:
+        out(f'\n  {_c(C_GREEN, "Identical")} ({len(identical)}):')
+        for af, tf in identical:
+            out(f'    ✓ {af.file_path}::{af.tag}{af.name}  [{af.line_count} lines]')
+
+    if integrated:
+        out(f'\n  {_c(C_YELLOW, "Integrated with changes")} ({len(integrated)}):')
+        for af, tf, ratio in sorted(integrated, key=lambda x: x[2]):
+            loc = ''
+            if af.file_path != tf.file_path:
+                loc = f'  (moved to {tf.file_path})'
+            out(f'    ~ {af.file_path}::{af.tag}{af.name}  [{ratio:.0%} similar, {af.line_count}→{tf.line_count} lines]{loc}')
+            if verbose:
+                out(func_unified_diff(af, tf))
+
+    if missing:
+        out(f'\n  {_c(C_RED, "Missing from target")} ({len(missing)}):')
+        for af in missing:
+            out(f'    ✗ {af.file_path}::{af.tag}{af.name}  [{af.line_count} lines]')
+
+    if skipped_files:
+        skipped_total = sum(skipped_files.values())
+        out(f'\n  {_c(C_DIM, "Skipped (file not in target)")} ({skipped_total} symbols):')
+        for fp in sorted(skipped_files):
+            out(f'    · {fp}  [{skipped_files[fp]} symbols]')
+
+    out()
+    out(f'{"─" * 72}')
+    out(f' SUMMARY')
+    out(f'{"─" * 72}')
+    total = len(identical) + len(integrated) + len(missing)
+    out(f'  {len(commits)} commits audited')
+    out(f'  {total} functions in {author_name}\'s final state')
+    if total > 0:
+        out(f'  {len(identical):3d} identical     ({len(identical)*100//total}%)')
+        out(f'  {len(integrated):3d} integrated    ({len(integrated)*100//total}%)')
+        out(f'  {len(missing):3d} missing        ({len(missing)*100//total}%)')
+    if skipped_files:
+        skipped_total = sum(skipped_files.values())
+        out(f'  {skipped_total:3d} skipped        ({len(skipped_files)} files not in target)')
+    out()
+
+    report = '\n'.join(lines)
+
+    if output_file:
+        # Strip ANSI for file output
+        ansi_escape = re.compile(r'\033\[[0-9;]*m')
+        clean = ansi_escape.sub('', report)
+        with open(output_file, 'w') as f:
+            f.write(clean)
+        print(f'Report written to {output_file}')
+        # Also print to stdout
+    print(report)
+
+
+def cmd_topo(args):
+    """Topological layer analysis between a base ref and target."""
+    db = _get_db(args.repo)
+    base_ref = args.base
+    target = args.to
+
+    # Get files that differ between base and target
+    # Use '--' to disambiguate refs from paths (e.g. 'port' branch vs port/ dir)
+    up = target.upper() if not os.path.isdir(target) else ''
+    if up == TARGET_WORKTREE:
+        out = git_run(['diff', '--name-only', base_ref, '--'], args.repo)
+    elif up == TARGET_STAGED:
+        out = git_run(['diff', '--name-only', '--cached', base_ref, '--'], args.repo)
+    else:
+        out = git_run(['diff', '--name-only', base_ref, target, '--'], args.repo)
+
+    all_diff_files = [f for f in out.strip().split('\n') if f and _is_source_file(f)]
+    if args.file_filter:
+        all_diff_files = [f for f in all_diff_files if fnmatch.fnmatch(f, args.file_filter)]
+
+    if not all_diff_files:
+        print("No C/H files differ between base and target.")
+        db.close()
+        return
+
+    # Extract symbols from base and target
+    print(f'{_c(C_DIM, f"Scanning {len(all_diff_files)} files...")}')
+    base_funcs = get_commit_functions(git_resolve(base_ref, args.repo),
+                                       all_diff_files, args.repo, db)
+    target_funcs, target_label, tgt_db = resolve_target_functions(
+        target, all_diff_files, args.repo, db)
+
+    base_by_key = {(f.file_path, f.name): f for f in base_funcs}
+    target_by_key = {(f.file_path, f.name): f for f in target_funcs}
+
+    # Compute delta
+    changed = {}   # target-side symbols that are new or modified
+    deleted = {}   # base-side symbols removed
+    unchanged_n = 0
+
+    for key in set(base_by_key) | set(target_by_key):
+        bf, tf = base_by_key.get(key), target_by_key.get(key)
+        if bf is None:
+            changed[key] = tf
+        elif tf is None:
+            deleted[key] = bf
+        elif bf.body_hash != tf.body_hash:
+            changed[key] = tf
+        else:
+            unchanged_n += 1
+
+    added_n = sum(1 for k in changed if k not in base_by_key)
+    mod_n = len(changed) - added_n
+
+    print(f'{_c(C_BOLD, "Topological analysis:")} {base_ref} → {target_label}')
+    print(f'  {len(all_diff_files)} files, {len(base_funcs)} base symbols, {len(target_funcs)} target symbols')
+    print(f'  {_c(C_GREEN, f"{added_n} added")}, {_c(C_YELLOW, f"{mod_n} modified")}, '
+          f'{_c(C_RED, f"{len(deleted)} deleted")}, {_c(C_DIM, f"{unchanged_n} unchanged")}')
+    print()
+
+    if not changed:
+        print("No symbol changes to layer.")
+        db.close()
+        if tgt_db:
+            tgt_db.close()
+        return
+
+    # Build global type map from all symbols
+    print(f'{_c(C_DIM, "Building dependency graph...")}')
+    global_types = _build_global_type_map(list(target_by_key.values()) + list(base_by_key.values()))
+
+    # Symbol-level dep graph → layers
+    sym_graph = _build_dep_graph(changed, global_types)
+    sym_sccs = _tarjan_scc(sym_graph)
+    sym_layers = _assign_layers(sym_sccs, sym_graph)
+
+    # File-level dep graph → layers
+    changed_file_set = {k[0] for k in changed}
+    file_graph = {fp: set() for fp in changed_file_set}
+    for key, deps in sym_graph.items():
+        for dk in deps:
+            if dk[0] != key[0]:
+                file_graph[key[0]].add(dk[0])
+
+    file_sccs = _tarjan_scc(file_graph)
+    file_layers = _assign_layers(file_sccs, file_graph)
+    max_layer = max(file_layers.values()) if file_layers else 0
+
+    # Deleted files with no changed symbols
+    deleted_files = set()
+    for k in deleted:
+        if k[0] not in changed_file_set:
+            deleted_files.add(k[0])
+
+    # Group for output
+    layer_files = {}
+    for fp, lay in file_layers.items():
+        layer_files.setdefault(lay, []).append(fp)
+
+    file_syms = {}
+    for key, sym in changed.items():
+        file_syms.setdefault(key[0], []).append(sym)
+
+    file_dels = {}
+    for key, sym in deleted.items():
+        file_dels.setdefault(key[0], []).append(sym)
+
+    print()
+    for lay in range(max_layer + 1):
+        fps = sorted(layer_files.get(lay, []))
+        if not fps:
+            continue
+        n_sym = sum(len(file_syms.get(fp, [])) for fp in fps)
+        n_del = sum(len(file_dels.get(fp, [])) for fp in fps)
+        hdr = f'Layer {lay}'
+        desc = f'{len(fps)} files, {n_sym} changed symbols'
+        if n_del:
+            desc += f', {n_del} deletions'
+        print(f'{_c(C_BOLD, hdr)} — {desc}')
+
+        for fp in fps:
+            syms = sorted(file_syms.get(fp, []), key=lambda s: s.start_line)
+            dels = file_dels.get(fp, [])
+            summary = f'{len(syms)} changed'
+            if dels:
+                summary += f', {len(dels)} deleted'
+            print(f'  {_c(C_CYAN, fp)}  [{summary}]')
+
+            if args.verbose:
+                for sym in syms:
+                    is_new = (sym.file_path, sym.name) not in base_by_key
+                    marker = _c(C_GREEN, '+') if is_new else _c(C_YELLOW, '~')
+                    sym_key = (sym.file_path, sym.name)
+                    cross_deps = {dk[0] for dk in sym_graph.get(sym_key, ()) if dk[0] != sym.file_path}
+                    dep_str = f'  → {_c(C_DIM, ", ".join(sorted(cross_deps)))}' if cross_deps else ''
+                    print(f'    {marker} {sym.tag}{sym.name}  [{sym.line_count}L]{dep_str}')
+                for d in sorted(dels, key=lambda s: s.start_line):
+                    print(f'    {_c(C_RED, "-")} {d.tag}{d.name}  [was {d.line_count}L]')
+        print()
+
+    if deleted_files:
+        print(f'{_c(C_BOLD, "Deleted files")} — {len(deleted_files)} files (all symbols removed)')
+        for fp in sorted(deleted_files):
+            n = len(file_dels.get(fp, []))
+            print(f'  {_c(C_RED, fp)}  [{n} symbols]')
+        print()
+
+    # Cycles
+    multi_sccs = [scc for scc in file_sccs if len(scc) > 1]
+    if multi_sccs:
+        print(f'{_c(C_BOLD, "File cycles:")} {len(multi_sccs)}')
+        for scc in multi_sccs:
+            print(f'  {" ↔ ".join(sorted(scc))}')
+        print()
+
+    # Dep graph dump
+    if args.deps:
+        print(f'{_c(C_BOLD, "Symbol dependencies")} (cross-file only):')
+        any_printed = False
+        for key in sorted(sym_graph):
+            cross = {dk for dk in sym_graph[key] if dk[0] != key[0]}
+            if cross:
+                any_printed = True
+                sym = changed[key]
+                dk_strs = sorted(f'{changed[dk].file_path}::{changed[dk].tag}{changed[dk].name}' for dk in cross)
+                print(f'  {sym.file_path}::{sym.tag}{sym.name}')
+                for ds in dk_strs:
+                    print(f'    → {ds}')
+        if not any_printed:
+            print(f'  {_c(C_DIM, "(no cross-file dependencies)")}')
+        print()
+
+    # Summary
+    print(f'{"─" * 60}')
+    print(f'  {max_layer + 1} layers, {len(changed_file_set)} files, '
+          f'{len(changed)} changed + {len(deleted)} deleted symbols')
+    if multi_sccs:
+        cy_files = sum(len(s) for s in multi_sccs)
+        print(f'  {len(multi_sccs)} cycles collapsing {cy_files} files')
+
+    db.close()
+    if tgt_db:
+        tgt_db.close()
+
+# ── CLI ─────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='fdiff',
+        description='Function-level diff tool for C codebases',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    parser.add_argument('--repo', default='.', help='Path to git repository (default: cwd)')
+    sub = parser.add_subparsers(dest='command', required=True)
+
+    # show
+    p_show = sub.add_parser('show', help='List functions changed in a commit')
+    p_show.add_argument('commit', help='Commit to inspect')
+    p_show.add_argument('--file-filter', '-f', help='Glob filter for file paths')
+    p_show.add_argument('--verbose', '-v', action='store_true', help='Show diffs')
+
+    # compare
+    p_cmp = sub.add_parser('compare', help='Compare functions between two snapshots')
+    p_cmp.add_argument('commit', help='Source commit')
+    p_cmp.add_argument('--to', required=True, help='Target commit or directory path')
+    p_cmp.add_argument('--file-filter', '-f', help='Glob filter for file paths')
+    p_cmp.add_argument('--detect-renames', '-r', action='store_true', help='Detect renamed functions')
+    p_cmp.add_argument('--verbose', '-v', action='store_true', help='Show diffs')
+
+    # match
+    p_match = sub.add_parser('match', help='Compare two specific functions')
+    p_match.add_argument('source', help='Source: path/file.c::funcname or commit:file.c::funcname')
+    p_match.add_argument('target', help='Target: path/file.c::funcname or commit:file.c::funcname')
+
+    # cache-stats
+    sub.add_parser('cache-stats', help='Show cache statistics')
+
+    # cache-clear
+    sub.add_parser('cache-clear', help='Clear the cache')
+
+    # audit
+    p_audit = sub.add_parser('audit', help='Audit an author\'s commits from another repo against target')
+    p_audit.add_argument('--source-repo', required=True, help='Path to source git repository')
+    p_audit.add_argument('--range', required=True, help='Git log range spec (e.g. abc123^..def456)')
+    p_audit.add_argument('--author', help='Filter commits by author name')
+    p_audit.add_argument('--to', required=True, help='Target commit (in --repo) or directory path')
+    p_audit.add_argument('--file-filter', '-f', help='Glob filter for file paths')
+    p_audit.add_argument('--verbose', '-v', action='store_true', help='Show full diffs for diverged functions')
+    p_audit.add_argument('--rollup-only', '-r', action='store_true', help='Skip per-commit detail, show only rollup + summary')
+    p_audit.add_argument('--output', '-o', help='Write report to file (strips ANSI colors)')
+
+    # topo
+    p_topo = sub.add_parser('topo', help='Topological layer analysis between base and target')
+    p_topo.add_argument('base', help='Base ref (e.g. port)')
+    p_topo.add_argument('--to', required=True, help='Target (WORKTREE, STAGED, commit, or directory)')
+    p_topo.add_argument('--file-filter', '-f', help='Glob filter for file paths')
+    p_topo.add_argument('--verbose', '-v', action='store_true', help='Show per-file symbol detail')
+    p_topo.add_argument('--deps', '-d', action='store_true', help='Show cross-file dependency graph')
+
+    args = parser.parse_args()
+
+    commands = {
+        'show': cmd_show,
+        'compare': cmd_compare,
+        'match': cmd_match,
+        'cache-stats': cmd_cache_stats,
+        'cache-clear': cmd_cache_clear,
+        'audit': cmd_audit,
+        'topo': cmd_topo,
+    }
+    commands[args.command](args)
+
+if __name__ == '__main__':
+    main()

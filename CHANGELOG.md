@@ -47,6 +47,10 @@ like something actually happened, and @JillyJane made the assets. Thank you.
 - **`CK_1000` identified as the jump button**, and `CK_0400` as the third-person toggle.
 - **`bond2.unk1c` renamed to `bond2.look`** — it is the look vector.
 
+### Known Limitations
+
+- **Registering a character is a distribution-level job, not something a mod does on its own.** Three things have to line up and only one of them is mod data. The mod's filetable fragment has to be rebuilt against the actual set, because texture slots come from one shared pool handed out in mount order and a character's textures land wherever the mods before it left off. The engine's roster — the index constants, the index-to-config-name mapping, the display names, and the bio table and its resolver — is hand-written C, so adding or changing a character needs a rebuilt binary as well. And head and body names carry no owner, so two mods registering the same name silently replace one another. `modsetcheck` is the instrument for checking a set before it ships; the wiki's Checking a Set of Mods page has the numbers for the set this release ships, which is over budget at 633 texture slots wanted against 496 available. Expected to be addressed in the release after this one.
+
 ### Full Changelog
 
 <https://github.com/cylonicboom/pd-friends-of-joanna/compare/friends-of-joanna-v0.3.1...friends-of-joanna-v0.4.0>

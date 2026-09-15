@@ -104,10 +104,17 @@ def modeldef(d):
                 nummatrices=nummtx, scale=scale, rwdatalen=rwdatalen, numtex=numtex)
 
 def texconfigs(d, n):
+    """The texconfig table. Its offset comes from the modeldef, NOT a fixed
+    0x1c — a model with a parts array puts that array first and the table
+    after it (CheadFoslerferZ: 0x28; CcarringtonZ: 0x48; Gfalcon2Z: 0x78)."""
+    base = struct.unpack_from(">I", d, 0x18)[0] & 0xffffff
     out = []
     for i in range(n):
-        p = 0x1c + i * 12
-        out.append(dict(texid=struct.unpack_from(">I", d, p)[0], width=d[p + 4],
+        p = base + i * 12
+        v = struct.unpack_from(">I", d, p)[0]
+        # the field is a union: a texture id, or a segment-5 pointer to
+        # texture data embedded in this file (vanilla ROM models use both)
+        out.append(dict(texid=v, pointer=(v >> 24) == 5, width=d[p + 4],
                         height=d[p + 5], level=d[p + 6], format=d[p + 7], depth=d[p + 8]))
     return out
 
@@ -414,8 +421,9 @@ def cmd_info(a):
           % (md["skel"], md["nummatrices"], md["numparts"], md["scale"],
              md["rwdatalen"], md["numtex"]))
     for i, t in enumerate(texconfigs(m, md["numtex"])):
-        print("    tex %d  0x%04x  %dx%d  level %d  format %d  depth %d"
-              % (i, t["texid"], t["width"], t["height"], t["level"], t["format"], t["depth"]))
+        ref = ("ptr %08x" % t["texid"]) if t["pointer"] else ("id  0x%04x" % t["texid"])
+        print("    tex %-2d %s  %dx%d  level %d  format %d  depth %d"
+              % (i, ref, t["width"], t["height"], t["level"], t["format"], t["depth"]))
     b = bbox_of(m)
     if b:
         print("  bbox hitpart %d  x %.1f..%.1f  y %.1f..%.1f  z %.1f..%.1f" % b)

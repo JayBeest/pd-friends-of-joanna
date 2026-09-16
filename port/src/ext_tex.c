@@ -208,10 +208,23 @@ struct ExtTexture *getExtTexture(u8 type, u16 id, s32 texnum)
 		case G_TEXTYPE_MODEL:
 			return lookupModelTex(id, texnum);
 		case G_TEXTYPE_FONT: {
-			if (id & IDMASK_FONT_OUTLINE)
-				return &fontOutlineExtTextures[id & ~IDMASK_FONT_OUTLINE][texnum];
+			// Both indices arrive straight off a display-list packet, which
+			// can name a 15-bit id and a 15-bit texnum, against a table that
+			// is NUM_FONTS (5) rows of NCHARS (94 on NTSC, 135 on PAL). The
+			// top bit of id is IDMASK_FONT_OUTLINE, so the row index is the
+			// masked value and not the raw one. Same guard shape as
+			// G_TEXTYPE_GENERAL above.
+			u16 fontId = id & ~IDMASK_FONT_OUTLINE;
 
-			return &fontExtTextures[id][texnum];
+			if (fontId >= NUM_FONTS || texnum < 0 || texnum >= NCHARS) {
+				return NULL;
+			}
+
+			if (id & IDMASK_FONT_OUTLINE) {
+				return &fontOutlineExtTextures[fontId][texnum];
+			}
+
+			return &fontExtTextures[fontId][texnum];
 		}
 		default:
 			sysLogPrintf(LOG_WARNING, "Invalid Texture type: %d, texnum: %04x", type, texnum);
@@ -381,15 +394,24 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 			return 0;
 		}
 		case G_TEXTYPE_FONT: {
-			name = resolveFontname(id & ~IDMASK_FONT_OUTLINE);
+			// Packet-derived indices, bounded exactly as in getExtTexture's
+			// font case; extTexLoad calls both with the same id and texnum,
+			// so they have to agree on what is in range.
+			u16 fontId = id & ~IDMASK_FONT_OUTLINE;
+
+			if (fontId >= NUM_FONTS || texnum < 0 || texnum >= NCHARS) {
+				return 1;
+			}
+
+			name = resolveFontname(fontId);
 
 			if (id & IDMASK_FONT_OUTLINE) {
-				tex = &fontOutlineExtTextures[id & ~IDMASK_FONT_OUTLINE][texnum];
+				tex = &fontOutlineExtTextures[fontId][texnum];
 				snprintf(dst, FS_MAXPATH, "%s/%s/" FONT_OUTLINES_DIR "/%02x.%s", extTexPath, name, texnum, tex->extension);
 				return 0;
 			}
 
-			tex = &fontExtTextures[id][texnum];
+			tex = &fontExtTextures[fontId][texnum];
 			snprintf(dst, FS_MAXPATH, "%s/%s/%02x.%s", extTexPath, name, texnum, tex->extension);
 			return 0;
 		}
@@ -564,10 +586,20 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 
 void readFontTextures(const char *path, const char *fontName)
 {
+	// extTexScanDir dispatches here on the directory's first character alone,
+	// so any 'f...' directory under ext_tex/ reaches this. resolveFontID
+	// answers 0xff for one that is not a font, which would index 250 rows past
+	// fontExtTextures. Checked before opendir so nothing is left open.
+	u8 fontID = resolveFontID(fontName);
+
+	if (fontID >= NUM_FONTS) {
+		sysLogPrintf(LOG_WARNING, "readFontTextures: '%s' is not a known font, skipping '%s'", fontName, path);
+		return;
+	}
+
 	DIR *dr = opendir(path);
 	struct dirent *de;
 
-	u8 fontID = resolveFontID(fontName);
 	char extension[5] = { 0 };
 
 	char outlinesPath[FS_MAXPATH];
@@ -596,6 +628,16 @@ void readFontTextures(const char *path, const char *fontName)
 		s32 err = fileInfo(name, &texNum, extension);
 		// no extension: skip
 		if (err) continue;
+
+		// texNum is strtol(basename, 16) off a filename, so a font directory
+		// holding ff.png yields 255 against a row of NCHARS (94 on NTSC, 135
+		// on PAL) - a write into the next font's row, or off the end of the
+		// last one.
+		if (texNum < 0 || texNum >= NCHARS) {
+			sysLogPrintf(LOG_WARNING, "readFontTextures: REJECTED '%s' in %s%s - texNum %d out of range (0..%d)",
+				name, fontName, outlines ? "/" FONT_OUTLINES_DIR : "", texNum, NCHARS - 1);
+			continue;
+		}
 
 		if (outlines)
 			setTex(fontOutlineExtTextures[fontID], texNum, texNum, extension);

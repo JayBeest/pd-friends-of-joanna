@@ -177,6 +177,65 @@ s32 modStageRegCount(s32 kindmask);
 void modStageRegReport(void);
 void modStageRegWarnUnlisted(void);
 
+/**
+ * Per-field stage ownership, as OBSERVED at parse time.
+ *
+ * Phase 0 of multi-mod-stage-loading-plan.md: this records who claimed what
+ * and nothing reads it back, so what the engine loads is unchanged. The point
+ * is to be able to diff the record against the game's actual behaviour before
+ * any of it becomes load-bearing - a resolver bug found here is free, and one
+ * found after the six read sites move is not.
+ *
+ * `rung` is the candidate-ladder position that answered. There is no ladder
+ * yet, so every recorded field carries MODSTAGE_RUNG_DECLARED; the field
+ * exists now so the log format does not change when the ladder arrives.
+ */
+enum modStageField {
+	MODSTAGE_BG,
+	MODSTAGE_TILES,
+	MODSTAGE_PADS,
+	MODSTAGE_SETUP,
+	MODSTAGE_MPSETUP,
+	MODSTAGE_ALLOC,
+	MODSTAGE_MUSIC,
+	MODSTAGE_WEATHER,
+	MODSTAGE_FIELD_COUNT
+};
+
+#define MODSTAGE_RUNG_DECLARED 0
+
+struct modStageFieldBinding {
+	s32 fileId;    /* the id as parsed, or -1 for a field with no file */
+	s8 owner;      /* mod that named it; -1 = nobody, so vanilla */
+	u8 rung;       /* which candidate rung answered */
+	u8 declared;   /* 1 = the claimer named this field */
+};
+
+struct modStageBinding {
+	/* One bit per mod that declared this stage, because a mod's config is
+	 * parsed more than once per boot and the count has to mean "how many mods"
+	 * rather than "how many parses" - see modStageBindingClaim. modDirs is
+	 * [64] and getModDirCount caps --moddir at that, so 64 bits is exact. */
+	u64 claimMask;
+	s8 claimedBy;    /* the mod whose claim is live in g_Stages; -1 = vanilla */
+	s8 priority;     /* declared priority of that claim; unused until phase 1 */
+	u8 claimCount;   /* popcount(claimMask) - collision report */
+	struct modStageFieldBinding f[MODSTAGE_FIELD_COUNT];
+};
+
+/* Sized like g_ModStageNums rather than the plan's [256]: modConfigParseStage
+ * refuses a stagenum >= ARRAYCOUNT(g_ModStageNums), so 256 entries would leave
+ * 163 of them permanently unreachable. The bound lives in constants.h, which
+ * this header does not pull in, so the array is declared incomplete here and
+ * a _Static_assert in mod.c holds the two lengths together. */
+extern struct modStageBinding g_StageBindings[];
+
+const char *modStageFieldName(enum modStageField field);
+void modStageBindingsReset(void);
+void modStageBindingClaim(s32 stagenum, s32 modnum);
+void modStageBindingRecord(s32 stagenum, s32 modnum, enum modStageField field, s32 fileId);
+void modStageBindingReport(void);
+
 void modLoadTextureSurfaceType(void);
 void modUnloadTextureSurfaceType(void);
 void modSwitch(s32 modnum, s32 stagenum);

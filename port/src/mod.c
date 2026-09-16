@@ -1634,6 +1634,171 @@ static char *modConfigParseMpArena(char *p, char *token)
 	return p;
 }
 
+struct modStageBinding g_StageBindings[STAGE_4MBMENU];
+
+_Static_assert(ARRAYCOUNT(g_StageBindings) == ARRAYCOUNT(g_ModStageNums),
+		"the binding record and the stage->mod map must cover the same stage numbers");
+
+static const char *const g_ModStageFieldNames[MODSTAGE_FIELD_COUNT] = {
+	"bgfile", "tilesfile", "padsfile", "setupfile", "mpsetupfile",
+	"allocation", "music", "weather"
+};
+
+const char *modStageFieldName(enum modStageField field)
+{
+	if (field < 0 || field >= MODSTAGE_FIELD_COUNT) {
+		return "?";
+	}
+
+	return g_ModStageFieldNames[field];
+}
+
+void modStageBindingsReset(void)
+{
+	for (s32 i = 0; i < (s32)ARRAYCOUNT(g_StageBindings); ++i) {
+		g_StageBindings[i].claimMask = 0;
+		g_StageBindings[i].claimedBy = -1;
+		g_StageBindings[i].priority = 0;
+		g_StageBindings[i].claimCount = 0;
+
+		for (s32 j = 0; j < MODSTAGE_FIELD_COUNT; ++j) {
+			g_StageBindings[i].f[j].fileId = -1;
+			g_StageBindings[i].f[j].owner = -1;
+			g_StageBindings[i].f[j].rung = MODSTAGE_RUNG_DECLARED;
+			g_StageBindings[i].f[j].declared = 0;
+		}
+	}
+}
+
+/**
+ * A mod declared this stage.
+ *
+ * The count is the whole point: two mods declaring one stage both write
+ * g_Stages today, in mod-dir order, with nothing said about it. Recording the
+ * count makes that visible without changing who wins.
+ *
+ * Counted per MOD, not per call, because one mod's config is parsed three
+ * times before the report runs: mainInit walks every mod dir (pdmain.c:308)
+ * and then re-parses mod 0 (pdmain.c:314), and modCacheAllConfigs walks them
+ * all again (mod.c:1807). A per-call counter would report all 17 of mod_fojo's
+ * stages as contested by mod 0 with itself, which is the opposite of what this
+ * record exists to say.
+ */
+void modStageBindingClaim(s32 stagenum, s32 modnum)
+{
+	struct modStageBinding *b;
+	u64 bit;
+
+	if (stagenum < 0 || stagenum >= (s32)ARRAYCOUNT(g_StageBindings)) {
+		return;
+	}
+
+	b = &g_StageBindings[stagenum];
+	bit = (modnum >= 0 && modnum < 64) ? ((u64)1 << modnum) : 0;
+
+	if (bit && !(b->claimMask & bit)) {
+		b->claimMask |= bit;
+
+		if (b->claimCount < 0xff) {
+			++b->claimCount;
+		}
+
+		if (b->claimCount > 1) {
+			sysLogPrintf(LOG_WARNING,
+					"modstage: stage 0x%02x claimed by mod %d and previously by mod %d "
+					"(%u claims); the later claim's fields win by parse order",
+					stagenum, modnum, b->claimedBy, b->claimCount);
+		}
+	}
+
+	/* Matches what the engine does today: the last mod to parse wins, because
+	 * every claim writes straight into the one global g_Stages row. */
+	b->claimedBy = (s8)modnum;
+}
+
+void modStageBindingRecord(s32 stagenum, s32 modnum, enum modStageField field, s32 fileId)
+{
+	struct modStageFieldBinding *fb;
+
+	if (stagenum < 0 || stagenum >= (s32)ARRAYCOUNT(g_StageBindings)) {
+		return;
+	}
+
+	if (field < 0 || field >= MODSTAGE_FIELD_COUNT) {
+		return;
+	}
+
+	fb = &g_StageBindings[stagenum].f[field];
+
+	if (fb->declared && fb->owner != (s8)modnum) {
+		sysLogPrintf(LOG_WARNING,
+				"modstage: stage 0x%02x %s: mod %d overwrites mod %d's binding",
+				stagenum, modStageFieldName(field), modnum, fb->owner);
+	}
+
+	fb->fileId = fileId;
+	fb->owner = (s8)modnum;
+	fb->rung = MODSTAGE_RUNG_DECLARED;
+	fb->declared = 1;
+}
+
+/**
+ * The record, once every modconfig has been parsed.
+ *
+ * This is the artefact Phase 0 exists to produce: one line per claimed stage
+ * naming the owner of every field, so it can be read against what the game
+ * actually loads. A field nobody named prints as `vanilla`, which is what the
+ * engine does with it too - g_Stages keeps its ROM value.
+ */
+void modStageBindingReport(void)
+{
+	s32 stagenum;
+	s32 claimed = 0;
+	s32 contested = 0;
+
+	for (stagenum = 0; stagenum < (s32)ARRAYCOUNT(g_StageBindings); ++stagenum) {
+		const struct modStageBinding *b = &g_StageBindings[stagenum];
+		char line[256];
+		s32 len = 0;
+		s32 field;
+
+		if (!b->claimCount) {
+			continue;
+		}
+
+		++claimed;
+
+		if (b->claimCount > 1) {
+			++contested;
+		}
+
+		for (field = 0; field < MODSTAGE_FIELD_COUNT; ++field) {
+			const struct modStageFieldBinding *fb = &b->f[field];
+			s32 n;
+
+			if (!fb->declared) {
+				continue;
+			}
+
+			n = snprintf(line + len, sizeof(line) - (size_t)len, "%s%s=mod%d",
+					len ? " " : "", modStageFieldName((enum modStageField)field), fb->owner);
+
+			if (n < 0 || (size_t)n >= sizeof(line) - (size_t)len) {
+				break;
+			}
+
+			len += n;
+		}
+
+		sysLogPrintf(LOG_NOTE, "modstage: 0x%02x claimed by mod %d (%u claim%s): %s",
+				stagenum, b->claimedBy, b->claimCount, b->claimCount == 1 ? "" : "s",
+				len ? line : "no fields declared");
+	}
+
+	sysLogPrintf(LOG_NOTE, "modstage: %d stage%s claimed, %d contested by more than one mod",
+			claimed, claimed == 1 ? "" : "s", contested);
+}
+
 static char *modConfigParseStage(char *p, char *token, s32 modnum)
 {
 	// stage number
@@ -1648,6 +1813,7 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 
 	g_ModStageNums[stagenum] = modnum;
 	sysLogPrintf(LOG_NOTE, "modconfig: mapped stage 0x%02x to mod %d", stagenum, modnum);
+	modStageBindingClaim(stagenum, modnum);
 
 	// eat opening bracket
 	p = strParseToken(p, token, NULL);
@@ -1688,22 +1854,27 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 			// bg FILE_NAME_OR_NUM
 			PARSE_STAGE_FILENAME("", "bgfile", tmp);
 			SET_STAGE_FILEID(stab->bgfileid, "bgfile", tmp);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_BG, tmp);
 		} else if (!strcmp(token, "tilesfile")) {
 			// tilesfile FILE_NAME_OR_NUM
 			PARSE_STAGE_FILENAME("", "tilesfile", tmp);
 			SET_STAGE_FILEID(stab->tilefileid, "tilesfile", tmp);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_TILES, tmp);
 		} else if (!strcmp(token, "padsfile")) {
 			// padsfile FILE_NAME_OR_NUM
 			PARSE_STAGE_FILENAME("", "padsfile", tmp);
 			SET_STAGE_FILEID(stab->padsfileid, "padsfile", tmp);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_PADS, tmp);
 		} else if (!strcmp(token, "setupfile") || !strcmp(token, "setupFile")) {
 			// setupfile FILE_NAME_OR_NUM
 			PARSE_STAGE_FILENAME("", "setupfile", tmp);
 			SET_STAGE_FILEID(stab->setupfileid, "setupfile", tmp);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_SETUP, tmp);
 		} else if (!strcmp(token, "mpsetupfile")) {
 			// mpsetupfile FILE_NAME_OR_NUM
 			PARSE_STAGE_FILENAME("", "mpsetupfile", tmp);
 			SET_STAGE_FILEID(stab->mpsetupfileid, "mpsetupfile", tmp);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_MPSETUP, tmp);
 		} else if (!strcmp(token, "alarm")) {
 			PARSE_STAGE_INT("", "alarm", tmp, 1, 0xFFFF);
 			stab->alarm = tmp;
@@ -1731,11 +1902,13 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 				tmps = strDuplicate(tmps);
 				if (tmps) {
 					salloc->string = tmps;
+					modStageBindingRecord(stagenum, modnum, MODSTAGE_ALLOC, -1);
 				}
 			}
 		}	else if (!strcmp(token, "music")) {
 			// music { KEYVALUES... }
 			p = modConfigParseStageMusic(p, token, stagenum);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_MUSIC, -1);
 			if (!p) {
 				sysLogPrintf(LOG_NOTE, "modConfigParseStage: returning NULL (music parse failed for stage 0x%02x)", stagenum);
 				return NULL;
@@ -1743,6 +1916,7 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 		} else if (!strcmp(token, "weather")) {
 			// weather { KEYVALUES... }
 			p = modConfigParseStageWeather(p, token, stagenum);
+			modStageBindingRecord(stagenum, modnum, MODSTAGE_WEATHER, -1);
 			if (!p) {
 				sysLogPrintf(LOG_NOTE, "modConfigParseStage: returning NULL (weather parse failed for stage 0x%02x)", stagenum);
 				return NULL;
@@ -1965,6 +2139,8 @@ void modInit(void)
 	for (s32 i = 0; i < STAGE_4MBMENU; i++) {
 		g_ModStageNums[i] = -1;
 	}
+
+	modStageBindingsReset();
 }
 
 // Cache all mod configs at boot (parse once, then just copy on modSwitch)
@@ -2006,6 +2182,10 @@ void modCacheAllConfigs(void)
 
 	g_ModConfigsCached = true;
 	sysLogPrintf(LOG_NOTE, "modCacheAllConfigs: All configs cached");
+
+	// Every claim has been seen by now, so the record is complete. Reporting
+	// rather than acting on it is the whole of phase 0.
+	modStageBindingReport();
 }
 
 s32 modConfigLoad(const char *fname)

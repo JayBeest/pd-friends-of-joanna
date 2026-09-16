@@ -170,6 +170,9 @@ struct ExtTexture *getExtTexture(u8 type, u16 id, s32 texnum)
 		case G_TEXTYPE_NONE:
 			return NULL;
 		case G_TEXTYPE_GENERAL:
+			if (texnum < 0 || texnum >= MAX_EXT_TEX) {
+				return NULL;
+			}
 			return &extTextures[texnum];
 		case G_TEXTYPE_MODEL:
 			return lookupModelTex(id, texnum);
@@ -304,6 +307,9 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 
 	switch (type) {
 		case G_TEXTYPE_GENERAL: {
+			if (texnum < 0 || texnum >= MAX_EXT_TEX) {
+				return 1;
+			}
 			tex = &extTextures[texnum];
 			// Prefer a per-model PNG override. When the caller supplied a
 			// nonzero `id`, it identifies the model that owns the render
@@ -662,6 +668,10 @@ static void extTexScanDir(const char *dirPath, s32 *maxModels)
 			char extension[5] = { 0 };
 			s32 err = fileInfo(name, &texNum, extension);
 			if (err) continue;
+			if (texNum < 0 || texNum >= MAX_EXT_TEX) {
+				sysLogPrintf(LOG_WARNING, "extTexScanDir: REJECTED '%s' — texNum %d out of range (0..%d)", name, texNum, MAX_EXT_TEX - 1);
+				continue;
+			}
 			setTex(extTextures, texNum, texNum, extension);
 			setTexDimensions(&extTextures[texNum], filepath);
 			sysLogPrintf(LOG_NOTE, "extTexScanDir: general texture '%s' => texNum=%04x (%dx%d)",

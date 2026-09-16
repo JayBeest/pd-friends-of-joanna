@@ -1468,9 +1468,9 @@ static void romdataResolvePath(char *dst, const char *src, size_t dstSize, const
 s32 romdataFileGetSize(s32 fileNum)
 {
 	s32 modNum = g_ModNum;
-	if (fileNum & 0xFFFF0000) {
+	if (MOD_FILEID_IS_TAGGED(fileNum)) {
 		modNum = MOD_FILEID_MOD(fileNum);
-		fileNum = fileNum & 0xFFFF;
+		fileNum = MOD_FILEID_RAW(fileNum);
 	}
 
 	if (fileNum < 1 || fileNum >= ROMDATA_MAX_FILES) {
@@ -1503,10 +1503,16 @@ static bool romdataValidate(void *data, u32 size)
 
 u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 {
+	// The tagged test used to be `fileNum & 0xFFFF0000` written out by hand.
+	// It agreed with the macro by luck rather than by construction, and it
+	// answered "tagged" for a negative fileNum, whose MOD_FILEID_MOD is -1 and
+	// which would then subscript fileSlots[-1]. MOD_FILEID_IS_TAGGED rejects
+	// negatives, so an untagged or bogus id falls back to the active mod as
+	// before and is caught by the range check below.
 	s32 modNum = g_ModNum;
-	if (fileNum & 0xFFFF0000) {
+	if (MOD_FILEID_IS_TAGGED(fileNum)) {
 		modNum = MOD_FILEID_MOD(fileNum);
-		fileNum = fileNum & 0xFFFF;
+		fileNum = MOD_FILEID_RAW(fileNum);
 	}
 
 	if (fileNum < 1 || fileNum >= ROMDATA_MAX_FILES) {
@@ -1683,9 +1689,9 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 void romdataFilePreprocess(s32 fileNum, s32 loadType, u8 *data, u32 size, u32 *outSize)
 {
 	s32 modNum = g_ModNum;
-	if (fileNum & 0xFFFF0000) {
+	if (MOD_FILEID_IS_TAGGED(fileNum)) {
 		modNum = MOD_FILEID_MOD(fileNum);
-		fileNum = fileNum & 0xFFFF;
+		fileNum = MOD_FILEID_RAW(fileNum);
 	}
 
 	loadingFileNum = fileNum;
@@ -1717,9 +1723,9 @@ void romdataFilePreprocess(s32 fileNum, s32 loadType, u8 *data, u32 size, u32 *o
 void romdataFileFree(s32 fileNum)
 {
 	s32 modNum = g_ModNum;
-	if (fileNum & 0xFFFF0000) {
+	if (MOD_FILEID_IS_TAGGED(fileNum)) {
 		modNum = MOD_FILEID_MOD(fileNum);
-		fileNum = fileNum & 0xFFFF;
+		fileNum = MOD_FILEID_RAW(fileNum);
 	}
 
 	if (fileNum < 1 || fileNum >= ROMDATA_MAX_FILES) {

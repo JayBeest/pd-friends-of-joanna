@@ -1550,11 +1550,25 @@ static bool imguiOverlayGetWorkspaceTextureInfo(u16 textureId, struct modeldefEd
 	return false;
 }
 
+/*
+ * Build a file id for the overlay's (mod, file) selection.
+ *
+ * This was six copies of `modelFileNum | (textureMod << 16)`, which is the
+ * encoding MOD_FILEID_MAKE owns. Hand-rolled, they now produce an id with mod
+ * bits and no owner tag - which modFileIdMod answers as vanilla and reports.
+ * A negative textureMod is the overlay's "no mod context" selection, and an
+ * untagged id is exactly how that is spelled.
+ */
+static inline s32 imguiOverlayEncodeFileId(s32 textureMod, s32 fileNum)
+{
+	return textureMod >= 0 ? MOD_FILEID_MAKE(textureMod, fileNum) : MOD_FILEID_RAW(fileNum);
+}
+
 static void imguiOverlayScanModelTextureIds(s32 textureMod, s32 modelFileNum)
 {
 	struct modeldefTextureUsage usages[512];
 	s32 total = 0;
-	const s32 encodedFileNum = modelFileNum | (textureMod << 16);
+	const s32 encodedFileNum = imguiOverlayEncodeFileId(textureMod, modelFileNum);
 	const s32 usageCount = modeldefInspectTextureUsage(encodedFileNum, 0xffff, 0xffff,
 		usages, ARRAYCOUNT(usages), &total, NULL, 0, NULL, NULL);
 
@@ -2183,12 +2197,12 @@ static bool imguiOverlayRequestEngineTexture(s32 textureMod, s32 modelFileNum,
 	g_TexModNum = textureMod;
 	g_TexCurrentModelFileNum = modelFileNum;
 	struct modeldefEditorWorkspaceInfo workspaceInfo;
-	const s32 encodedModelFileNum = modelFileNum | (textureMod << 16);
+	const s32 encodedModelFileNum = imguiOverlayEncodeFileId(textureMod, modelFileNum);
 	const bool workspaceMatches = modeldefEditorWorkspaceGetInfo(&workspaceInfo)
 		&& workspaceInfo.fileid == encodedModelFileNum;
 	struct tex *tex = workspaceMatches ? modeldefEditorWorkspaceFindTexture(textureId) : NULL;
 	u32 compressedSize = 0;
-	const s32 encodedFileNum = textureFileNum | (textureMod << 16);
+	const s32 encodedFileNum = imguiOverlayEncodeFileId(textureMod, textureFileNum);
 	u8 *compressedData = textureFileNum > 0 ? romdataFileLoad(encodedFileNum, &compressedSize) : NULL;
 	const u8 header = compressedData && compressedSize > 0 ? compressedData[0] : 0;
 	const u8 nativeFormat = compressedData && compressedSize > 1
@@ -2236,7 +2250,7 @@ static bool imguiOverlayRequestEngineTexture(s32 textureMod, s32 modelFileNum,
 static void imguiOverlayDrawModelWorkspace(s32 textureMod, s32 modelFileNum)
 {
 	ImGui::SeparatorText("Private Model Workspace");
-	const s32 encodedFileNum = modelFileNum | (textureMod << 16);
+	const s32 encodedFileNum = imguiOverlayEncodeFileId(textureMod, modelFileNum);
 	struct modeldefEditorWorkspaceInfo info;
 	const bool loaded = modeldefEditorWorkspaceGetInfo(&info);
 	const bool selectedLoaded = loaded && info.fileid == encodedFileNum;
@@ -2265,7 +2279,7 @@ static void imguiOverlayDrawModelWorkspace(s32 textureMod, s32 modelFileNum)
 
 	if (modeldefEditorWorkspaceGetInfo(&info)) {
 		ImGui::Text("Loaded model: mod %d, file 0x%04x%s",
-			(info.fileid >> 16) & 0xff, info.fileid & 0xffff,
+			MOD_FILEID_MOD(info.fileid), MOD_FILEID_RAW(info.fileid),
 			info.fileid == encodedFileNum ? " (selected)" : "");
 		ImGui::Text("Model memory: %u / %u bytes; texture pool: %u / %u bytes (%d textures)",
 			info.modelloadedsize, info.modelcapacity,
@@ -2387,7 +2401,7 @@ static void imguiOverlayDrawTextureRoutingDiagnostics(s32 textureMod, s32 modelF
 	const bool hasRomTexture = imguiOverlayHasRomTexture(engineTexId);
 	struct modeldefEditorWorkspaceInfo workspace;
 	const bool workspaceMatches = modeldefEditorWorkspaceGetInfo(&workspace)
-		&& workspace.fileid == (modelFileNum | (textureMod << 16));
+		&& workspace.fileid == imguiOverlayEncodeFileId(textureMod, modelFileNum);
 	const bool workspaceTexture = workspaceMatches
 		&& modeldefEditorWorkspaceFindTexture(engineTexId) != NULL;
 	const bool probeMatches = g_ImGuiOverlayEngineProbeAttempted
@@ -2510,7 +2524,7 @@ static void imguiOverlayDrawTextureUvOverlay(const ImVec2 &imageMin, const ImVec
 static void imguiOverlayScanTextureUsage(s32 textureMod, s32 modelFileNum,
 		u16 localTexId, u16 portTexId)
 {
-	const s32 encodedFileNum = modelFileNum | (textureMod << 16);
+	const s32 encodedFileNum = imguiOverlayEncodeFileId(textureMod, modelFileNum);
 	g_ImGuiOverlayTextureUsageCount = modeldefInspectTextureUsage(encodedFileNum,
 		localTexId, portTexId, g_ImGuiOverlayTextureUsage,
 		ARRAYCOUNT(g_ImGuiOverlayTextureUsage), &g_ImGuiOverlayTextureUsageTotal,

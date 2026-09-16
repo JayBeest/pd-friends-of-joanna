@@ -332,6 +332,40 @@ u8 extTexGetDimensions(u8 type, u16 id, s32 texnum, u16 *width, u16 *height)
 	return 0;
 }
 
+/**
+ * The ext_tex directory a flat-table entry was registered from.
+ *
+ * struct ExtTexture carries no path and cannot afford one: it is 24 bytes x
+ * MAX_EXT_TEX = 768 KiB of BSS, and FS_MAXPATH is 1024, so a path per entry
+ * would be 32 MiB. It does not need one. ownerMod already is the index into
+ * modDirs[] - setTex stamps it from g_ExtTexCurrentModIndex, which extTexInit
+ * drives over that same 0-based array - so the directory is recoverable from
+ * the byte that is already there.
+ *
+ * ownerMod -1 is the global basedir/ext_tex, which extTexInit resolved once
+ * into extTexPath. Otherwise this rebuilds the mod's path the way extTexInit
+ * built it for the scan, including the fsFullPath pass that expands the $B
+ * placeholder modDirs[] entries are stored with.
+ *
+ * Writes into `buf` and returns it, or returns extTexPath when the owner names
+ * no usable mod directory.
+ */
+static const char *extTexOwnerDir(s8 ownerMod, char *buf, size_t bufsize)
+{
+	char rel[FS_MAXPATH + 1];
+
+	if (ownerMod < 0 || (size_t)ownerMod >= sizeof(modDirs) / sizeof(modDirs[0])
+			|| !modDirs[ownerMod][0]) {
+		return extTexPath;
+	}
+
+	snprintf(rel, sizeof(rel), "%s/" EXT_TEX_DIRNAME, modDirs[ownerMod]);
+	strncpy(buf, fsFullPath(rel), bufsize - 1);
+	buf[bufsize - 1] = '\0';
+
+	return buf;
+}
+
 char *resolveFontname(const u8 fontId)
 {
 	switch (fontId) {
@@ -390,7 +424,19 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 					}
 				}
 			}
-			snprintf(dst, FS_MAXPATH, "%s/%04x.%s", extTexPath, texnum, tex->extension);
+			// Last resort: a loose PNG registered straight into the flat
+			// table. extTexScanDir registers those from every ext_tex
+			// directory it walks, including each mod's own, and this used to
+			// build the path from extTexPath unconditionally - so a mod
+			// shipping mods/<mod>/ext_tex/1234.png got a path under
+			// basedir/ext_tex and loaded nothing. On this install that global
+			// directory does not even exist (pd.log: "extTexScanDir: FAILED to
+			// open .../data/ext_tex"), so every such override missed.
+			char ownerDir[FS_MAXPATH + 1];
+
+			snprintf(dst, FS_MAXPATH, "%s/%04x.%s",
+				extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir)),
+				texnum, tex->extension);
 			return 0;
 		}
 		case G_TEXTYPE_FONT: {

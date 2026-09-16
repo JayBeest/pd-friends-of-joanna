@@ -1627,6 +1627,28 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 					out = fsFileLoad(tmp, &loadedSize);
 					if (romdataValidate(out, loadedSize)) {
 						sysLogPrintf(LOG_NOTE, "file %d (%s) loaded from mod %d (%s)", fileNum, resolvedName, i, modName);
+
+						// The name came out of fileSlots[modNum], the bytes came
+						// out of modDirs[i], and the result is about to be cached
+						// as modNum's file. When those differ, one mod's asset is
+						// being served as another's - which is how a stage ends up
+						// loading a foreign setup or background without anything
+						// being said. Whether this lane is a deliberate override
+						// or a leak is d-ownership; until that is settled, say it
+						// happened.
+						if (i != modNum) {
+							static s32 s_crossModWarnings = 0;
+
+							if (s_crossModWarnings < 64) {
+								++s_crossModWarnings;
+								sysLogPrintf(LOG_WARNING,
+										"romdataFileLoad: file %d (%s) is mod %d's, but its bytes came from mod %d (%s)"
+										"%s",
+										fileNum, resolvedName, modNum, i, modName,
+										s_crossModWarnings == 64 ? " [further cross-mod loads not logged]" : "");
+							}
+						}
+
 						break;
 					} else {
 						sysLogPrintf(LOG_WARNING, "file %d (%s) corrupted in mod %d, skipping", fileNum, resolvedName, i);

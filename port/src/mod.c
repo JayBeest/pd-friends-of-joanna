@@ -26,6 +26,47 @@
 s32 g_TexModNum = -1;
 s32 g_TexCurrentModelFileNum = 0;
 
+/*
+ * Owning mod of a file id. See the encoding note in port/include/mod.h.
+ *
+ * The middle branch is the whole reason the encoding spends a bit. An id with
+ * mod bits but no tag cannot be produced by MOD_FILEID_MAKE; it can only come
+ * from somewhere that built the id by hand as (mod << 16), which is how this
+ * convention was written at a dozen sites before the macros existed. Such an
+ * id is answered as vanilla - the safe direction, a missing texture rather
+ * than another mod's - and reported, because nothing else can see it: it
+ * compiles, it warns about nothing, and the wrong texture it produces looks
+ * like a mod authoring mistake.
+ *
+ * Capped rather than rate-limited by time: the interesting thing is which
+ * call sites exist, and they are all hit within the first few loads.
+ */
+s32 modFileIdMod(s32 id)
+{
+	if (id < 0) {
+		// -1 is "no file" (modeldefEditorWorkspaceUnload sets it). All-ones
+		// has the tag bit and 0xff of mod bits, so it would otherwise decode
+		// as a real id owned by a mod 255 that no array is sized for.
+		return -1;
+	}
+
+	if ((id & MOD_FILEID_TAG) == 0) {
+		if (id & (MOD_FILEID_MOD_MASK << MOD_FILEID_SHIFT)) {
+			static u32 reported = 0;
+			if (reported < 32) {
+				reported++;
+				sysLogPrintf(LOG_WARNING,
+						"modFileIdMod: file id 0x%08x carries mod bits (%d) but no owner tag - "
+						"built by hand instead of MOD_FILEID_MAKE; treating as vanilla",
+						(u32)id, (id >> MOD_FILEID_SHIFT) & MOD_FILEID_MOD_MASK);
+			}
+		}
+		return -1;
+	}
+
+	return (id >> MOD_FILEID_SHIFT) & MOD_FILEID_MOD_MASK;
+}
+
 extern struct stagemusic g_StageTracks[];
 extern struct stageallocation g_StageAllocations8Mb[];
 extern s32 g_MainIsBooting;

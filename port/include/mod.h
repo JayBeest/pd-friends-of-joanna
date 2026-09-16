@@ -12,26 +12,73 @@ extern "C" {
 /* Mod-tagged file ids.
  *
  * A file id is either a plain vanilla id, or a mod-owned id carrying its owning
- * mod in the high bits: (modNum << 16) | rawId. The convention was open-coded
- * at a dozen sites with three different spellings of the extraction - masked to
- * 0xff, masked to 0xffff, and unmasked - so use these instead of writing the
- * shift by hand.
+ * mod in the high bits: MOD_FILEID_TAG | (modNum << 16) | rawId. The convention
+ * was open-coded at a dozen sites with three different spellings of the
+ * extraction - masked to 0xff, masked to 0xffff, and unmasked - so use these
+ * instead of writing the shift by hand.
  *
  * rawId is 16 bits. modNum fits in 6: g_ModelStates_PerMod / g_ExplosionTypes_PerMod
  * are 64 entries and modSwitch bounds g_ModNum to < 64.
  *
- * Note there is no "is this tagged" test, deliberately: mod 0 is the boot mod,
- * so a zero modNum is a real owner, not an absence.
+ * This header used to say there was no "is this tagged" test, deliberately,
+ * because mod 0 is the boot mod and so a zero modNum was a real owner rather
+ * than an absence. That is now overturned on purpose. The consequence of
+ * merging them was that MOD_FILEID_MOD(a plain vanilla id) returned 0, which
+ * modeldef.c hands to g_TexModNum, which texdecompress.c folds together with
+ * its own "no context" case - so the shared texture pool's bucket 0 was
+ * "vanilla or mod 0 or no-context" and whichever loaded a texture number first
+ * won for the others. Vanilla is a distinct owner. An untagged id is vanilla,
+ * and MOD_FILEID_MOD returns -1 for it, matching the -1 that g_TexModNum,
+ * modNumFromStage and ext_tex's ownerMod already use for "no mod".
+ *
+ * The tag is bit 24 and specifically not bit 31. A tagged file id is passed
+ * verbatim through MENUMODELPARAMS_SET_FILENUM, which is the identity macro
+ * (src/include/constants.h), and menu.c then tests that same word with
+ * MENUMODELPARAMS_HAS_MASTER_HEADBODY, which is bit 31. A tag there would make
+ * every mod-owned head file id read as a master head/body pair. Bits 16-23 of
+ * that word are MP_HEADNUM and 24-31 are MP_BODYNUM, but those are only read
+ * when the low 16 bits are 0xffff, which a real file id never is.
+ *
+ * g_ModNum, modDirs[] and every array subscripted by a mod index stay 0-based.
+ * The +1-style shift lives nowhere; only the tag bit is new.
  */
 #define MOD_FILEID_SHIFT    16
 #define MOD_FILEID_RAW_MASK 0xffff
 #define MOD_FILEID_MOD_MASK 0xff
+#define MOD_FILEID_TAG      0x01000000
 
-#define MOD_FILEID_MOD(id)  ((s32)(((s32)(id) >> MOD_FILEID_SHIFT) & MOD_FILEID_MOD_MASK))
+#ifdef __cplusplus
+static_assert(MOD_FILEID_TAG != 0x80000000,
+	"the tag must not be bit 31: MENUMODELPARAMS_HAS_MASTER_HEADBODY tests that "
+	"bit on a word that carries a tagged file id verbatim");
+#else
+_Static_assert(MOD_FILEID_TAG != 0x80000000,
+	"the tag must not be bit 31: MENUMODELPARAMS_HAS_MASTER_HEADBODY tests that "
+	"bit on a word that carries a tagged file id verbatim");
+#endif
+
+#define MOD_FILEID_IS_TAGGED(id) \
+	((s32)(id) >= 0 && ((s32)(id) & MOD_FILEID_TAG) != 0)
 #define MOD_FILEID_RAW(id)  ((s32)((s32)(id) & MOD_FILEID_RAW_MASK))
+
+/* modNum must be >= 0. A negative one masks to 0xff and makes an id claiming
+ * mod 255, which no array is sized for; callers gate on it already. */
 #define MOD_FILEID_MAKE(modNum, rawId) \
-	((s32)((((s32)(modNum) & MOD_FILEID_MOD_MASK) << MOD_FILEID_SHIFT) \
+	((s32)(MOD_FILEID_TAG \
+		| (((s32)(modNum) & MOD_FILEID_MOD_MASK) << MOD_FILEID_SHIFT) \
 		| ((s32)(rawId) & MOD_FILEID_RAW_MASK)))
+
+/*
+ * Owning mod of a file id: -1 for vanilla (untagged), else 0..63.
+ *
+ * A function rather than a macro because it also reports the one state this
+ * encoding can represent but nothing should ever produce - mod bits set with
+ * the tag clear, which is what a hand-rolled (mod << 16) leaves behind. That
+ * contradiction is undetectable under any encoding that does not spend a bit,
+ * and catching it is the reason this one does.
+ */
+s32 modFileIdMod(s32 id);
+#define MOD_FILEID_MOD(id)  modFileIdMod((s32)(id))
 
 extern char g_ModNames[64][64];
 extern s32 g_TexModNum;

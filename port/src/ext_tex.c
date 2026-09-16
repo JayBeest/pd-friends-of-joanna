@@ -82,6 +82,57 @@ s32 fileInfo(const char *filename, s32 *texNum, char extension[5])
 	return 0;
 }
 
+/**
+ * Which mod a model entry's overrides came from.
+ *
+ * ownerMod lives on each ExtTexture rather than on the entry, but a directory
+ * scan stamps every texture it reads with the mod it was reading, so the whole
+ * entry shares one owner. -1 means unknown, and an unknown owner matches
+ * anything.
+ */
+static s8 modelEntryOwner(const struct ModelTextures *m)
+{
+	return (m && m->numTextures > 0 && m->textures) ? m->textures[0].ownerMod : -1;
+}
+
+/**
+ * Find the model entry for a file number, preferring the mod being rendered.
+ *
+ * fileNum is a RAW file number - romdataFilePreprocess strips the owner out of
+ * a tagged mod file id before the preprocess ever sees it - so two mods that
+ * each ship overrides for their own file 0x1234 land on the same key here.
+ * Taking the first match means whichever mod was scanned first answers for
+ * both. The G_TEXTYPE_GENERAL path already filters on ownerMod against
+ * g_TexModNum; this is the same guard for models.
+ *
+ * Falls back to the first name match when nothing matches the current mod, so
+ * a lookup that works today keeps working.
+ */
+static struct ModelTextures *findModelEntry(u16 fileNum)
+{
+	extern s32 g_TexModNum;
+	struct ModelTextures *first = NULL;
+	int i;
+
+	for (i = 0; i < numModels; ++i) {
+		if (modelTextures[i].fileNum != (s16)fileNum) {
+			continue;
+		}
+
+		if (!first) {
+			first = &modelTextures[i];
+		}
+
+		s8 owner = modelEntryOwner(&modelTextures[i]);
+
+		if (owner < 0 || g_TexModNum < 0 || owner == g_TexModNum) {
+			return &modelTextures[i];
+		}
+	}
+
+	return first;
+}
+
 struct ExtTexture *lookupModelTex(u16 fileNum, s32 texNum)
 {
 	if (fileNum > NUM_FILES) {
@@ -89,13 +140,7 @@ struct ExtTexture *lookupModelTex(u16 fileNum, s32 texNum)
 		return 0;
 	}
 
-	struct ModelTextures *modelTex = NULL;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum == fileNum) {
-			modelTex = &modelTextures[i];
-			break;
-		}
-	}
+	struct ModelTextures *modelTex = findModelEntry(fileNum);
 
 	if (modelTex == NULL) {
 		// sysLogPrintf(LOG_NOTE, "lookupModelTex: NO model entry for fileNum=%04x (texNum=%04x), numModels=%d", fileNum, texNum, numModels);
@@ -314,12 +359,12 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 		case G_TEXTYPE_MODEL: {
 			tex = lookupModelTex(id, texnum);
 			if (!tex) return 1;
-			// Find the ModelTextures entry to get the basePath
-			for (int i = 0; i < numModels; ++i) {
-				if (modelTextures[i].fileNum == id) {
-					snprintf(dst, FS_MAXPATH, "%s/%s/%05x.%s", modelTextures[i].basePath, modelTextures[i].modelName, texnum, tex->extension);
-					return 0;
-				}
+			// Same entry lookupModelTex chose, or the basePath could come from
+			// one mod while the texture came from another.
+			struct ModelTextures *m = findModelEntry(id);
+			if (m) {
+				snprintf(dst, FS_MAXPATH, "%s/%s/%05x.%s", m->basePath, m->modelName, texnum, tex->extension);
+				return 0;
 			}
 			return 1;
 		}

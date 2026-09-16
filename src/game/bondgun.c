@@ -4044,8 +4044,8 @@ void bgunTickMasterLoad(void)
 	struct player *player = g_Vars.currentplayer;
 	bool hashands;
 	// s32, not u16: both carry file ids that may arrive mod-tagged. The
-	// gunctrl fields they are stored into are still u16, so the tag is lost
-	// at that boundary - widening those is gun-mod work, not this pass.
+	// gunctrl fields they are stored into are u32 now, so the tag survives
+	// the store and reaches modeldefLoad with its owner intact.
 	s32 handfilenum;
 	s32 sum;
 	s32 filenum;

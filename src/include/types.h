@@ -2467,14 +2467,19 @@ struct gunctrl {
   /*0x1590*/ struct modeldef *gunmodeldef;
   /*0x1594*/ struct modeldef *handmodeldef;
   /*0x1598*/ struct modeldef *cartmodeldef;
-  /*0x159c*/ u16 handfilenum;
+  // handfilenum/loadfilenum are u32, not the u16 the ROM used: both receive
+  // file ids from g_HeadsAndBodies[], which are mod-tagged, and a u16 dropped
+  // the owner on the way in. The hex offsets below still describe the N64
+  // layout, which this no longer matches; nothing in the port build depends on
+  // it (MATCHING is hard-wired 0 and PLATFORM_N64 is never defined).
+  /*0x159c*/ u32 handfilenum;
   /*0x15a0*/ u8 *handmemloadptr;
   /*0x15a4*/ s32 handmemloadremaining;
   /*0x15a8*/ u8 *memloadptr;
   /*0x15ac*/ u32 memloadremaining;
   /*0x15b0*/ u8 masterloadstate;
   /*0x15b1*/ u8 gunloadstate;
-  /*0x15b2*/ u16 loadfilenum;
+  /*0x15b2*/ u32 loadfilenum;
   /*0x15b4*/ struct modeldef **loadtomodeldef;
   /*0x15b8*/ uintptr_t *loadmemptr;
   /*0x15bc*/ uintptr_t *loadmemremaining;
@@ -4815,7 +4820,11 @@ struct chrnumaction {
 
 struct modelstate {
   struct modeldef *modeldef;
-  u16 fileid;
+  // u32, not u16: modconfig's ModelStates block stores a mod-tagged file id
+  // here (modConfigParseModelStates in port/src/mod.c), and a u16 truncated
+  // the owner away before anything could read it. Widening costs nothing -
+  // the struct is 16 bytes either way, the 2 bytes come out of tail padding.
+  u32 fileid;
   u16 scale;
 };
 

@@ -1713,10 +1713,25 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 		}  else if (!strcmp(token, "allocation")) {
 			// allocation "ALLOCSTRING"
 			PARSE_STAGE_STRING("", "allocation", tmps);
-			// FIXME: this leaks
-			tmps = strDuplicate(tmps);
-			if (tmps) {
-				salloc->string = tmps;
+
+			// g_StageAllocations8Mb has no row for every stage, and the search
+			// above leaves salloc NULL when there is none - so this wrote
+			// through a null pointer for any such stage. The table is a
+			// {stagenum, string} list terminated by a zero stagenum; a stage
+			// missing from it falls off the end and takes the terminator's
+			// string, which is why an added stage runs with the wrong pool.
+			// That is its own thread; here, say so and do not crash.
+			if (!salloc) {
+				sysLogPrintf(LOG_ERROR,
+						"modconfig: stage 0x%02x: allocation given, but that stage has no row "
+						"in g_StageAllocations8Mb - ignored",
+						stagenum);
+			} else {
+				// FIXME: this leaks
+				tmps = strDuplicate(tmps);
+				if (tmps) {
+					salloc->string = tmps;
+				}
 			}
 		}	else if (!strcmp(token, "music")) {
 			// music { KEYVALUES... }

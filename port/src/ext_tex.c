@@ -23,8 +23,9 @@ static char extTexPath[FS_MAXPATH + 1];
 // ids run 0..32767 and mod-assigned slots start at 4096; sizing to the whole
 // range is what keeps a PNG override addressable at any slot a mod can get.
 // The shipped set (mod_aio_characters, mod_fojo, mod_gex_characters) wants 633
-// slots and lands at 4096..4728, so 8192 breaks nothing today - it was simply
-// the lowest ceiling left in the system once the encoding widened.
+// slots and lands at 4096..4728, so the range is far wider than today needs.
+// It is sized to the encoding rather than to the current set, so no mod can be
+// handed a slot this table cannot address.
 //
 // Cost is measured, not estimated. sizeof(struct ExtTexture) is 24 (22 bytes of
 // payload, 2 of tail padding - already the minimum for an 8-byte-aligned
@@ -38,10 +39,17 @@ static char extTexPath[FS_MAXPATH + 1];
 // 0.06% of a 60fps frame, which is why this stays a flat array instead of
 // becoming a map.
 //
-// Must stay <= G_NOOP_TEXSLOT_MAX + 1 in src/include/gbiex.h, which is the
-// single source of truth for the encoding's width. That macro is not on this
-// branch yet; tie the two together once both branches are on main.
-#define MAX_EXT_TEX 32768
+// Tied to G_NOOP_TEXSLOT_MAX in src/include/gbiex.h, the single source of truth
+// for the encoding's width, so widening the slot field resizes this table with
+// it and the two cannot drift apart.
+//
+// Cast back to s32 because the macro is 0x7fffu and every texnum in this file
+// is signed. Each `texnum >= MAX_EXT_TEX` test today is paired with a
+// `texnum < 0` test that short-circuits ahead of it, so an unsigned macro
+// would not change any current result; the cast is so that the next such test
+// written without the companion still rejects a negative index instead of
+// promoting it to a huge unsigned one.
+#define MAX_EXT_TEX ((s32)(G_NOOP_TEXSLOT_MAX + 1))
 #define NUM_FONTS 5
 const u16 IDMASK_FONT_OUTLINE = MASK_FONT_OUTLINE << 8;
 

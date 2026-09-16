@@ -50,6 +50,7 @@
 #include "system.h"
 #include "video.h"
 #include "platform.h"
+#include "mod.h"
 #endif
 
 void *sysMemAlloc(const u32 size);
@@ -3034,6 +3035,21 @@ void bgLoadRoom(s32 roomnum)
 		// changed to point to the written GBI.
 		itergdl2 = gfxblocks[0];
 
+#ifndef PLATFORM_N64
+		// Scope this room's texture loads to the mod that owns the stage, the same
+		// way modeldef scopes a model's loads to the mod that owns the model. Without
+		// this, bg geometry resolves its texture numbers with g_TexModNum left at
+		// whatever the last model load set, so a mod's own level textures either miss
+		// or pick up another mod's slot.
+		//
+		// modNumFromStage returns -1 for a stage no mod claims, so vanilla rooms keep
+		// g_TexModNum == -1 and load exactly as they did before. g_TexCurrentModelFileNum
+		// is deliberately left alone: bg has no model file id, and 0 is the right id to
+		// put in the EXT packet for it.
+		s32 prevTexMod = g_TexModNum;
+		g_TexModNum = modNumFromStage(g_Vars.stagenum);
+#endif
+
 		for (i = 0; i < numgdls; i++) {
 			s32 byteswritten;
 			len = gfxblocks[i + 1] - gfxblocks[i];
@@ -3044,6 +3060,10 @@ void bgLoadRoom(s32 roomnum)
 
 			itergdl2 = (u8 *) ALIGN8((uintptr_t) (itergdl2 + byteswritten));
 		}
+
+#ifndef PLATFORM_N64
+		g_TexModNum = prevTexMod;
+#endif
 
 		gdlpointers[numgdls] = itergdl2;
 

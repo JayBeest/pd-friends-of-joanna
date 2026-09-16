@@ -76,6 +76,7 @@ void *modSequenceLoad(u16 num, u32 *outSize);
 void modLoadTextureSurfaceType(void);
 void modUnloadTextureSurfaceType(void);
 void modSwitch(s32 modnum, s32 stagenum);
+s32 modNumFromStage(s32 stagenum);
 s32 modLookupHeadByName(const char *name);
 s32 modLookupBodyByName(const char *name);
 s32 modLookupHandFileByName(const char *name);

@@ -659,8 +659,12 @@ static void collect_ids_from_gdl(const uint8_t *gdl, uint32_t gdl_len,
 			uint16_t t0 = (uint16_t)(w1 & 0x0fff);
 			add_unique_u16(ids, num_ids, max_ids, t0);
 
-			/* Repurposed G_NOOP dual-texture form: only subcmd==1 has t1. */
-			uint8_t subcmd = (uint8_t)(w0 & 0xff);
+			/* Repurposed G_NOOP dual-texture form: only subcmd==1 has t1.
+			 * subcmd is 3 bits (w0 bits 2..0), not 8. Masking 0xff folded in
+			 * w0 bits 7..3, which are the bottom of the `flags` field; that
+			 * read the same as 3 bits only because every 0xc0 command in
+			 * vanilla ROM data has flags of 0 or 64, leaving bits 8..3 clear. */
+			uint8_t subcmd = (uint8_t)(w0 & 0x7);
 			if (subcmd == 1) {
 				uint16_t t1 = (uint16_t)((w1 >> 12) & 0x0fff);
 				add_unique_u16(ids, num_ids, max_ids, t1);

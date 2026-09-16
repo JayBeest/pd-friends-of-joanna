@@ -6305,11 +6305,14 @@ struct tex {
 #ifndef PLATFORM_N64
   /*0x0c*/ u32 modnum : 8; // 0-based g_TexModNum of whoever loaded it, so it
                            // disambiguates cache hits when two mods share a
-                           // texturenum. NOT "0 = vanilla": mod 0 is a real
-                           // mod, a vanilla model load leaves g_TexModNum at
-                           // MOD_FILEID_MOD(plain id) == 0, and texdecompress
-                           // folds "no mod context" (-1) into 0 as well, so
-                           // all three land in this one bucket.
+                           // texturenum. TEX_MODNUM_NONE is vanilla, or any
+                           // other load with no mod context. This used to be
+                           // 0, which meant vanilla, mod 0 and no-context
+                           // shared one bucket and whichever reached a given
+                           // texturenum first answered for the others; the
+                           // owner tag in port/include/mod.h is what lets
+                           // MOD_FILEID_MOD tell vanilla from mod 0 and so
+                           // lets these be separate buckets.
 #endif
 #ifdef PLATFORM_N64
   /*0x0c*/ u32 next : 24;
@@ -6318,6 +6321,10 @@ struct tex {
   u16 tlutoffset;
 #endif
 };
+
+// 0xff, because a mod index cannot reach it: modSwitch bounds g_ModNum to
+// < 64 and modDirs[] is 64 entries, so the widest a real owner can be is 63.
+#define TEX_MODNUM_NONE 0xff
 
 struct texcacheitem {
   u16 texturenum;

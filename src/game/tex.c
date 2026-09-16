@@ -891,6 +891,10 @@ s32 texLoadFromGdl(Gfx *instart, s32 gdlsizeinbytes, Gfx *outstart, struct texpo
 					u16 extW = 32, extH = 32;
 					extTexGetDimensions(G_TEXTYPE_GENERAL, 0, texturenum, &extW, &extH);
 					memset(&extTexStub1, 0, sizeof(extTexStub1));
+					// memset leaves modnum 0, which is now mod 0 and not "no owner".
+					// The stub is returned directly and never enters a pool, so nothing
+					// compares it - set it anyway so it does not read as mod 0's.
+					extTexStub1.modnum = TEX_MODNUM_NONE;
 					extTexStub1.texturenum = texturenum;
 					extTexStub1.data = extTexStubData1;
 					extTexStub1.width = (u8)extW;
@@ -940,6 +944,10 @@ s32 texLoadFromGdl(Gfx *instart, s32 gdlsizeinbytes, Gfx *outstart, struct texpo
 							u16 extW2 = 32, extH2 = 32;
 							extTexGetDimensions(G_TEXTYPE_GENERAL, 0, texturenum2, &extW2, &extH2);
 							memset(&extTexStub2, 0, sizeof(extTexStub2));
+							// memset leaves modnum 0, which is now mod 0 and not "no owner".
+							// The stub is returned directly and never enters a pool, so nothing
+							// compares it - set it anyway so it does not read as mod 0's.
+							extTexStub2.modnum = TEX_MODNUM_NONE;
 							extTexStub2.texturenum = texturenum2;
 							extTexStub2.data = extTexStubData2;
 							extTexStub2.width = (u8)extW2;

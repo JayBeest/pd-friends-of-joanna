@@ -2102,7 +2102,7 @@ struct tex *texFindInPool(s32 texturenum, struct texpool *pool)
 
 #ifndef PLATFORM_N64
 	extern s32 g_TexModNum;
-	u8 wantMod = (g_TexModNum >= 0) ? (u8)g_TexModNum : 0;
+	u8 wantMod = (g_TexModNum >= 0) ? (u8)g_TexModNum : TEX_MODNUM_NONE;
 #endif
 
 	if (pool == NULL) {
@@ -2374,7 +2374,7 @@ haveCompBytes:
 #ifndef PLATFORM_N64
 			{
 				extern s32 g_TexModNum;
-				tex->modnum = (g_TexModNum >= 0) ? (u8)g_TexModNum : 0;
+				tex->modnum = (g_TexModNum >= 0) ? (u8)g_TexModNum : TEX_MODNUM_NONE;
 			}
 #endif
 

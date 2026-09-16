@@ -18,7 +18,30 @@
 
 static char extTexPath[FS_MAXPATH + 1];
 
-#define MAX_EXT_TEX 8192
+// Indexed directly by texture number, so it has to span every id the display
+// list can name. The widened G_NOOP texture-slot encoding carries 15 bits, so
+// ids run 0..32767 and mod-assigned slots start at 4096; sizing to the whole
+// range is what keeps a PNG override addressable at any slot a mod can get.
+// The shipped set (mod_aio_characters, mod_fojo, mod_gex_characters) wants 633
+// slots and lands at 4096..4728, so 8192 breaks nothing today - it was simply
+// the lowest ceiling left in the system once the encoding widened.
+//
+// Cost is measured, not estimated. sizeof(struct ExtTexture) is 24 (22 bytes of
+// payload, 2 of tail padding - already the minimum for an 8-byte-aligned
+// pointer, so reordering the fields cannot shrink it), giving 32768 * 24 =
+// 786432 bytes = 768 KiB. That is static BSS, not a heap allocation: it costs
+// address space, and nothing at runtime until a page is touched.
+//
+// Three loops walk the whole table. The two in extTexInit run once at startup.
+// extTexFree is the one that repeats - videoResetTextureCache reaches it on
+// every menu-model swap - and the 4x growth measured at ~10.7us per sweep,
+// 0.06% of a 60fps frame, which is why this stays a flat array instead of
+// becoming a map.
+//
+// Must stay <= G_NOOP_TEXSLOT_MAX + 1 in src/include/gbiex.h, which is the
+// single source of truth for the encoding's width. That macro is not on this
+// branch yet; tie the two together once both branches are on main.
+#define MAX_EXT_TEX 32768
 #define NUM_FONTS 5
 const u16 IDMASK_FONT_OUTLINE = MASK_FONT_OUTLINE << 8;
 

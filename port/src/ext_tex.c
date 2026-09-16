@@ -911,7 +911,14 @@ s32 extTexInit()
 
 	sysLogPrintf(LOG_NOTE, "extTexInit: global extTexPath='%s'", extTexPath);
 	sysLogPrintf(LOG_NOTE, "extTexInit: g_NumModDirs=%d", g_NumModDirs);
-	for (u32 i = 0; i <= g_NumModDirs; ++i) {
+
+	// g_NumModDirs is a count, not a last index - fs.c assigns it from
+	// getModDirCount, which caps at the 64 rows modDirs actually has - so the
+	// populated rows are 0..g_NumModDirs-1 and `<=` reads one past them. It is
+	// not theoretical: pd.log from a normal boot carries
+	// "extTexInit: modDirs[3]=''" under "g_NumModDirs=3", printed by this very
+	// loop. With 64 --moddir entries the same step reads off the array.
+	for (u32 i = 0; i < g_NumModDirs; ++i) {
 		sysLogPrintf(LOG_NOTE, "extTexInit: modDirs[%d]='%s'", i, modDirs[i]);
 	}
 
@@ -941,7 +948,7 @@ s32 extTexInit()
 
 	// Scan each mod's ext_tex directory (mods/mod_xxx/ext_tex/)
 	sysLogPrintf(LOG_NOTE, "extTexInit: scanning mod ext_tex dirs...");
-	for (u32 i = 0; i <= g_NumModDirs; ++i) {
+	for (u32 i = 0; i < g_NumModDirs; ++i) {
 		if (modDirs[i][0]) {
 			char modExtTexPath[FS_MAXPATH + 1];
 			snprintf(modExtTexPath, FS_MAXPATH, "%s/" EXT_TEX_DIRNAME, modDirs[i]);

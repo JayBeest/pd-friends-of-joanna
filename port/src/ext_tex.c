@@ -333,6 +333,24 @@ u8 extTexGetDimensions(u8 type, u16 id, s32 texnum, u16 *width, u16 *height)
 }
 
 /**
+ * Name a registration source for a log line.
+ *
+ * The mod directory's basename, so "$B/mods/mod_fojo" reads as "mod_fojo".
+ * ownerMod -1 is the global ext_tex directory.
+ */
+static const char *extTexOwnerName(s8 ownerMod)
+{
+	if (ownerMod < 0 || (size_t)ownerMod >= sizeof(modDirs) / sizeof(modDirs[0])
+			|| !modDirs[ownerMod][0]) {
+		return "the global ext_tex dir";
+	}
+
+	const char *slash = strrchr(modDirs[ownerMod], '/');
+
+	return slash ? slash + 1 : modDirs[ownerMod];
+}
+
+/**
  * The ext_tex directory a flat-table entry was registered from.
  *
  * struct ExtTexture carries no path and cannot afford one: it is 24 bytes x
@@ -602,13 +620,27 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 
 		// Also register as a general texture so head models (which use
 		// G_TEXTYPE_GENERAL via texWriteLoadToTmemAddr) can find them.
-		// First-writer-wins: don't overwrite if already registered by another mod.
-		if (texNum >= 0 && texNum < MAX_EXT_TEX && extTextures[texNum].texnum < 0) {
-			setTex(extTextures, texNum, texNum, extension);
-			extTextures[texNum].width = modelTex->textures[modelTex->numTextures - 1].width;
-			extTextures[texNum].height = modelTex->textures[modelTex->numTextures - 1].height;
-			sysLogPrintf(LOG_NOTE, "readModelTextures: also registered texnum=%04x as GENERAL (%dx%d)", texNum,
-				extTextures[texNum].width, extTextures[texNum].height);
+		// First writer wins, same as extTexScanDir's loose-PNG branch.
+		if (texNum >= 0 && texNum < MAX_EXT_TEX) {
+			if (extTextures[texNum].texnum < 0) {
+				setTex(extTextures, texNum, texNum, extension);
+				extTextures[texNum].width = modelTex->textures[modelTex->numTextures - 1].width;
+				extTextures[texNum].height = modelTex->textures[modelTex->numTextures - 1].height;
+				sysLogPrintf(LOG_NOTE, "readModelTextures: also registered texnum=%04x as GENERAL (%dx%d)", texNum,
+					extTextures[texNum].width, extTextures[texNum].height);
+			} else {
+				// Only the GENERAL alias is contested - the per-model entry is
+				// kept either way, and getTexPath's id != 0 branch serves this
+				// model from its own directory. What the losing model gives up
+				// is being findable by texid alone, by a caller with no model
+				// context. Two shipped dirs hit this today: mod_fojo's
+				// CheadCatherineZ and CheadFoslerferZ both carry 0db1 and 0db2.
+				sysLogPrintf(LOG_WARNING,
+					"readModelTextures: slot %04x contested - %s/%04x.%s from %s not aliased as GENERAL, already claimed by %s",
+					texNum, modelTex->modelName, texNum, extension,
+					extTexOwnerName((s8)g_ExtTexCurrentModIndex),
+					extTexOwnerName(extTextures[texNum].ownerMod));
+			}
 		}
 	}
 	closedir(dr);
@@ -791,6 +823,29 @@ static void extTexScanDir(const char *dirPath, s32 *maxModels)
 				sysLogPrintf(LOG_WARNING, "extTexScanDir: REJECTED '%s' — texNum %d out of range (0..%d)", name, texNum, MAX_EXT_TEX - 1);
 				continue;
 			}
+			if (extTextures[texNum].texnum >= 0) {
+				// First writer wins, which is the policy readModelTextures
+				// already had; this side used to be a bare setTex, so the two
+				// registration paths disagreed about the same table.
+				//
+				// First writer, not last, because the scan order is fixed -
+				// the global ext_tex directory, then modDirs[] in order - so
+				// the winner is the same on every run and does not turn on
+				// readdir order between directories. Last-writer-wins also
+				// overwrote extension, width and height rather than just
+				// ownerMod, so a late loser could leave a slot naming its own
+				// file at the earlier entry's dimensions.
+				//
+				// Named on both sides at WARNING because this drops one mod's
+				// texture outright, and doing that silently is the failure
+				// that took longest to find here.
+				sysLogPrintf(LOG_WARNING,
+					"extTexScanDir: slot %04x contested - '%s' from %s dropped, already claimed by %s",
+					texNum, name, extTexOwnerName((s8)g_ExtTexCurrentModIndex),
+					extTexOwnerName(extTextures[texNum].ownerMod));
+				continue;
+			}
+
 			setTex(extTextures, texNum, texNum, extension);
 			setTexDimensions(&extTextures[texNum], filepath);
 			sysLogPrintf(LOG_NOTE, "extTexScanDir: general texture '%s' => texNum=%04x (%dx%d)",

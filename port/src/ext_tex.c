@@ -164,6 +164,48 @@ static struct ModelTextures *findModelEntry(u16 fileNum)
 	return first;
 }
 
+/**
+ * Find the model entry for a file number, owned by the mod being rendered.
+ *
+ * Strict counterpart to findModelEntry, for the callers where another mod's
+ * entry is a wrong answer rather than a second-best one.
+ *
+ * The keys genuinely collide. Every mod's inserted files start at id 2018 and
+ * count up from there, so the three shipped mods each claim 2018..2025 with
+ * different models: fileNum 2019 is mod_fojo's CheadCatherineZ, and also
+ * mod_aio_characters' CbondranchZ, and also mod_gex_characters'
+ * Cbaronsamedi2Z. romdataFileGetNumForNameAnyMod, which is what stamps
+ * fileNum onto an entry, scans every mod and discards which one it found in.
+ *
+ * findModelEntry falls back to the first name match, and for a texture load
+ * that is right - something beats nothing. For the three queries below it is
+ * wrong, because they are gates. modeldefRemapOneTexnumSlot skips a legitimate
+ * source->port remap when extTexModelHasEntryForTexid says yes, so another
+ * mod's entry answering for ours suppresses the remap outright.
+ *
+ * Only filters when both owners are known: g_TexModNum is -1 outside a
+ * mod-owned model's load, and ownerMod is -1 for the global ext_tex directory.
+ */
+static struct ModelTextures *findModelEntryOwned(s16 fileNum)
+{
+	extern s32 g_TexModNum;
+	int i;
+
+	for (i = 0; i < numModels; ++i) {
+		if (modelTextures[i].fileNum != fileNum) {
+			continue;
+		}
+
+		s8 owner = modelEntryOwner(&modelTextures[i]);
+
+		if (owner < 0 || g_TexModNum < 0 || owner == g_TexModNum) {
+			return &modelTextures[i];
+		}
+	}
+
+	return NULL;
+}
+
 struct ExtTexture *lookupModelTex(u16 fileNum, s32 texNum)
 {
 	if (fileNum > NUM_FILES) {
@@ -250,55 +292,56 @@ s8 extTexGetOwnerMod(u8 type, u16 id, s32 texnum)
 bool extTexModelHasEntryForTexid(s16 fileNum, s32 texNum)
 {
 	if (fileNum <= 0 || !modelTextures) return false;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum != fileNum) continue;
-		for (int j = 0; j < modelTextures[i].numTextures; ++j) {
-			if (modelTextures[i].textures[j].texnum == texNum) return true;
-		}
-		return false;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	if (!m) return false;
+
+	for (int j = 0; j < m->numTextures; ++j) {
+		if (m->textures[j].texnum == texNum) return true;
 	}
+
 	return false;
 }
 
 s32 extTexModelGetTextureCount(s16 fileNum)
 {
 	if (fileNum <= 0 || !modelTextures) return 0;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum == fileNum) return modelTextures[i].numTextures;
-	}
-	return 0;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	return m ? m->numTextures : 0;
 }
 
 s32 extTexModelGetTextureInfo(s16 fileNum, s32 index, s32 *texNum, s8 *ownerMod, u16 *width, u16 *height)
 {
 	if (fileNum <= 0 || !modelTextures || index < 0) return false;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum != fileNum) continue;
-		if (index >= modelTextures[i].numTextures) return false;
-		struct ExtTexture *tex = &modelTextures[i].textures[index];
-		if (texNum) *texNum = tex->texnum;
-		if (ownerMod) *ownerMod = tex->ownerMod;
-		if (width) *width = tex->width;
-		if (height) *height = tex->height;
-		return true;
-	}
-	return false;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	if (!m || index >= m->numTextures) return false;
+
+	struct ExtTexture *tex = &m->textures[index];
+	if (texNum) *texNum = tex->texnum;
+	if (ownerMod) *ownerMod = tex->ownerMod;
+	if (width) *width = tex->width;
+	if (height) *height = tex->height;
+
+	return true;
 }
 
 const u8 *extTexModelLoadPixels(s16 fileNum, s32 texNum, u32 *width, u32 *height)
 {
 	struct ExtTexture *tex = lookupModelTex((u16)fileNum, texNum);
-	struct ModelTextures *modelTex = NULL;
 	char path[FS_MAXPATH + 1];
 
 	if (!tex) return NULL;
 
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum == fileNum) {
-			modelTex = &modelTextures[i];
-			break;
-		}
-	}
+	// The entry lookupModelTex chose, not the first name match: fileNum is
+	// ambiguous across mods, so a first-match loop here could hand back
+	// another mod's basePath for this mod's texture. Same reason the
+	// G_TEXTYPE_MODEL case in getTexPath re-uses findModelEntry.
+	struct ModelTextures *modelTex = findModelEntry((u16)fileNum);
 
 	if (!modelTex) return NULL;
 
@@ -414,19 +457,23 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 			// pretend to be each other. When `id` is 0 (legacy callers
 			// with no model context), fall back to owner-mod filtering.
 			if (id != 0) {
-				for (int i = 0; i < numModels; ++i) {
-					if ((s16)id != modelTextures[i].fileNum) continue;
-					for (int j = 0; j < modelTextures[i].numTextures; ++j) {
-						if (modelTextures[i].textures[j].texnum == texnum) {
+				// Owner-filtered: fileNum alone is ambiguous across mods
+				// (2018..2025 are claimed by all three shipped mods), and
+				// taking the first match meant whichever mod was scanned first
+				// answered for every mod's model at that id.
+				struct ModelTextures *m = findModelEntryOwned((s16)id);
+
+				if (m) {
+					for (int j = 0; j < m->numTextures; ++j) {
+						if (m->textures[j].texnum == texnum) {
 							snprintf(dst, FS_MAXPATH, "%s/%s/%04x.%s",
-								modelTextures[i].basePath, modelTextures[i].modelName,
-								texnum, modelTextures[i].textures[j].extension);
+								m->basePath, m->modelName,
+								texnum, m->textures[j].extension);
 							return 0;
 						}
 					}
 					// Model matched but has no PNG at this texid; do not fall
 					// through to other models' dirs (that was the old bug).
-					break;
 				}
 			} else {
 				extern s32 g_TexModNum;

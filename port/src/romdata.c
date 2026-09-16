@@ -1851,36 +1851,164 @@ s32 romdataFileGetNumForName(const char *name)
 	return -1;
 }
 
+/*
+ * Resolve a file name in any mod, tagging the result with the mod that owns it.
+ *
+ * Raw file ids are mod-LOCAL - see the note on fileSlots - so the bare slot
+ * index this used to return named nothing on its own. Measured on the shipped
+ * set: id 2019 is mod_fojo/CheadCatherineZ, mod_aio_characters/CbondranchZ and
+ * mod_gex_characters/Cbaronsamedi2Z all at once, and 26 ids in all are claimed
+ * by more than one mod under different names. The owner now travels with the
+ * number as MOD_FILEID_MAKE(mod, id).
+ *
+ * Narrowing the result to s16 still yields exactly the id the old function
+ * returned: raw ids stop at ROMDATA_MAX_FILES (8192), so the low 16 bits are
+ * never negative and the tag and mod bits sit above them. A miss is still -1.
+ *
+ * The scan no longer stops at the first hit, but it still RETURNS the first
+ * hit. Which mod wins is a separate decision and callers depend on today's
+ * answer; the scan continues only so the ambiguity can be reported. The
+ * warning is the point of this change - the tag is what makes the answer
+ * checkable afterwards.
+ *
+ * What the warning catches: one name claimed by two or more mods, and the
+ * sharper case where the hit being returned matched only on the basename of a
+ * "mod:modname::files/Filename" slot while another mod matches the whole name
+ * exactly. Precedence here is mod scan order, not match quality, so that case
+ * is returning the weaker claim - it is reported, not silently reordered.
+ *
+ * What it cannot catch: fileSlots row 0 is mod 0's row and the row the global
+ * (vanilla) file table writes, so a vanilla name resolves as mod 0 and a
+ * vanilla/mod-0 collision is invisible from here. Nor does it notice two slots
+ * inside one mod row carrying the same name; the lower id still wins silently,
+ * as before.
+ */
+#define ANYMOD_AMBIG_MAX_REPORTS 16
+#define ANYMOD_AMBIG_MAX_LISTED  8
+
+static const char *romdataModLabel(s32 mod)
+{
+	if (mod >= 0 && mod < 64 && g_ModNames[mod][0]) {
+		return g_ModNames[mod];
+	}
+	if (mod >= 0 && mod < (s32)g_NumModDirs && modDirs[mod][0]) {
+		return modDirs[mod];
+	}
+	return "(unnamed)";
+}
+
 s32 romdataFileGetNumForNameAnyMod(const char *name)
 {
-	// printf("romdataFileGetNumForNameAnyMod: begin");
 	if (!name || !name[0]) {
-		// printf("romdataFileGetNumForNameAnyMod: %s != %s, ret -1", name, name[0]);
 		return -1;
 	}
 
-	for (s32 mod = 0; mod <= (s32)g_NumModDirs; ++mod) {
+	s32 firstMod = -1;
+	s32 firstId = -1;
+	bool firstExact = false;
+
+	s32 claimMod[ANYMOD_AMBIG_MAX_LISTED];
+	s32 claimId[ANYMOD_AMBIG_MAX_LISTED];
+	bool claimExact[ANYMOD_AMBIG_MAX_LISTED];
+	s32 numListed = 0;
+	s32 numClaims = 0;
+	s32 numExact = 0;
+
+	// Exclusive over g_NumModDirs. The inclusive bound read fileSlots one row
+	// past the last mod, which was off the end of the array before it grew.
+	for (s32 mod = 0; mod < (s32)g_NumModDirs; ++mod) {
 		for (s32 i = 0; i < ROMDATA_MAX_FILES; ++i) {
-			if (fileSlots[mod][i].name) {
-				// printf("romdataFileGetNumForNameAnyMod: checking %s (%x) in mod %x\n", fileSlots[mod][i].name, i, mod);
-				// Exact match
-				if (!strcmp(fileSlots[mod][i].name, name)) {
-					// printf("romdataFileGetNumForNameAnyMod: found %s (%x) in mod %s\n", fileSlots[mod][i].name, i, mod);
-					return i;
+			const char *slot = fileSlots[mod][i].name;
+
+			if (!slot) {
+				continue;
+			}
+
+			bool exact = !strcmp(slot, name);
+			bool basename = false;
+
+			if (!exact) {
+				// Mod files are stored as "mod:modname::files/Filename".
+				const char *slash = strrchr(slot, '/');
+				basename = slash && !strcmp(slash + 1, name);
+			}
+
+			if (!exact && !basename) {
+				continue;
+			}
+
+			if (firstMod < 0) {
+				firstMod = mod;
+				firstId = i;
+				firstExact = exact;
+			}
+
+			if (numListed < ANYMOD_AMBIG_MAX_LISTED) {
+				claimMod[numListed] = mod;
+				claimId[numListed] = i;
+				claimExact[numListed] = exact;
+				numListed++;
+			}
+
+			numClaims++;
+			if (exact) {
+				numExact++;
+			}
+
+			// One claim per mod: the old code returned here, so the lowest id
+			// in a row is still this row's answer.
+			break;
+		}
+	}
+
+	if (firstMod < 0) {
+		return -1;
+	}
+
+	if (numClaims > 1) {
+		// Capped so a pathological mod set cannot flood the log. 16 distinct
+		// ambiguous names is far past the point the set needs looking at.
+		static u32 reported = 0;
+
+		if (reported < ANYMOD_AMBIG_MAX_REPORTS) {
+			char list[512];
+			u32 used = 0;
+
+			reported++;
+
+			list[0] = '\0';
+
+			for (s32 c = 0; c < numListed; ++c) {
+				s32 n = snprintf(list + used, sizeof(list) - used,
+						"%smod %d '%s' id 0x%04x (%s)",
+						used ? ", " : "", claimMod[c], romdataModLabel(claimMod[c]),
+						claimId[c], claimExact[c] ? "exact" : "basename");
+
+				if (n < 0 || (u32)n >= sizeof(list) - used) {
+					break;
 				}
-				// Also match against basename for mod files
-				// (stored as "mod:modname::files/Filename")
-				const char *slash = strrchr(fileSlots[mod][i].name, '/');
-				// if (slash)
-				// 	printf("romdataFileGetNumForNameAnyMod: slash %s, slash+1 %s, name %s", slash, slash+1, name);
-				if (slash && !strcmp(slash + 1, name)) {
-					return i;
-				}
+
+				used += (u32)n;
+			}
+
+			sysLogPrintf(LOG_WARNING,
+					"romdataFileGetNumForNameAnyMod: '%s' is claimed by %d mods: %s%s. "
+					"Returning mod %d id 0x%04x (%s) - raw file ids are mod-local, so the "
+					"name alone does not pick an owner.",
+					name, numClaims, list, numClaims > numListed ? ", ..." : "",
+					firstMod, firstId, firstExact ? "exact" : "basename");
+
+			if (!firstExact && numExact > 0) {
+				sysLogPrintf(LOG_WARNING,
+						"romdataFileGetNumForNameAnyMod: '%s' resolved to a basename match in "
+						"mod %d while %d mod(s) match it exactly - precedence is mod scan "
+						"order, not match quality",
+						name, firstMod, numExact);
 			}
 		}
 	}
 
-	return -1;
+	return MOD_FILEID_MAKE(firstMod, firstId);
 }
 
 s32 romdataFileGetNumForNameInMod(const char *name, s32 modNum)

@@ -341,6 +341,74 @@
 
 #endif // PLATFORM_N64
 
+/**
+ * The two texture slots inside the repurposed G_NOOP (0xc0) command.
+ *
+ * THIS IS THE ONLY PLACE THE LAYOUT IS WRITTEN DOWN. Every reader and every
+ * writer in the engine and in the tools goes through these. If the measurement
+ * below ever turns out wrong for some asset, moving to different spare bits is
+ * an edit to the two shift macros and nothing else - not a hunt through six
+ * files that each open-coded a mask.
+ *
+ * A slot used to be 12 bits, wholly inside w1, which capped a texture id at
+ * 4095. The shipped mod set already wants 633 slots against the 496 that left
+ * available, so a slot is now 15 bits: the low 12 stay where they were and
+ * three more come from w0.
+ *
+ * WHERE THE w0 BITS COME FROM. w0 is cmd:8 | unk08:2 | unk0a:2 | unk0c:2 |
+ * unk0e:4 | unk12:4 | flags:7 | subcmd:3, so `flags` is w0 bits 9..3. Only
+ * flags bit 9 is read anywhere in the tree (tex.c tests w0 & 0x200); bits 8..3
+ * are read nowhere. Across all 31,148 0xc0 commands in vanilla ntsc/jpn/pal
+ * ROM data - 686 model files and 60 bgdata stages, extracted and tree-walked -
+ * `flags` takes exactly two values, 0 and 64, i.e. bit 9 or nothing. Bits 8..3
+ * are zero in 31,148 of 31,148, so vanilla data decodes byte-identically under
+ * the wider layout.
+ *
+ * w1 bits 31..24 are NOT spare: that is unk20, the RDP prim min-LOD, which
+ * tex.c reads on both subcmds and emits into a real G_SETPRIMCOLOR.
+ *
+ * This is the engine's own asset encoding, not a port concern, so it is not
+ * guarded by PLATFORM_N64. The N64 build decodes the same bytes.
+ *
+ * `slot` is 0 or 1 and is evaluated more than once; every call site passes a
+ * constant or a loop index.
+ */
+#define G_NOOP_TEXSLOT_W1_SHIFT(slot) ((slot) ? 12 : 0)
+#define G_NOOP_TEXSLOT_W0_SHIFT(slot) ((slot) ? 3 : 6)
+
+/* Widest id a slot can name. */
+#define G_NOOP_TEXSLOT_MAX 0x7fffu
+
+/* Read slot `slot` out of a command's two words. */
+#define G_NOOP_TEXSLOT(w0, w1, slot)                                          \
+    ((((unsigned int)(w1) >> G_NOOP_TEXSLOT_W1_SHIFT(slot)) & 0xfffu)         \
+        | ((((unsigned int)(w0) >> G_NOOP_TEXSLOT_W0_SHIFT(slot)) & 0x7u) << 12))
+
+/* The two halves of a write. Each returns the whole updated word, leaving
+ * every bit outside its own three or twelve alone, so a caller that needs to
+ * rewrite one slot of a command does:
+ *
+ *     w0 = G_NOOP_SET_TEXSLOT_W0(w0, slot, id);
+ *     w1 = G_NOOP_SET_TEXSLOT_W1(w1, slot, id);
+ *
+ * and must do both, or it writes the low 12 bits of a 15-bit id.
+ *
+ * Both are x ^ ((x ^ new) & mask) rather than the more obvious
+ * (x & ~mask) | new, because a Gfx word is uintptr_t and on a 64-bit host that
+ * is 64 bits wide. ~mask would be computed as a 32-bit unsigned, then
+ * zero-extended, and the write would silently clear the top half of the word.
+ * The XOR form never forms a complement, so it preserves a word of any width
+ * and works unchanged in the 32-bit host tools. */
+#define G_NOOP_SET_TEXSLOT_W1(w1, slot, id)                                   \
+    ((w1) ^ (((w1) ^ (((unsigned int)(id) & 0xfffu)                           \
+            << G_NOOP_TEXSLOT_W1_SHIFT(slot)))                                \
+        & (0xfffu << G_NOOP_TEXSLOT_W1_SHIFT(slot))))
+
+#define G_NOOP_SET_TEXSLOT_W0(w0, slot, id)                                   \
+    ((w0) ^ (((w0) ^ ((((unsigned int)(id) >> 12) & 0x7u)                     \
+            << G_NOOP_TEXSLOT_W0_SHIFT(slot)))                                \
+        & (0x7u << G_NOOP_TEXSLOT_W0_SHIFT(slot))))
+
 #define gSetTexInfoEXT(pkt, cmd, type, id, texnum, idmask)        \
 {                                                                 \
     Gfx *_g = (Gfx *)(pkt);                                       \

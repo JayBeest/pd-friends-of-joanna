@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <PR/ultratypes.h>
+#include "gbiex.h"
 #include "lib/rzip.h"
 #include "romdata.h"
 #include "fs.h"
@@ -222,12 +223,15 @@ struct modTexMap {
 // so port IDs are globally unique without any cross-mod build-time coordination.
 // Base sits above the highest known vanilla texture count across all PD ROM
 // variants (JPN has 3511 textures, so anything <3512 collides with vanilla
-// texids that appear in JPN-sourced models). Cap fits the 12-bit texnum
-// field in G_NOOP (max 0xfff = 4095).
+// texids that appear in JPN-sourced models).
 #define MOD_TEX_PORT_BASE 3600u
-// The cap the comment above describes, now written down where it can be
-// checked: a texnum is 12 bits, so 0xfff is the last port that can be named.
-#define MOD_TEX_PORT_MAX  0xfffu
+// The ceiling is not a policy this file chooses, it is whatever a texture slot
+// inside a G_NOOP display-list command can name. That used to be 12 bits, and
+// 4095 minus the base left 496 slots for every mod on disk put together, which
+// the shipped set already overran. A slot is now 15 bits - see gbiex.h for
+// where the extra three come from - so take the number from there rather than
+// restating it and letting the two drift.
+#define MOD_TEX_PORT_MAX  G_NOOP_TEXSLOT_MAX
 static u32 g_NextGlobalTexPort = MOD_TEX_PORT_BASE;
 
 static struct modTexMap g_ModTexMap[MOD_TEX_MAP_MAX_MODS];
@@ -934,7 +938,7 @@ static s32 romdataParseFileTable(u8 *data, u32 size, s32 ownerModIdx)
 		}
 
 		sysLogPrintf(LOG_NOTE, "PDFT v3 romTexMap: %u entries (mod=%d)", numTexMap, ownerModIdx);
-		PDFT("texmap table=fragment mod=%d entries=%u portBase=0x%03x nextPort=0x%03x",
+		PDFT("texmap table=fragment mod=%d entries=%u portBase=0x%04x nextPort=0x%04x",
 		     ownerModIdx, numTexMap, modBase, g_NextGlobalTexPort);
 	}
 

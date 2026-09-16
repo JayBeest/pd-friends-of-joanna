@@ -1565,6 +1565,12 @@ typedef struct {
 
 // xxxxxxxx 11223344 44555566 66666777
 // 88888888 99999999 9999aaaa aaaaaaaa
+//
+// NOTE: tile1/tile2 no longer describe a whole texture slot. A slot in this
+// repurposed G_NOOP is 15 bits: these twelve plus three taken from the low end
+// of `flags`, which nothing reads. Decode and encode through the
+// G_NOOP_TEXSLOT macros in src/include/gbiex.h - the fields are kept here only
+// because they describe the word's shape, and no code reads them by name.
 typedef struct {
 #ifdef PLATFORM_BIG_ENDIAN
 	unsigned int cmd:8;

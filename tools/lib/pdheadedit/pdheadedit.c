@@ -19,6 +19,12 @@
 #include <stdbool.h>
 #include <zlib.h>
 
+/* The G_NOOP texture-slot bit layout, taken from the engine rather than
+ * restated here. gbiex.h is pure #define with no includes of its own, so it
+ * costs nothing to pull into a standalone host tool, and it means this tool
+ * and the engine cannot disagree about where a texture id lives. */
+#include "../../../src/include/gbiex.h"
+
 /* ── Endian helpers ─────────────────────────────────────────────── */
 
 static inline uint16_t be16(const void *p) {
@@ -656,17 +662,18 @@ static void collect_ids_from_gdl(const uint8_t *gdl, uint32_t gdl_len,
 		uint8_t cmd = (uint8_t)((w0 >> 24) & 0xff);
 
 		if (cmd == 0xc0) {
-			uint16_t t0 = (uint16_t)(w1 & 0x0fff);
+			uint16_t t0 = (uint16_t)G_NOOP_TEXSLOT(w0, w1, 0);
 			add_unique_u16(ids, num_ids, max_ids, t0);
 
 			/* Repurposed G_NOOP dual-texture form: only subcmd==1 has t1.
 			 * subcmd is 3 bits (w0 bits 2..0), not 8. Masking 0xff folded in
 			 * w0 bits 7..3, which are the bottom of the `flags` field; that
 			 * read the same as 3 bits only because every 0xc0 command in
-			 * vanilla ROM data has flags of 0 or 64, leaving bits 8..3 clear. */
+			 * vanilla ROM data has flags of 0 or 64, leaving bits 8..3 clear -
+			 * and three of those bits now carry the top of slot 1. */
 			uint8_t subcmd = (uint8_t)(w0 & 0x7);
 			if (subcmd == 1) {
-				uint16_t t1 = (uint16_t)((w1 >> 12) & 0x0fff);
+				uint16_t t1 = (uint16_t)G_NOOP_TEXSLOT(w0, w1, 1);
 				add_unique_u16(ids, num_ids, max_ids, t1);
 			}
 		}

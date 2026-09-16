@@ -38,9 +38,16 @@
  * never silently shortened into a file that exists. */
 #define JOINMAX (PATHMAX + 64)
 
-/* romdata.c:227 and the 12 bits a texnum has inside a display list. */
+/* MOD_TEX_PORT_BASE in romdata.c, and the width a texture slot has inside a
+ * G_NOOP display-list command, which is where the ceiling actually comes from.
+ * Taken from gbiex.h rather than restated, so this tool cannot tell a mod
+ * author the set fits when the engine will disagree. That width was 12 bits,
+ * leaving 496 slots above the base for every mod on disk together; it is now
+ * 15, for 29168. */
+#include "../../src/include/gbiex.h"
+
 #define DEFAULT_SLOT_BASE 3600u
-#define DEFAULT_SLOT_MAX  4095u
+#define DEFAULT_SLOT_MAX  G_NOOP_TEXSLOT_MAX
 
 /* romdata.c:180. The table is global across every mounted mod, not per mod. */
 #define ROMSOURCES_MAX 8
@@ -419,7 +426,7 @@ static void checkSlotBudget(struct mod *mods, int n, uint32_t base, uint32_t cap
 		last = cursor + m->slotMax;
 		total += m->slotMax + 1;
 
-		printf("  %-24s %5u..%-5u  %4u slot(s)%s\n", m->label, cursor, last,
+		printf("  %-24s %5u..%-5u  %5u slot(s)%s\n", m->label, cursor, last,
 				m->slotMax + 1, last > cap ? "   PAST THE CEILING" : "");
 
 		if (last > cap) {
@@ -437,7 +444,7 @@ static void checkSlotBudget(struct mod *mods, int n, uint32_t base, uint32_t cap
 		cursor = last + 1;
 	}
 
-	printf("  %-24s %5u total demanded, %u available\n", "", total, cap - base + 1);
+	printf("  %-24s %20u total demanded, %u available\n", "", total, cap - base + 1);
 
 	if (total > cap - base + 1) {
 		finding(LVL_ERROR, "the set demands %u slots and there are %u. This is not an "

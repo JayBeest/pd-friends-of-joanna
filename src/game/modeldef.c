@@ -23,6 +23,7 @@
 #include "lib/main.h"
 #include "lib/model.h"
 #include "data.h"
+#include "gbiex.h"
 #include "types.h"
 
 #ifndef PLATFORM_N64
@@ -329,7 +330,7 @@ struct modeldefGdlStats {
 	u32 gateAccepted; // mapped ids whose owner matches modIdx (rewrite happened)
 };
 
-// Try to remap a single 12-bit texturenum field. Returns the value to write
+// Try to remap a single texturenum field. Returns the value to write
 // back into the gDL slot (same as `orig` when no remap was applied) and sets
 // `*didRemap` accordingly. Shared between the two slot positions in a G_NOOP
 // command so the source-id/port-id/ownership policy lives in exactly one spot.
@@ -389,10 +390,17 @@ static void modeldefRemapTexconfigsForMod(struct modeldef *modeldef, s32 modIdx)
 	}
 }
 
-// Remap the two 12-bit texturenum slots inside a single G_NOOP texture-binding
+// Remap the two texturenum slots inside a single G_NOOP texture-binding
 // command. Returns the number of slots that were rewritten. Shared between the
-// per-DL walker and any future caller to keep the bit-layout knowledge in one
-// place. `stats` may be NULL.
+// per-DL walker and any future caller so the ownership policy lives in one
+// place; the bit layout itself lives in gbiex.h. `stats` may be NULL.
+//
+// A slot now spans both words - twelve bits in w1 and three in w0 - so a
+// rewrite has to put back both. Reading w0 and w1 into locals and storing them
+// once at the end keeps that pairing impossible to half-do.
+//
+// The locals are uintptr_t, not u32: a Gfx word is uintptr_t, and on a 64-bit
+// host holding one in a u32 and storing it back clears the word's top half.
 static u32 modeldefRemapGdlCmd(Gfx *cmd, s32 modIdx, struct modeldefGdlStats *stats)
 {
 	if (cmd->texture.cmd != G_NOOP) {
@@ -402,25 +410,29 @@ static u32 modeldefRemapGdlCmd(Gfx *cmd, s32 modIdx, struct modeldefGdlStats *st
 	if (stats) ++stats->noops;
 
 	u32 remapped = 0;
-	u32 w1 = cmd->words.w1;
+	uintptr_t w0 = cmd->words.w0;
+	uintptr_t w1 = cmd->words.w1;
 	bool didRemap;
 
-	u32 t0 = w1 & 0xfff;
+	u32 t0 = G_NOOP_TEXSLOT(w0, w1, 0);
 	u32 n0 = modeldefRemapOneTexnumSlot(t0, modIdx, &didRemap, stats);
 	if (didRemap) {
-		w1 = (w1 & ~0xfffu) | (n0 & 0xfffu);
+		w0 = G_NOOP_SET_TEXSLOT_W0(w0, 0, n0);
+		w1 = G_NOOP_SET_TEXSLOT_W1(w1, 0, n0);
 		++remapped;
 	}
 
 	if (cmd->unkc0.subcmd == 1) {
-		u32 t1 = (w1 >> 12) & 0xfff;
+		u32 t1 = G_NOOP_TEXSLOT(w0, w1, 1);
 		u32 n1 = modeldefRemapOneTexnumSlot(t1, modIdx, &didRemap, stats);
 		if (didRemap) {
-			w1 = (w1 & ~(0xfffu << 12)) | ((n1 & 0xfffu) << 12);
+			w0 = G_NOOP_SET_TEXSLOT_W0(w0, 1, n1);
+			w1 = G_NOOP_SET_TEXSLOT_W1(w1, 1, n1);
 			++remapped;
 		}
 	}
 
+	cmd->words.w0 = w0;
 	cmd->words.w1 = w1;
 	return remapped;
 }
@@ -479,11 +491,12 @@ static void modeldefRemapGdlTexnumsForMod(struct modeldef *modeldef, s32 modIdx,
 					s_dumpedForCurrent = 0;
 				}
 				if (s_dumpedForCurrent < 200) {
-					u32 w1 = dl[i].words.w1;
-					u32 t0 = w1 & 0xfff;
-					u32 t1 = (dl[i].unkc0.subcmd == 1) ? (w1 >> 12) & 0xfff : 0xffff;
+					uintptr_t w0 = dl[i].words.w0;
+					uintptr_t w1 = dl[i].words.w1;
+					u32 t0 = G_NOOP_TEXSLOT(w0, w1, 0);
+					u32 t1 = (dl[i].unkc0.subcmd == 1) ? G_NOOP_TEXSLOT(w0, w1, 1) : 0xffff;
 					sysLogPrintf(LOG_NOTE,
-						"modeldefGdlDump: filenum=0x%08x cmd[%d] t0=0x%03x t1=0x%03x subcmd=%u",
+						"modeldefGdlDump: filenum=0x%08x cmd[%d] t0=0x%04x t1=0x%04x subcmd=%u",
 						filenum, i, t0, t1, dl[i].unkc0.subcmd);
 					++s_dumpedForCurrent;
 				}
@@ -635,8 +648,8 @@ s32 modeldefInspectTextureUsage(s32 fileid, u16 textureid1, u16 textureid2,
 			const u8 opcode = command->words.w0 >> 24;
 			if (opcode == G_NOOP) {
 				const u16 ids[2] = {
-					(u16)(command->words.w1 & 0xfff),
-					(u16)((command->words.w1 >> 12) & 0xfff),
+					(u16)G_NOOP_TEXSLOT(command->words.w0, command->words.w1, 0),
+					(u16)G_NOOP_TEXSLOT(command->words.w0, command->words.w1, 1),
 				};
 				const s32 slotCount = command->unkc0.subcmd == 1 ? 2 : 1;
 				selectedTextureActive = false;

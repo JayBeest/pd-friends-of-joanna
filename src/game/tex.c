@@ -869,7 +869,7 @@ s32 texLoadFromGdl(Gfx *instart, s32 gdlsizeinbytes, Gfx *outstart, struct texpo
 				spe8 = true;
 			}
 
-			texturenum = ingdl->words.w1 & 0xfff;
+			texturenum = G_NOOP_TEXSLOT(ingdl->words.w0, ingdl->words.w1, 0);
 			flag = ingdl->words.w0 & 0x200;
 
 			texLoadFromTextureNum(texturenum, pool);
@@ -925,7 +925,7 @@ s32 texLoadFromGdl(Gfx *instart, s32 gdlsizeinbytes, Gfx *outstart, struct texpo
 					outgdl = texHandleType0(outgdl, tex1, smode, tmode, offset, shifts, shiftt, min, flag);
 					break;
 				case 1:
-					texturenum2 = (ingdl->words.w1 >> 12) & 0xfff;
+					texturenum2 = G_NOOP_TEXSLOT(ingdl->words.w0, ingdl->words.w1, 1);
 					texLoadFromTextureNum(texturenum2, pool);
 					tex2 = texFindInPool(texturenum2, pool);
 

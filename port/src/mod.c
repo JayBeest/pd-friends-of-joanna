@@ -145,32 +145,47 @@ static s32 g_NumImportedAssets = 0;
 	}
 
 /*
- * Store a resolved file id into one of stagetableentry's five u16 file fields.
+ * Store a resolved file id into one of stagetableentry's five file fields.
  *
- * struct stagetableentry is shared with the decomp and those fields are u16, so
- * an owner tag cannot survive the store. Until the binding table and
- * stageGetFileId replace them, this is the exact point where a mod's ownership
- * of a stage file is thrown away - so say so loudly instead of truncating in
- * silence.
+ * The fields are u32 on both builds now, so the store no longer truncates and
+ * an owner tag survives it. NOTE WHAT THAT DOES AND DOES NOT FIX: nothing
+ * upstream puts an owner into the id in the first place.
+ * `modConfigParseFileValue` stores whatever `romdataFileGetNumForNameInMod`
+ * returns, and that is a RAW id - bounded `< ROMDATA_MAX_FILES`, never
+ * stamped - so the report below cannot fire today. Widening made the storage
+ * capable of carrying an owner; applying one is phase 1 of
+ * multi-mod-stage-loading-plan.md and belongs at the parse, not here.
+ *
+ * Until then a stage file id reaches `romdataFileLoad` untagged and its
+ * `modNum = g_ModNum` fallback resolves it against whichever mod is ACTIVE.
+ * That fallback is unchanged by the owner tag: MOD_FILEID_MOD answers -1 for
+ * an untagged id and the four fileSlots sites take the fallback on a negative,
+ * so the stage path behaves exactly as it did before the tag landed.
  *
  * The test is >= 0, not != 0. It used to be != 0 because mod 0 read the same
  * as an untagged id and so could not be reported; now an untagged id reads as
- * -1 and every owner including mod 0 can be. Nothing trips it today: the ids
- * reaching here come from modConfigParseFileValue, which resolves a name or a
- * number to a raw local id and never tags it. The check is here for when
- * something does.
+ * -1 and every owner including mod 0 can be. LOG_NOTE rather than LOG_ERROR,
+ * because with the field wide enough an owner arriving here is the thing
+ * phase 1 is FOR, not a loss to shout about.
  */
 #define SET_STAGE_FILEID(field, name, id) \
 	do { \
 		const s32 stageFileId = (s32)(id); \
 		if (MOD_FILEID_MOD(stageFileId) >= 0) { \
-			sysLogPrintf(LOG_ERROR, \
-					"modconfig: stage 0x%02x: " name " id 0x%08x is owned by mod %d, " \
-					"which a u16 stage field cannot carry - owner dropped", \
+			sysLogPrintf(LOG_NOTE, \
+					"modconfig: stage 0x%02x: " name " id 0x%08x is owned by mod %d", \
 					stagenum, stageFileId, MOD_FILEID_MOD(stageFileId)); \
 		} \
-		(field) = (u16)MOD_FILEID_RAW(stageFileId); \
+		(field) = stageFileId; \
 	} while (0)
+
+/* The point of the widening: a stage field has to be able to hold a tagged id,
+ * or romdataFileLoad falls back to g_ModNum and the stage loads whichever mod
+ * is active. This cannot be observed from a headless run - videoInit()
+ * (main.c:133) comes before modCacheAllConfigs() (pdmain.c:345) - so assert
+ * the storage instead. */
+_Static_assert(sizeof(((struct stagetableentry *)0)->setupfileid) >= sizeof(s32),
+		"a stage file id field must be wide enough for MOD_FILEID_MAKE's owner bits");
 
 #define PARSE_STAGE_STRING(sec, name, v) \
 	p = strParseToken(p, token, NULL); \
@@ -2019,9 +2034,9 @@ void modStageDumpOwnership(const char *when)
 
 		if (entry) {
 			// The five overloadable fields, as they stand in the stage table.
-			// They are u16, so any owner tag written into them is already gone;
-			// that is exactly what the resolution work has to replace.
-			MODSTAGE("fields stage=0x%02x setup=0x%04x mpsetup=0x%04x bg=0x%04x tiles=0x%04x pads=0x%04x",
+			// u32 since the widening, so print them wide enough to show an
+			// owner if one ever gets applied - %04x hid exactly those bits.
+			MODSTAGE("fields stage=0x%02x setup=0x%08x mpsetup=0x%08x bg=0x%08x tiles=0x%08x pads=0x%08x",
 					stagenum, entry->setupfileid, entry->mpsetupfileid,
 					entry->bgfileid, entry->tilefileid, entry->padsfileid);
 		}

@@ -3310,11 +3310,32 @@ struct stagetableentry {
   /*0x04*/ u8 light_width;
   /*0x05*/ u8 light_height;
   /*0x06*/ u16 unk06;
-  /*0x08*/ u16 bgfileid;
-  /*0x0a*/ u16 tilefileid;
-  /*0x0c*/ u16 padsfileid;
-  /*0x0e*/ u16 setupfileid;
-  /*0x10*/ u16 mpsetupfileid;
+  // The five file id fields are u32, not the u16 the ROM used, so a mod-tagged
+  // id survives being stored here. MOD_FILEID_MAKE puts the owning mod in bits
+  // 16+, and everything these fields feed already takes s32 and carries the
+  // tag: fileLoadToNew, fileLoadPartToAddr, romdataFileLoad. Storage was the
+  // only 16-bit step left, so an id went in tagged and came out belonging to
+  // whichever mod happened to be active - romdataFileLoad falls back to
+  // g_ModNum for an untagged id.
+  //
+  // Unconditional, like modelstate.fileid and gunctrl.hand/loadfilenum, and
+  // for the same measured reason: there is no build to protect. MATCHING is
+  // hard-wired 0 at CMakeLists.txt:174 and appears nowhere else in the build,
+  // and PLATFORM_N64 is defined by no CMakeLists, .cmake or Makefile in the
+  // tree. A #ifdef PLATFORM_N64 here would be a second, disagreeing answer to
+  // a question the file already answers a few thousand lines up.
+  //
+  // The offsets above are the N64 layout and are documentation, not a
+  // constraint: g_Stages is a hand-authored static table with a positional
+  // initialiser, walked by pointer increment. Nothing takes
+  // sizeof(struct stagetableentry), nothing memcpys or serialises g_Stages,
+  // and nothing reads it as bytes - checked before widening. sizeof goes
+  // 60 -> 68 and every offset from 0x14 on moves.
+  /*0x08*/ u32 bgfileid;
+  /*0x0a*/ u32 tilefileid;
+  /*0x0c*/ u32 padsfileid;
+  /*0x0e*/ u32 setupfileid;
+  /*0x10*/ u32 mpsetupfileid;
   /*0x14*/ f32 unk14;
   /*0x18*/ f32 unk18;
   /*0x1c*/ f32 unk1c;

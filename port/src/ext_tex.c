@@ -414,14 +414,27 @@ static const char *extTexOwnerName(s8 ownerMod)
 static const char *extTexOwnerDir(s8 ownerMod, char *buf, size_t bufsize)
 {
 	char rel[FS_MAXPATH + 1];
+	const char *src;
 
 	if (ownerMod < 0 || (size_t)ownerMod >= sizeof(modDirs) / sizeof(modDirs[0])
 			|| !modDirs[ownerMod][0]) {
-		return extTexPath;
+		src = extTexPath;
+	} else {
+		snprintf(rel, sizeof(rel), "%s/" EXT_TEX_DIRNAME, modDirs[ownerMod]);
+		src = fsFullPath(rel);
 	}
 
-	snprintf(rel, sizeof(rel), "%s/" EXT_TEX_DIRNAME, modDirs[ownerMod]);
-	strncpy(buf, fsFullPath(rel), bufsize - 1);
+	// Always through the caller's buffer, including the global case that could
+	// have just returned extTexPath, so there is one return path and callers
+	// need not care which branch ran.
+	//
+	// Callers format from their own buffer rather than from this return value.
+	// That is not style: gcc only reasons about -Wformat-truncation when the
+	// %s argument is an array whose size it can see. Once this function had
+	// more than one call site and stopped being inlined into all of them,
+	// formatting from the returned pointer silently dropped three real
+	// truncation warnings on these same paths. Measured, not guessed.
+	strncpy(buf, src, bufsize - 1);
 	buf[bufsize - 1] = '\0';
 
 	return buf;
@@ -499,9 +512,8 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 			// open .../data/ext_tex"), so every such override missed.
 			char ownerDir[FS_MAXPATH + 1];
 
-			snprintf(dst, FS_MAXPATH, "%s/%04x.%s",
-				extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir)),
-				texnum, tex->extension);
+			extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+			snprintf(dst, FS_MAXPATH, "%s/%04x.%s", ownerDir, texnum, tex->extension);
 			return 0;
 		}
 		case G_TEXTYPE_FONT: {
@@ -514,16 +526,26 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 				return 1;
 			}
 
+			// Same defect the general table had: extTexScanDir walks every
+			// mod's ext_tex directory and dispatches a 'f...' subdirectory to
+			// readFontTextures, which stamps ownerMod on what it registers -
+			// but the path was rebuilt from extTexPath, the global directory,
+			// whichever one the font came from. ownerMod names the right one.
+			char ownerDir[FS_MAXPATH + 1];
+
 			name = resolveFontname(fontId);
 
 			if (id & IDMASK_FONT_OUTLINE) {
 				tex = &fontOutlineExtTextures[fontId][texnum];
-				snprintf(dst, FS_MAXPATH, "%s/%s/" FONT_OUTLINES_DIR "/%02x.%s", extTexPath, name, texnum, tex->extension);
+				extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+				snprintf(dst, FS_MAXPATH, "%s/%s/" FONT_OUTLINES_DIR "/%02x.%s",
+					ownerDir, name, texnum, tex->extension);
 				return 0;
 			}
 
 			tex = &fontExtTextures[fontId][texnum];
-			snprintf(dst, FS_MAXPATH, "%s/%s/%02x.%s", extTexPath, name, texnum, tex->extension);
+			extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+			snprintf(dst, FS_MAXPATH, "%s/%s/%02x.%s", ownerDir, name, texnum, tex->extension);
 			return 0;
 		}
 		case G_TEXTYPE_MODEL: {

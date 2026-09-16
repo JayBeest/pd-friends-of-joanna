@@ -1882,11 +1882,37 @@ static void menuHandleJointPositionedForScale(s32 mtxindex, Mtxf *mtx)
 	// loaded is identified by the filenum encoded in curparams. Resolve
 	// back to a HeadsAndBodies entry by matching filenum.
 	if (hn < 0) {
-		u32 filenum = MENUMODELPARAMS_GET_FILENUM(g_CurMenuModelForScale->curparams);
-		if (filenum != 0 && filenum != 0xffff) {
+		// curparams is a menu-model-params word, not a file id - but a
+		// head-only preview carries one verbatim, because
+		// MENUMODELPARAMS_SET_FILENUM is the identity macro
+		// (src/include/constants.h) and mainmenu.c / mplayer/setup.c store
+		// g_HeadsAndBodies[].filenum through it unchanged, tag bit and mod
+		// bits included. The other reading of the same u32 packs MP_HEADNUM
+		// into bits 16-23 and MP_BODYNUM into 24-31, with
+		// MENUMODELPARAMS_HAS_MASTER_HEADBODY in bit 31; those are only live
+		// when the low 16 bits are 0xffff, which a real file id never is, so
+		// the sentinel test below is what keeps the two encodings apart.
+		//
+		// MENUMODELPARAMS_GET_FILENUM() masks to 0xffff. That is the right
+		// extractor for the sentinel test and the wrong one for the compare:
+		// g_HeadsAndBodies[].filenum is mod-TAGGED, so a masked value could
+		// never equal it and this loop never matched a mod head at all -
+		// modconfig 'scale' silently did nothing for every mod head in the
+		// picker. Compare the identity the way port/include/mod.h defines it,
+		// as (owner, raw), instead of at two different widths.
+		const u32 params = g_CurMenuModelForScale->curparams;
+		const u32 rawfilenum = MENUMODELPARAMS_GET_FILENUM(params);
+
+		if (rawfilenum != 0 && rawfilenum != 0xffff
+				&& !MENUMODELPARAMS_HAS_MASTER_HEADBODY(params)) {
+			const s32 wantmod = MOD_FILEID_MOD(params);
 			s32 i;
+
 			for (i = 0; i < g_NumHeadsAndBodies; i++) {
-				if (g_HeadsAndBodies[i].filenum == filenum) {
+				const u32 slot = g_HeadsAndBodies[i].filenum;
+
+				if ((u32)MOD_FILEID_RAW(slot) == rawfilenum
+						&& MOD_FILEID_MOD(slot) == wantmod) {
 					hn = i;
 					break;
 				}

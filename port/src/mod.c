@@ -2091,6 +2091,31 @@ s32 modTextureLoad(u16 num, void *dst, u32 dstSize)
 	// this gate, vanilla model loads would probe mod filetables and accidentally pick up
 	// mod overrides for unrelated texture IDs.
 	if (g_TexModNum < 0) {
+		// Before the owner tag this was unreachable for a vanilla model load:
+		// MOD_FILEID_MOD of a plain id was 0, so vanilla arrived here claiming
+		// to be mod 0 and pulled mod 0's overrides. Anything that was relying
+		// on that now stops getting them, with nothing to see. Count the skips
+		// and name the first few distinct texture numbers they happen to, so a
+		// diagnostic boot can say how much content was leaning on the merge.
+		{
+			static u32 skips = 0;
+			static u32 named = 0;
+			static u8 seen[512]; // one bit per texture number below 4096
+			skips++;
+			if (num < 4096) {
+				const u32 byte = num >> 3;
+				const u8 bit = (u8)(1u << (num & 7));
+				if ((seen[byte] & bit) == 0) {
+					seen[byte] |= bit;
+					if (named < 32) {
+						named++;
+						sysLogPrintf(LOG_NOTE,
+								"modTextureLoad: no mod context, not probing mod filetables for "
+								"tex 0x%04x (skip %u, distinct %u)", num, skips, named);
+					}
+				}
+			}
+		}
 		return 0;
 	}
 

@@ -32,7 +32,19 @@ static char gexModDir[FS_MAXPATH + 1];          // GoldenEye X Mod
 
 u32 g_NumModDirs = 0;
 
-u32 g_ModNum = 0; // ie the boot mod
+// s32, not u32: src/include/data.h has always declared this `extern s32`, so
+// every TU but this one already read it as signed, and port/src/mod.c leans on
+// that - modSwitch() assigns modNumFromStage(), which returns -1 for a stage no
+// mod claims, and repairs it with `if (g_ModNum < 0)`. Only fs.c saw the u32,
+// which made the `g_ModNum >= 0` half of fsGetModDir()'s guard vacuously true;
+// the guard survived a -1 solely because the other half then compared unsigned
+// and 0xffffffff is not < 64.
+//
+// The two remaining unguarded uses in this file are modDirs[g_ModNum] in
+// fsModFullPath(); they were out of bounds for a negative value under either
+// type. modSwitch() repairs g_ModNum before it returns, and nothing between
+// the assignment and the repair reaches fs.c, so neither is live today.
+s32 g_ModNum = 0; // ie the boot mod
 
 static s32 fsPathIsWritable(const char *path)
 {
@@ -299,6 +311,8 @@ const char *fsGetModDir(void)
 {
 	// `<=` admitted modDirs[64] on a 64-row array; g_ModNum is a 0-based
 	// modDirs subscript, so the last valid value is one below the count.
+	// The `>= 0` half only started meaning anything once g_ModNum was defined
+	// s32 here to match the `extern s32` every other TU already saw.
 	if (g_ModNum >= 0 && g_ModNum < (s32)(sizeof(modDirs)/sizeof(modDirs[0]))) {
 		if (modDirs[g_ModNum][0]) {
 			return modDirs[g_ModNum];

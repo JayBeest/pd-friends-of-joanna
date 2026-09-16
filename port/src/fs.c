@@ -94,7 +94,10 @@ static inline const bool fsModFullPath(char *pathBuf, const char *relPath)
 	// and return false
 	// sysLogPrintf(LOG_NOTE, "fsModFullPath: relPath=%s\n", relPath);
 	if (!strstr(relPath, "textures") && !strstr(relPath, "files") && !strstr(relPath, "modconfig.txt") && !strstr(relPath, "sequences")) {
-		printf("fsModFullPath ret false: relPath=%s\n", relPath);
+		// Bare printf on the common path: this fires for every lookup that is
+		// not a mod asset, which is most of them, and unlike the sysLogPrintf
+		// calls around it nothing filters it. Same level as its siblings now.
+		sysLogPrintf(LOG_NOTE, "fsModFullPath: %s is not a mod asset path", relPath);
 		return false;
 	}
 	// sysLogPrintf(LOG_NOTE, "fsModFullPath: relPath=%s. Switch on g_ModNum\n", relPath, g_ModNum);

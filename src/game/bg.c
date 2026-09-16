@@ -4499,11 +4499,13 @@ bool bgTestHitInVtxBatch(struct coord *arg0, struct coord *arg1, struct coord *a
 												texturenum = *(s16 *) PHYS_TO_K0(tmp);
 											}
 
-#ifdef AVOID_UB
-											if (batch->type == VTXBATCHTYPE_XLU && texturenum >= 0 && g_Textures[texturenum].surfacetype == SURFACETYPE_DEFAULT) {
-#else
-											if (batch->type == VTXBATCHTYPE_XLU && g_Textures[texturenum].surfacetype == SURFACETYPE_DEFAULT) {
-#endif
+											// texturenum is read back out of the display list above, and level
+											// geometry now resolves mod-owned textures, so it can be a mod texture
+											// slot at 4096 or above; the SETTIMG walk also leaves it -1 when the
+											// batch has no texture at all. g_Textures[] covers vanilla only, so
+											// anything outside it has no vanilla surfacetype and the hit stands.
+											if (batch->type == VTXBATCHTYPE_XLU && texturenum >= 0 && texturenum < NUM_TEXTURES
+													&& g_Textures[texturenum].surfacetype == SURFACETYPE_DEFAULT) {
 												hit = false;
 											}
 

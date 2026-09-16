@@ -434,6 +434,20 @@ static char *modConfigParseTexture(char *p, char *token, s32 modnum) {
 	sysLogPrintf(LOG_ERROR, "modconfigParseTexture: parsing texture block: %s, p: %s", token, p);
 	if (sscanf(p, "%x", &texid) == 1) {
 		sysLogPrintf(LOG_ERROR, "modconfigParseTexture: found texture id: %d", texid);
+
+		// texid is whatever hex the mod's modconfig.txt asked for, and mod
+		// texture slots are now based at 4096, past the end of g_Textures[],
+		// which is sized for the NUM_TEXTURES vanilla entries and nothing
+		// else. Writing through an unchecked id is a heap write off the end
+		// of that table. A non-vanilla texture has no vanilla surface config
+		// to set, so the block is parsed to its closing brace as usual and
+		// the assignments are simply skipped.
+		bool isvanillatex = texid >= 0 && texid < NUM_TEXTURES;
+
+		if (!isvanillatex) {
+			sysLogPrintf(LOG_ERROR, "modconfig: texture 0x%x is outside the vanilla texture table; surface types ignored", texid);
+		}
+
 		while (1) {
 
 			p = strParseToken(p, token, NULL);
@@ -444,11 +458,25 @@ static char *modConfigParseTexture(char *p, char *token, s32 modnum) {
 			if (strncmp(token, "surfacetype", 11) == 0) {
 				s32 val = 0;
 				sscanf(token + 11, "%d", &val);
-				g_Textures[texid].surfacetype = val;
+
+				// Both fields are 4 bits wide, so any value fits, but
+				// g_SurfaceTypes[] has only 15 entries and several of its
+				// readers index it without a range test. 15 is storable and
+				// out of range, and only a mod can put it there.
+				if (isvanillatex && val >= 0 && val < ARRAYCOUNT(g_SurfaceTypes)) {
+					g_Textures[texid].surfacetype = val;
+				} else if (isvanillatex) {
+					sysLogPrintf(LOG_ERROR, "modconfig: texture 0x%x: surfacetype %d out of range", texid, val);
+				}
 			} else if (strncmp(token, "soundsurfacetype", 16) == 0) {
 				s32 val = 0;
 				sscanf(token + 16, "%d", &val);
-				g_Textures[texid].soundsurfacetype = val;
+
+				if (isvanillatex && val >= 0 && val < ARRAYCOUNT(g_SurfaceTypes)) {
+					g_Textures[texid].soundsurfacetype = val;
+				} else if (isvanillatex) {
+					sysLogPrintf(LOG_ERROR, "modconfig: texture 0x%x: soundsurfacetype %d out of range", texid, val);
+				}
 			}
 		}
 	}

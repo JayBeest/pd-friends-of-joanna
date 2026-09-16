@@ -4852,8 +4852,12 @@ void chrHit(struct shotdata *shotdata, struct hit *hit)
 				struct surfacetype *type;
 				s32 index;
 
-				// Create decal depending on the hat's surface type
-				if (hit->hitthing.texturenum < 0) {
+				// Create decal depending on the hat's surface type.
+				// The upper bound matches the body-hit case above: a texture
+				// number that is not a vanilla one has no entry in the
+				// vanilla-sized g_Textures[], and mod texture slots based at
+				// 4096 now reach hit records.
+				if (hit->hitthing.texturenum < 0 || hit->hitthing.texturenum >= NUM_TEXTURES) {
 					type = g_SurfaceTypes[0];
 				} else {
 					type = g_SurfaceTypes[g_Textures[hit->hitthing.texturenum].surfacetype];

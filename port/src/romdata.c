@@ -221,10 +221,24 @@ struct modTexMap {
 // Per-mod texmap allocations use mod-LOCAL slot indices in the fragment.
 // The engine adds this running base to each stored portTexId at parse time
 // so port IDs are globally unique without any cross-mod build-time coordination.
-// Base sits above the highest known vanilla texture count across all PD ROM
-// variants (JPN has 3511 textures, so anything <3512 collides with vanilla
-// texids that appear in JPN-sourced models).
-#define MOD_TEX_PORT_BASE 3600u
+//
+// The base is 4096 because that is one past the largest id a 12-bit texture
+// slot could encode, not because it is a round number. Every id a mod authored
+// under the old format is therefore below it and every id the loader assigns is
+// at or above it, which makes "authored" and "assigned" tell themselves apart by
+// value alone. That distinction is load-bearing: modTextureResolve() in mod.c
+// treats any id >= NUM_TEXTURES as possibly-a-port and runs it through
+// modTexMapReverseLookup, so while a mod's own local ids could share the
+// 3503..4095 range with some mod's port window, a local id could be
+// reinterpreted as a port and resolve to the wrong texture. That was not
+// hypothetical - mod_aio_characters names local ids up to 0x0ffd, and all 90 of
+// its texmap entries sit in that window. It was kept apart only by where each
+// mod's window happened to land, and widening the slots moves the windows.
+//
+// It also still clears vanilla: JPN has 3511 textures, the most of any PD ROM
+// variant, so anything below 3512 would collide with vanilla texids appearing
+// in JPN-sourced models.
+#define MOD_TEX_PORT_BASE 4096u
 // The ceiling is not a policy this file chooses, it is whatever a texture slot
 // inside a G_NOOP display-list command can name. That used to be 12 bits, and
 // 4095 minus the base left 496 slots for every mod on disk put together, which

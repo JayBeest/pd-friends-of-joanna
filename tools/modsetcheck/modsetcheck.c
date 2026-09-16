@@ -42,11 +42,15 @@
  * G_NOOP display-list command, which is where the ceiling actually comes from.
  * Taken from gbiex.h rather than restated, so this tool cannot tell a mod
  * author the set fits when the engine will disagree. That width was 12 bits,
- * leaving 496 slots above the base for every mod on disk together; it is now
- * 15, for 29168. */
+ * with a base of 3600, leaving 496 slots above it for every mod on disk
+ * together; it is now 15 bits based at 4096, for 28672.
+ *
+ * 4096 is one past the largest id a 12-bit slot could encode, so it is the
+ * line between an id a mod authored and an id the loader assigned. See the
+ * comment on MOD_TEX_PORT_BASE for why that line has to exist. */
 #include "../../src/include/gbiex.h"
 
-#define DEFAULT_SLOT_BASE 3600u
+#define DEFAULT_SLOT_BASE 4096u
 #define DEFAULT_SLOT_MAX  G_NOOP_TEXSLOT_MAX
 
 /* romdata.c:180. The table is global across every mounted mod, not per mod. */
@@ -608,8 +612,9 @@ static void usage(FILE *out)
 		"Reads each dir's filetable.dat and modconfig.txt - the artifacts that\n"
 		"actually ship, not the manifests they were built from.\n"
 		"\n"
-		"  --base N   the first texture slot the first mod is given\n"
-		"  --max N    the highest texture slot available to the set\n");
+		"  --base N   the first texture slot the first mod is given (default %u)\n"
+		"  --max N    the highest texture slot available to the set (default %u)\n",
+		DEFAULT_SLOT_BASE, DEFAULT_SLOT_MAX);
 }
 
 int main(int argc, char **argv)

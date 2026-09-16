@@ -922,18 +922,27 @@ s32 extTexInit()
 		sysLogPrintf(LOG_NOTE, "extTexInit: modDirs[%d]='%s'", i, modDirs[i]);
 	}
 
+	// ownerMod alongside texnum: these tables are static, so an entry nothing
+	// ever registered reads back 0 from BSS, and 0 is a real mod index - the
+	// first one in modDirs[]. Everything that reads ownerMod today checks
+	// texnum >= 0 first and so never sees it, but extTexOwnerDir turns ownerMod
+	// into a directory, and "unknown" has to be -1 for that to mean the global
+	// ext_tex dir rather than modDirs[0].
 	for (int i = 0; i < MAX_EXT_TEX; ++i) {
 		extTextures[i].texnum = -1;
 		extTextures[i].texdata = 0;
+		extTextures[i].ownerMod = -1;
 	}
 
 	for (int i = 0; i < NUM_FONTS; ++i) {
 		for (int j = 0; j < NCHARS; ++j) {
 			fontExtTextures[i][j].texnum = -1;
 			fontExtTextures[i][j].texdata = 0;
+			fontExtTextures[i][j].ownerMod = -1;
 
 			fontOutlineExtTextures[i][j].texnum = -1;
 			fontOutlineExtTextures[i][j].texdata = 0;
+			fontOutlineExtTextures[i][j].ownerMod = -1;
 		}
 	}
 

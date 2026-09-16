@@ -151,13 +151,19 @@ static s32 g_NumImportedAssets = 0;
  * an owner tag cannot survive the store. Until the binding table and
  * stageGetFileId replace them, this is the exact point where a mod's ownership
  * of a stage file is thrown away - so say so loudly instead of truncating in
- * silence. Owner 0 is a real owner but is indistinguishable from an untagged
- * id here, so it cannot be reported.
+ * silence.
+ *
+ * The test is >= 0, not != 0. It used to be != 0 because mod 0 read the same
+ * as an untagged id and so could not be reported; now an untagged id reads as
+ * -1 and every owner including mod 0 can be. Nothing trips it today: the ids
+ * reaching here come from modConfigParseFileValue, which resolves a name or a
+ * number to a raw local id and never tags it. The check is here for when
+ * something does.
  */
 #define SET_STAGE_FILEID(field, name, id) \
 	do { \
 		const s32 stageFileId = (s32)(id); \
-		if (MOD_FILEID_MOD(stageFileId) != 0) { \
+		if (MOD_FILEID_MOD(stageFileId) >= 0) { \
 			sysLogPrintf(LOG_ERROR, \
 					"modconfig: stage 0x%02x: " name " id 0x%08x is owned by mod %d, " \
 					"which a u16 stage field cannot carry - owner dropped", \

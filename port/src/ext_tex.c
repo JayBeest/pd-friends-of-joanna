@@ -23,8 +23,9 @@ static char extTexPath[FS_MAXPATH + 1];
 // ids run 0..32767 and mod-assigned slots start at 4096; sizing to the whole
 // range is what keeps a PNG override addressable at any slot a mod can get.
 // The shipped set (mod_aio_characters, mod_fojo, mod_gex_characters) wants 633
-// slots and lands at 4096..4728, so 8192 breaks nothing today - it was simply
-// the lowest ceiling left in the system once the encoding widened.
+// slots and lands at 4096..4728, so the range is far wider than today needs.
+// It is sized to the encoding rather than to the current set, so no mod can be
+// handed a slot this table cannot address.
 //
 // Cost is measured, not estimated. sizeof(struct ExtTexture) is 24 (22 bytes of
 // payload, 2 of tail padding - already the minimum for an 8-byte-aligned
@@ -38,10 +39,17 @@ static char extTexPath[FS_MAXPATH + 1];
 // 0.06% of a 60fps frame, which is why this stays a flat array instead of
 // becoming a map.
 //
-// Must stay <= G_NOOP_TEXSLOT_MAX + 1 in src/include/gbiex.h, which is the
-// single source of truth for the encoding's width. That macro is not on this
-// branch yet; tie the two together once both branches are on main.
-#define MAX_EXT_TEX 32768
+// Tied to G_NOOP_TEXSLOT_MAX in src/include/gbiex.h, the single source of truth
+// for the encoding's width, so widening the slot field resizes this table with
+// it and the two cannot drift apart.
+//
+// Cast back to s32 because the macro is 0x7fffu and every texnum in this file
+// is signed. Each `texnum >= MAX_EXT_TEX` test today is paired with a
+// `texnum < 0` test that short-circuits ahead of it, so an unsigned macro
+// would not change any current result; the cast is so that the next such test
+// written without the companion still rejects a negative index instead of
+// promoting it to a huge unsigned one.
+#define MAX_EXT_TEX ((s32)(G_NOOP_TEXSLOT_MAX + 1))
 #define NUM_FONTS 5
 const u16 IDMASK_FONT_OUTLINE = MASK_FONT_OUTLINE << 8;
 
@@ -60,6 +68,12 @@ struct ModelTextures
 {
 	s16 fileNum;
 	s16 numTextures;
+	// The mod whose ext_tex/ directory this entry was scanned out of. Stated
+	// once here rather than re-derived from textures[0], which was only right
+	// because a directory scan stamps one owner across everything it reads,
+	// and which had no answer at all for a directory holding no PNGs.
+	// Lands in existing tail padding - sizeof is unchanged, measured.
+	s8 ownerMod;
 	struct ExtTexture *textures;
 	char basePath[FS_MAXPATH + 1];
 	char modelName[64];
@@ -115,7 +129,7 @@ s32 fileInfo(const char *filename, s32 *texNum, char extension[5])
  */
 static s8 modelEntryOwner(const struct ModelTextures *m)
 {
-	return (m && m->numTextures > 0 && m->textures) ? m->textures[0].ownerMod : -1;
+	return m ? m->ownerMod : -1;
 }
 
 /**
@@ -154,6 +168,48 @@ static struct ModelTextures *findModelEntry(u16 fileNum)
 	}
 
 	return first;
+}
+
+/**
+ * Find the model entry for a file number, owned by the mod being rendered.
+ *
+ * Strict counterpart to findModelEntry, for the callers where another mod's
+ * entry is a wrong answer rather than a second-best one.
+ *
+ * The keys genuinely collide. Every mod's inserted files start at id 2018 and
+ * count up from there, so the three shipped mods each claim 2018..2025 with
+ * different models: fileNum 2019 is mod_fojo's CheadCatherineZ, and also
+ * mod_aio_characters' CbondranchZ, and also mod_gex_characters'
+ * Cbaronsamedi2Z. romdataFileGetNumForNameAnyMod, which is what stamps
+ * fileNum onto an entry, scans every mod and discards which one it found in.
+ *
+ * findModelEntry falls back to the first name match, and for a texture load
+ * that is right - something beats nothing. For the three queries below it is
+ * wrong, because they are gates. modeldefRemapOneTexnumSlot skips a legitimate
+ * source->port remap when extTexModelHasEntryForTexid says yes, so another
+ * mod's entry answering for ours suppresses the remap outright.
+ *
+ * Only filters when both owners are known: g_TexModNum is -1 outside a
+ * mod-owned model's load, and ownerMod is -1 for the global ext_tex directory.
+ */
+static struct ModelTextures *findModelEntryOwned(s16 fileNum)
+{
+	extern s32 g_TexModNum;
+	int i;
+
+	for (i = 0; i < numModels; ++i) {
+		if (modelTextures[i].fileNum != fileNum) {
+			continue;
+		}
+
+		s8 owner = modelEntryOwner(&modelTextures[i]);
+
+		if (owner < 0 || g_TexModNum < 0 || owner == g_TexModNum) {
+			return &modelTextures[i];
+		}
+	}
+
+	return NULL;
 }
 
 struct ExtTexture *lookupModelTex(u16 fileNum, s32 texNum)
@@ -200,10 +256,23 @@ struct ExtTexture *getExtTexture(u8 type, u16 id, s32 texnum)
 		case G_TEXTYPE_MODEL:
 			return lookupModelTex(id, texnum);
 		case G_TEXTYPE_FONT: {
-			if (id & IDMASK_FONT_OUTLINE)
-				return &fontOutlineExtTextures[id & ~IDMASK_FONT_OUTLINE][texnum];
+			// Both indices arrive straight off a display-list packet, which
+			// can name a 15-bit id and a 15-bit texnum, against a table that
+			// is NUM_FONTS (5) rows of NCHARS (94 on NTSC, 135 on PAL). The
+			// top bit of id is IDMASK_FONT_OUTLINE, so the row index is the
+			// masked value and not the raw one. Same guard shape as
+			// G_TEXTYPE_GENERAL above.
+			u16 fontId = id & ~IDMASK_FONT_OUTLINE;
 
-			return &fontExtTextures[id][texnum];
+			if (fontId >= NUM_FONTS || texnum < 0 || texnum >= NCHARS) {
+				return NULL;
+			}
+
+			if (id & IDMASK_FONT_OUTLINE) {
+				return &fontOutlineExtTextures[fontId][texnum];
+			}
+
+			return &fontExtTextures[fontId][texnum];
 		}
 		default:
 			sysLogPrintf(LOG_WARNING, "Invalid Texture type: %d, texnum: %04x", type, texnum);
@@ -229,55 +298,56 @@ s8 extTexGetOwnerMod(u8 type, u16 id, s32 texnum)
 bool extTexModelHasEntryForTexid(s16 fileNum, s32 texNum)
 {
 	if (fileNum <= 0 || !modelTextures) return false;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum != fileNum) continue;
-		for (int j = 0; j < modelTextures[i].numTextures; ++j) {
-			if (modelTextures[i].textures[j].texnum == texNum) return true;
-		}
-		return false;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	if (!m) return false;
+
+	for (int j = 0; j < m->numTextures; ++j) {
+		if (m->textures[j].texnum == texNum) return true;
 	}
+
 	return false;
 }
 
 s32 extTexModelGetTextureCount(s16 fileNum)
 {
 	if (fileNum <= 0 || !modelTextures) return 0;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum == fileNum) return modelTextures[i].numTextures;
-	}
-	return 0;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	return m ? m->numTextures : 0;
 }
 
 s32 extTexModelGetTextureInfo(s16 fileNum, s32 index, s32 *texNum, s8 *ownerMod, u16 *width, u16 *height)
 {
 	if (fileNum <= 0 || !modelTextures || index < 0) return false;
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum != fileNum) continue;
-		if (index >= modelTextures[i].numTextures) return false;
-		struct ExtTexture *tex = &modelTextures[i].textures[index];
-		if (texNum) *texNum = tex->texnum;
-		if (ownerMod) *ownerMod = tex->ownerMod;
-		if (width) *width = tex->width;
-		if (height) *height = tex->height;
-		return true;
-	}
-	return false;
+
+	struct ModelTextures *m = findModelEntryOwned(fileNum);
+
+	if (!m || index >= m->numTextures) return false;
+
+	struct ExtTexture *tex = &m->textures[index];
+	if (texNum) *texNum = tex->texnum;
+	if (ownerMod) *ownerMod = tex->ownerMod;
+	if (width) *width = tex->width;
+	if (height) *height = tex->height;
+
+	return true;
 }
 
 const u8 *extTexModelLoadPixels(s16 fileNum, s32 texNum, u32 *width, u32 *height)
 {
 	struct ExtTexture *tex = lookupModelTex((u16)fileNum, texNum);
-	struct ModelTextures *modelTex = NULL;
 	char path[FS_MAXPATH + 1];
 
 	if (!tex) return NULL;
 
-	for (int i = 0; i < numModels; ++i) {
-		if (modelTextures[i].fileNum == fileNum) {
-			modelTex = &modelTextures[i];
-			break;
-		}
-	}
+	// The entry lookupModelTex chose, not the first name match: fileNum is
+	// ambiguous across mods, so a first-match loop here could hand back
+	// another mod's basePath for this mod's texture. Same reason the
+	// G_TEXTYPE_MODEL case in getTexPath re-uses findModelEntry.
+	struct ModelTextures *modelTex = findModelEntry((u16)fileNum);
 
 	if (!modelTex) return NULL;
 
@@ -311,6 +381,71 @@ u8 extTexGetDimensions(u8 type, u16 id, s32 texnum, u16 *width, u16 *height)
 	return 0;
 }
 
+/**
+ * Name a registration source for a log line.
+ *
+ * The mod directory's basename, so "$B/mods/mod_fojo" reads as "mod_fojo".
+ * ownerMod -1 is the global ext_tex directory.
+ */
+static const char *extTexOwnerName(s8 ownerMod)
+{
+	if (ownerMod < 0 || (size_t)ownerMod >= sizeof(modDirs) / sizeof(modDirs[0])
+			|| !modDirs[ownerMod][0]) {
+		return "the global ext_tex dir";
+	}
+
+	const char *slash = strrchr(modDirs[ownerMod], '/');
+
+	return slash ? slash + 1 : modDirs[ownerMod];
+}
+
+/**
+ * The ext_tex directory a flat-table entry was registered from.
+ *
+ * struct ExtTexture carries no path and cannot afford one: it is 24 bytes x
+ * MAX_EXT_TEX = 768 KiB of BSS, and FS_MAXPATH is 1024, so a path per entry
+ * would be 32 MiB. It does not need one. ownerMod already is the index into
+ * modDirs[] - setTex stamps it from g_ExtTexCurrentModIndex, which extTexInit
+ * drives over that same 0-based array - so the directory is recoverable from
+ * the byte that is already there.
+ *
+ * ownerMod -1 is the global basedir/ext_tex, which extTexInit resolved once
+ * into extTexPath. Otherwise this rebuilds the mod's path the way extTexInit
+ * built it for the scan, including the fsFullPath pass that expands the $B
+ * placeholder modDirs[] entries are stored with.
+ *
+ * Writes into `buf` and returns it, or returns extTexPath when the owner names
+ * no usable mod directory.
+ */
+static const char *extTexOwnerDir(s8 ownerMod, char *buf, size_t bufsize)
+{
+	char rel[FS_MAXPATH + 1];
+	const char *src;
+
+	if (ownerMod < 0 || (size_t)ownerMod >= sizeof(modDirs) / sizeof(modDirs[0])
+			|| !modDirs[ownerMod][0]) {
+		src = extTexPath;
+	} else {
+		snprintf(rel, sizeof(rel), "%s/" EXT_TEX_DIRNAME, modDirs[ownerMod]);
+		src = fsFullPath(rel);
+	}
+
+	// Always through the caller's buffer, including the global case that could
+	// have just returned extTexPath, so there is one return path and callers
+	// need not care which branch ran.
+	//
+	// Callers format from their own buffer rather than from this return value.
+	// That is not style: gcc only reasons about -Wformat-truncation when the
+	// %s argument is an array whose size it can see. Once this function had
+	// more than one call site and stopped being inlined into all of them,
+	// formatting from the returned pointer silently dropped three real
+	// truncation warnings on these same paths. Measured, not guessed.
+	strncpy(buf, src, bufsize - 1);
+	buf[bufsize - 1] = '\0';
+
+	return buf;
+}
+
 char *resolveFontname(const u8 fontId)
 {
 	switch (fontId) {
@@ -341,19 +476,23 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 			// pretend to be each other. When `id` is 0 (legacy callers
 			// with no model context), fall back to owner-mod filtering.
 			if (id != 0) {
-				for (int i = 0; i < numModels; ++i) {
-					if ((s16)id != modelTextures[i].fileNum) continue;
-					for (int j = 0; j < modelTextures[i].numTextures; ++j) {
-						if (modelTextures[i].textures[j].texnum == texnum) {
+				// Owner-filtered: fileNum alone is ambiguous across mods
+				// (2018..2025 are claimed by all three shipped mods), and
+				// taking the first match meant whichever mod was scanned first
+				// answered for every mod's model at that id.
+				struct ModelTextures *m = findModelEntryOwned((s16)id);
+
+				if (m) {
+					for (int j = 0; j < m->numTextures; ++j) {
+						if (m->textures[j].texnum == texnum) {
 							snprintf(dst, FS_MAXPATH, "%s/%s/%04x.%s",
-								modelTextures[i].basePath, modelTextures[i].modelName,
-								texnum, modelTextures[i].textures[j].extension);
+								m->basePath, m->modelName,
+								texnum, m->textures[j].extension);
 							return 0;
 						}
 					}
 					// Model matched but has no PNG at this texid; do not fall
 					// through to other models' dirs (that was the old bug).
-					break;
 				}
 			} else {
 				extern s32 g_TexModNum;
@@ -369,20 +508,62 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 					}
 				}
 			}
-			snprintf(dst, FS_MAXPATH, "%s/%04x.%s", extTexPath, texnum, tex->extension);
+			// Last resort: a loose PNG registered straight into the flat
+			// table. extTexScanDir registers those from every ext_tex
+			// directory it walks, including each mod's own, and this used to
+			// build the path from extTexPath unconditionally - so a mod
+			// shipping mods/<mod>/ext_tex/1234.png got a path under
+			// basedir/ext_tex and loaded nothing. On this install that global
+			// directory does not even exist (pd.log: "extTexScanDir: FAILED to
+			// open .../data/ext_tex"), so every such override missed.
+			// Nothing registered this slot, so extension is still the empty
+			// BSS string and there is no file to name. Formatting anyway
+			// produced a path ending in a bare '.' and reported success, and
+			// extTexLoad logged that path at NOTE before stbi_load failed on
+			// it. Unreachable through the only caller - gfx_pc reaches
+			// extTexLoad solely inside its extTexExists branch, which is this
+			// same test - so this is here to keep an unregistered slot an
+			// honest failure rather than a plausible-looking wrong answer.
+			if (tex->texnum < 0) {
+				return 1;
+			}
+
+			char ownerDir[FS_MAXPATH + 1];
+
+			extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+			snprintf(dst, FS_MAXPATH, "%s/%04x.%s", ownerDir, texnum, tex->extension);
 			return 0;
 		}
 		case G_TEXTYPE_FONT: {
-			name = resolveFontname(id & ~IDMASK_FONT_OUTLINE);
+			// Packet-derived indices, bounded exactly as in getExtTexture's
+			// font case; extTexLoad calls both with the same id and texnum,
+			// so they have to agree on what is in range.
+			u16 fontId = id & ~IDMASK_FONT_OUTLINE;
+
+			if (fontId >= NUM_FONTS || texnum < 0 || texnum >= NCHARS) {
+				return 1;
+			}
+
+			// Same defect the general table had: extTexScanDir walks every
+			// mod's ext_tex directory and dispatches a 'f...' subdirectory to
+			// readFontTextures, which stamps ownerMod on what it registers -
+			// but the path was rebuilt from extTexPath, the global directory,
+			// whichever one the font came from. ownerMod names the right one.
+			char ownerDir[FS_MAXPATH + 1];
+
+			name = resolveFontname(fontId);
 
 			if (id & IDMASK_FONT_OUTLINE) {
-				tex = &fontOutlineExtTextures[id & ~IDMASK_FONT_OUTLINE][texnum];
-				snprintf(dst, FS_MAXPATH, "%s/%s/" FONT_OUTLINES_DIR "/%02x.%s", extTexPath, name, texnum, tex->extension);
+				tex = &fontOutlineExtTextures[fontId][texnum];
+				extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+				snprintf(dst, FS_MAXPATH, "%s/%s/" FONT_OUTLINES_DIR "/%02x.%s",
+					ownerDir, name, texnum, tex->extension);
 				return 0;
 			}
 
-			tex = &fontExtTextures[id][texnum];
-			snprintf(dst, FS_MAXPATH, "%s/%s/%02x.%s", extTexPath, name, texnum, tex->extension);
+			tex = &fontExtTextures[fontId][texnum];
+			extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));
+			snprintf(dst, FS_MAXPATH, "%s/%s/%02x.%s", ownerDir, name, texnum, tex->extension);
 			return 0;
 		}
 		case G_TEXTYPE_MODEL: {
@@ -473,9 +654,9 @@ void setTexDimensions(struct ExtTexture *tex, const char *filepath)
 	}
 }
 
-void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct ModelTextures *modelTex)
+void readModelTextures(const char *path, s16 fileNum, s8 ownerMod, s32 *modelOffset, struct ModelTextures *modelTex)
 {
-	sysLogPrintf(LOG_NOTE, "readModelTextures: path=%s fileNum=%04x", path, (u16)fileNum);
+	sysLogPrintf(LOG_NOTE, "readModelTextures: path=%s fileNum=%04x owner=%d", path, (u16)fileNum, ownerMod);
 	DIR *dr = opendir(path);
 	struct dirent *de;
 
@@ -483,6 +664,7 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 	modelTex->textures = sysMemAlloc(MAX_TEX * sizeof(struct ExtTexture));
 	modelTex->numTextures = 0;
 	modelTex->fileNum = fileNum;
+	modelTex->ownerMod = ownerMod;
 
 	// Store the parent directory path for loading textures later
 	char *lastSlash = strrchr(path, '/');
@@ -526,13 +708,27 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 
 		// Also register as a general texture so head models (which use
 		// G_TEXTYPE_GENERAL via texWriteLoadToTmemAddr) can find them.
-		// First-writer-wins: don't overwrite if already registered by another mod.
-		if (texNum >= 0 && texNum < MAX_EXT_TEX && extTextures[texNum].texnum < 0) {
-			setTex(extTextures, texNum, texNum, extension);
-			extTextures[texNum].width = modelTex->textures[modelTex->numTextures - 1].width;
-			extTextures[texNum].height = modelTex->textures[modelTex->numTextures - 1].height;
-			sysLogPrintf(LOG_NOTE, "readModelTextures: also registered texnum=%04x as GENERAL (%dx%d)", texNum,
-				extTextures[texNum].width, extTextures[texNum].height);
+		// First writer wins, same as extTexScanDir's loose-PNG branch.
+		if (texNum >= 0 && texNum < MAX_EXT_TEX) {
+			if (extTextures[texNum].texnum < 0) {
+				setTex(extTextures, texNum, texNum, extension);
+				extTextures[texNum].width = modelTex->textures[modelTex->numTextures - 1].width;
+				extTextures[texNum].height = modelTex->textures[modelTex->numTextures - 1].height;
+				sysLogPrintf(LOG_NOTE, "readModelTextures: also registered texnum=%04x as GENERAL (%dx%d)", texNum,
+					extTextures[texNum].width, extTextures[texNum].height);
+			} else {
+				// Only the GENERAL alias is contested - the per-model entry is
+				// kept either way, and getTexPath's id != 0 branch serves this
+				// model from its own directory. What the losing model gives up
+				// is being findable by texid alone, by a caller with no model
+				// context. Two shipped dirs hit this today: mod_fojo's
+				// CheadCatherineZ and CheadFoslerferZ both carry 0db1 and 0db2.
+				sysLogPrintf(LOG_WARNING,
+					"readModelTextures: slot %04x contested - %s/%04x.%s from %s not aliased as GENERAL, already claimed by %s",
+					texNum, modelTex->modelName, texNum, extension,
+					extTexOwnerName((s8)g_ExtTexCurrentModIndex),
+					extTexOwnerName(extTextures[texNum].ownerMod));
+			}
 		}
 	}
 	closedir(dr);
@@ -556,10 +752,20 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 
 void readFontTextures(const char *path, const char *fontName)
 {
+	// extTexScanDir dispatches here on the directory's first character alone,
+	// so any 'f...' directory under ext_tex/ reaches this. resolveFontID
+	// answers 0xff for one that is not a font, which would index 250 rows past
+	// fontExtTextures. Checked before opendir so nothing is left open.
+	u8 fontID = resolveFontID(fontName);
+
+	if (fontID >= NUM_FONTS) {
+		sysLogPrintf(LOG_WARNING, "readFontTextures: '%s' is not a known font, skipping '%s'", fontName, path);
+		return;
+	}
+
 	DIR *dr = opendir(path);
 	struct dirent *de;
 
-	u8 fontID = resolveFontID(fontName);
 	char extension[5] = { 0 };
 
 	char outlinesPath[FS_MAXPATH];
@@ -588,6 +794,16 @@ void readFontTextures(const char *path, const char *fontName)
 		s32 err = fileInfo(name, &texNum, extension);
 		// no extension: skip
 		if (err) continue;
+
+		// texNum is strtol(basename, 16) off a filename, so a font directory
+		// holding ff.png yields 255 against a row of NCHARS (94 on NTSC, 135
+		// on PAL) - a write into the next font's row, or off the end of the
+		// last one.
+		if (texNum < 0 || texNum >= NCHARS) {
+			sysLogPrintf(LOG_WARNING, "readFontTextures: REJECTED '%s' in %s%s - texNum %d out of range (0..%d)",
+				name, fontName, outlines ? "/" FONT_OUTLINES_DIR : "", texNum, NCHARS - 1);
+			continue;
+		}
 
 		if (outlines)
 			setTex(fontOutlineExtTextures[fontID], texNum, texNum, extension);
@@ -666,15 +882,33 @@ static void extTexScanDir(const char *dirPath, s32 *maxModels)
 			char s = name[0];
 			sysLogPrintf(LOG_NOTE, "extTexScanDir: found dir '%s' (first char='%c')", name, s);
 			if (s == 'P' || s == 'C' || s == 'G') {
-				s16 fileNum = (s16)romdataFileGetNumForNameAnyMod(name);
+				// s32, not s16: romdataFileGetNumForNameAnyMod returns a bare
+				// slot index today, but the shape it is moving to on wt/anymod
+				// is a tagged id carrying the owning mod above bit 16, and
+				// narrowing to s16 drops that tag with no diagnostic. Widening
+				// now costs nothing and is where that value will arrive.
+				s32 fileId = romdataFileGetNumForNameAnyMod(name);
+				s16 fileNum = (s16)fileId;
 				sysLogPrintf(LOG_NOTE, "extTexScanDir: model dir '%s' => fileNum=%d (0x%04x)", name, fileNum, (u16)fileNum);
-				if (fileNum < 0) {
+				if (fileId < 0) {
 					sysLogPrintf(LOG_WARNING, "extTexScanDir: REJECTED '%s' — not in any mod's file table", name);
 					continue;
 				}
 
+				// Owner = the mod whose ext_tex/ directory this was found in,
+				// the same value setTex stamps on each texture, now passed in
+				// rather than read back out of the ambient global.
+				//
+				// That is NOT the mod owning the file-table entry the name
+				// resolved against. The two agree for every entry in the
+				// shipped set - measured: all 4 are mod_fojo overriding its own
+				// files - and diverge as soon as one mod ships an override for
+				// another mod's model. Recovering the file-table owner needs
+				// the tagged id from wt/anymod; when that lands this argument
+				// becomes MOD_FILEID_MOD(fileId) and it is the only line that
+				// has to change.
 				struct ModelTextures *modelTex = &modelTextures[numModels++];
-				readModelTextures(filepath, fileNum, NULL, modelTex);
+				readModelTextures(filepath, fileNum, (s8)g_ExtTexCurrentModIndex, NULL, modelTex);
 
 				if (numModels > *maxModels) {
 					*maxModels *= 2;
@@ -695,6 +929,29 @@ static void extTexScanDir(const char *dirPath, s32 *maxModels)
 				sysLogPrintf(LOG_WARNING, "extTexScanDir: REJECTED '%s' — texNum %d out of range (0..%d)", name, texNum, MAX_EXT_TEX - 1);
 				continue;
 			}
+			if (extTextures[texNum].texnum >= 0) {
+				// First writer wins, which is the policy readModelTextures
+				// already had; this side used to be a bare setTex, so the two
+				// registration paths disagreed about the same table.
+				//
+				// First writer, not last, because the scan order is fixed -
+				// the global ext_tex directory, then modDirs[] in order - so
+				// the winner is the same on every run and does not turn on
+				// readdir order between directories. Last-writer-wins also
+				// overwrote extension, width and height rather than just
+				// ownerMod, so a late loser could leave a slot naming its own
+				// file at the earlier entry's dimensions.
+				//
+				// Named on both sides at WARNING because this drops one mod's
+				// texture outright, and doing that silently is the failure
+				// that took longest to find here.
+				sysLogPrintf(LOG_WARNING,
+					"extTexScanDir: slot %04x contested - '%s' from %s dropped, already claimed by %s",
+					texNum, name, extTexOwnerName((s8)g_ExtTexCurrentModIndex),
+					extTexOwnerName(extTextures[texNum].ownerMod));
+				continue;
+			}
+
 			setTex(extTextures, texNum, texNum, extension);
 			setTexDimensions(&extTextures[texNum], filepath);
 			sysLogPrintf(LOG_NOTE, "extTexScanDir: general texture '%s' => texNum=%04x (%dx%d)",
@@ -713,22 +970,38 @@ s32 extTexInit()
 
 	sysLogPrintf(LOG_NOTE, "extTexInit: global extTexPath='%s'", extTexPath);
 	sysLogPrintf(LOG_NOTE, "extTexInit: g_NumModDirs=%d", g_NumModDirs);
-	for (u32 i = 0; i <= g_NumModDirs; ++i) {
+
+	// g_NumModDirs is a count, not a last index - fs.c assigns it from
+	// getModDirCount, which caps at the 64 rows modDirs actually has - so the
+	// populated rows are 0..g_NumModDirs-1 and `<=` reads one past them. It is
+	// not theoretical: pd.log from a normal boot carries
+	// "extTexInit: modDirs[3]=''" under "g_NumModDirs=3", printed by this very
+	// loop. With 64 --moddir entries the same step reads off the array.
+	for (u32 i = 0; i < g_NumModDirs; ++i) {
 		sysLogPrintf(LOG_NOTE, "extTexInit: modDirs[%d]='%s'", i, modDirs[i]);
 	}
 
+	// ownerMod alongside texnum: these tables are static, so an entry nothing
+	// ever registered reads back 0 from BSS, and 0 is a real mod index - the
+	// first one in modDirs[]. Everything that reads ownerMod today checks
+	// texnum >= 0 first and so never sees it, but extTexOwnerDir turns ownerMod
+	// into a directory, and "unknown" has to be -1 for that to mean the global
+	// ext_tex dir rather than modDirs[0].
 	for (int i = 0; i < MAX_EXT_TEX; ++i) {
 		extTextures[i].texnum = -1;
 		extTextures[i].texdata = 0;
+		extTextures[i].ownerMod = -1;
 	}
 
 	for (int i = 0; i < NUM_FONTS; ++i) {
 		for (int j = 0; j < NCHARS; ++j) {
 			fontExtTextures[i][j].texnum = -1;
 			fontExtTextures[i][j].texdata = 0;
+			fontExtTextures[i][j].ownerMod = -1;
 
 			fontOutlineExtTextures[i][j].texnum = -1;
 			fontOutlineExtTextures[i][j].texdata = 0;
+			fontOutlineExtTextures[i][j].ownerMod = -1;
 		}
 	}
 
@@ -743,7 +1016,7 @@ s32 extTexInit()
 
 	// Scan each mod's ext_tex directory (mods/mod_xxx/ext_tex/)
 	sysLogPrintf(LOG_NOTE, "extTexInit: scanning mod ext_tex dirs...");
-	for (u32 i = 0; i <= g_NumModDirs; ++i) {
+	for (u32 i = 0; i < g_NumModDirs; ++i) {
 		if (modDirs[i][0]) {
 			char modExtTexPath[FS_MAXPATH + 1];
 			snprintf(modExtTexPath, FS_MAXPATH, "%s/" EXT_TEX_DIRNAME, modDirs[i]);

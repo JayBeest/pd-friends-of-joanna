@@ -103,7 +103,11 @@ static inline const bool fsModFullPath(char *pathBuf, const char *relPath)
 			return true;
 		}
 		sysLogPrintf(LOG_NOTE, "fsModFullPath: not found in current mod, checking all mods in order\n");
-		for (s32 i = 0; i <= g_NumModDirs; ++i) {
+		// modDirs[] is 0-based and only [0, g_NumModDirs) is populated; the
+		// inclusive bound read one entry past the last mod, and modDirs is
+		// exactly 64 rows, so with 64 --moddir entries it read off the array.
+		// The sibling loop below already uses the exclusive bound.
+		for (s32 i = 0; i < g_NumModDirs; ++i) {
 			if (fsModFullPathCheck(relPath, (const char*)modDirs[i], pathBuf)) {
 				sysLogPrintf(LOG_NOTE, "fsModFullPath: %s found in modDir=%s\n", relPath, modDirs[i]);
 				return true;
@@ -293,7 +297,9 @@ s32 fsInit(void)
 
 const char *fsGetModDir(void)
 {
-	if (g_ModNum >= 0 && g_ModNum <= sizeof(modDirs)/sizeof(modDirs[0])) {
+	// `<=` admitted modDirs[64] on a 64-row array; g_ModNum is a 0-based
+	// modDirs subscript, so the last valid value is one below the count.
+	if (g_ModNum >= 0 && g_ModNum < (s32)(sizeof(modDirs)/sizeof(modDirs[0]))) {
 		if (modDirs[g_ModNum][0]) {
 			return modDirs[g_ModNum];
 		}

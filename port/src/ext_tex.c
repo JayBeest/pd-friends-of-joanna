@@ -68,6 +68,12 @@ struct ModelTextures
 {
 	s16 fileNum;
 	s16 numTextures;
+	// The mod whose ext_tex/ directory this entry was scanned out of. Stated
+	// once here rather than re-derived from textures[0], which was only right
+	// because a directory scan stamps one owner across everything it reads,
+	// and which had no answer at all for a directory holding no PNGs.
+	// Lands in existing tail padding - sizeof is unchanged, measured.
+	s8 ownerMod;
 	struct ExtTexture *textures;
 	char basePath[FS_MAXPATH + 1];
 	char modelName[64];
@@ -123,7 +129,7 @@ s32 fileInfo(const char *filename, s32 *texNum, char extension[5])
  */
 static s8 modelEntryOwner(const struct ModelTextures *m)
 {
-	return (m && m->numTextures > 0 && m->textures) ? m->textures[0].ownerMod : -1;
+	return m ? m->ownerMod : -1;
 }
 
 /**
@@ -648,9 +654,9 @@ void setTexDimensions(struct ExtTexture *tex, const char *filepath)
 	}
 }
 
-void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct ModelTextures *modelTex)
+void readModelTextures(const char *path, s16 fileNum, s8 ownerMod, s32 *modelOffset, struct ModelTextures *modelTex)
 {
-	sysLogPrintf(LOG_NOTE, "readModelTextures: path=%s fileNum=%04x", path, (u16)fileNum);
+	sysLogPrintf(LOG_NOTE, "readModelTextures: path=%s fileNum=%04x owner=%d", path, (u16)fileNum, ownerMod);
 	DIR *dr = opendir(path);
 	struct dirent *de;
 
@@ -658,6 +664,7 @@ void readModelTextures(const char *path, s16 fileNum, s32 *modelOffset, struct M
 	modelTex->textures = sysMemAlloc(MAX_TEX * sizeof(struct ExtTexture));
 	modelTex->numTextures = 0;
 	modelTex->fileNum = fileNum;
+	modelTex->ownerMod = ownerMod;
 
 	// Store the parent directory path for loading textures later
 	char *lastSlash = strrchr(path, '/');
@@ -875,15 +882,33 @@ static void extTexScanDir(const char *dirPath, s32 *maxModels)
 			char s = name[0];
 			sysLogPrintf(LOG_NOTE, "extTexScanDir: found dir '%s' (first char='%c')", name, s);
 			if (s == 'P' || s == 'C' || s == 'G') {
-				s16 fileNum = (s16)romdataFileGetNumForNameAnyMod(name);
+				// s32, not s16: romdataFileGetNumForNameAnyMod returns a bare
+				// slot index today, but the shape it is moving to on wt/anymod
+				// is a tagged id carrying the owning mod above bit 16, and
+				// narrowing to s16 drops that tag with no diagnostic. Widening
+				// now costs nothing and is where that value will arrive.
+				s32 fileId = romdataFileGetNumForNameAnyMod(name);
+				s16 fileNum = (s16)fileId;
 				sysLogPrintf(LOG_NOTE, "extTexScanDir: model dir '%s' => fileNum=%d (0x%04x)", name, fileNum, (u16)fileNum);
-				if (fileNum < 0) {
+				if (fileId < 0) {
 					sysLogPrintf(LOG_WARNING, "extTexScanDir: REJECTED '%s' — not in any mod's file table", name);
 					continue;
 				}
 
+				// Owner = the mod whose ext_tex/ directory this was found in,
+				// the same value setTex stamps on each texture, now passed in
+				// rather than read back out of the ambient global.
+				//
+				// That is NOT the mod owning the file-table entry the name
+				// resolved against. The two agree for every entry in the
+				// shipped set - measured: all 4 are mod_fojo overriding its own
+				// files - and diverge as soon as one mod ships an override for
+				// another mod's model. Recovering the file-table owner needs
+				// the tagged id from wt/anymod; when that lands this argument
+				// becomes MOD_FILEID_MOD(fileId) and it is the only line that
+				// has to change.
 				struct ModelTextures *modelTex = &modelTextures[numModels++];
-				readModelTextures(filepath, fileNum, NULL, modelTex);
+				readModelTextures(filepath, fileNum, (s8)g_ExtTexCurrentModIndex, NULL, modelTex);
 
 				if (numModels > *maxModels) {
 					*maxModels *= 2;

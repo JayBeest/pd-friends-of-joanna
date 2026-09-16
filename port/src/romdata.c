@@ -199,13 +199,27 @@ struct romaltsource {
 };
 
 // MOD_TEX_MAP_MAX_MODS bounds both the per-mod texture map and the
-// per-mod altSource array. modIdx 0 is the base/global table; 1..64
-// correspond to --moddir entries (FS_MAXMODDIRS = 64).
+// per-mod altSource array.
+//
+// modIdx is 0-based and is the same number as g_ModNum and the modDirs[]
+// subscript: romdataLoadModFileTable() is called with i over
+// [0, g_NumModDirs) and hands that straight to romdataParseFileTable() as
+// ownerModIdx. A three-mod boot logs "PDFT v3 romTexMap: 20 entries (mod=0)"
+// against modDirs[0]='.../mod_fojo', then mod=1 and mod=2 for the other two.
+//
+// This comment used to say row 0 was a reserved base table and mods ran
+// 1..64. Nothing indexes these arrays that way, and mod 0 is a real mod -
+// the boot mod - not an absence; see the MOD_FILEID note in
+// port/include/mod.h. The 65th row is the leftover of that abandoned
+// layout. Row 0 is doubly booked instead: it is mod 0's row and also the
+// row the global filetable writes and romdataFileLoad() falls back to.
 #define MOD_TEX_MAP_MAX_MODS 65
 
 static struct romsource g_RomSources[ROMSOURCES_MAX];
 static u32 g_NumRomSources;
-// Per-mod altSource: [modIdx][localFileId]. modIdx 0 = base/global table.
+// Per-mod altSource: [modIdx][localFileId], modIdx 0-based as above. Row 0
+// carries both mod 0's fragment entries and the global table's, so the two
+// overwrite each other for any file id they share.
 static struct romaltsource g_FileAltSource[MOD_TEX_MAP_MAX_MODS][ROMDATA_MAX_FILES];
 
 struct modTexMapEntry {
@@ -804,11 +818,18 @@ static s32 romdataParseFileTable(u8 *data, u32 size, s32 ownerModIdx)
 
 				if ((flags & 2) && pathLen > 1) {
 					if (isGlobal && hasExport && modConstraint && pathAfterDoubleColon) {
+						// `mod` is a fileSlots[] row, and a row is read back
+						// as fileSlots[g_ModNum] - the same 0-based number the
+						// fragment path writes with (romdataLoadModFileTable
+						// passes i over [0, g_NumModDirs)). The old
+						// modDirs[mod - 1] therefore matched every row against
+						// the previous mod's name: row 1 (gex) was tested
+						// against mod_fojo, and row 0 was skipped entirely.
 						const char *currentModName = NULL;
-						if (mod > 0 && mod <= (s32)g_NumModDirs && modDirs[mod - 1][0]) {
-							currentModName = strrchr(modDirs[mod - 1], '/');
+						if (mod >= 0 && mod < (s32)g_NumModDirs && modDirs[mod][0]) {
+							currentModName = strrchr(modDirs[mod], '/');
 							if (currentModName) currentModName++;
-							else currentModName = modDirs[mod - 1];
+							else currentModName = modDirs[mod];
 						}
 						bool isOwner = false;
 						if (currentModName) {
@@ -1603,7 +1624,9 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 	// Try alternate-ROM data source if no loose file was found.
 	// Mod files baked into a custom z64 (e.g. gex.z64) are pointed at
 	// by g_FileAltSource[modIdx][localFileId] populated during PDFT v2/v3
-	// fragment parse. modNum 0 is the global/base table.
+	// fragment parse. modIdx is 0-based, so the fallback to row 0 below is
+	// mod 0's own row as well as the global table's - for mod 0 the two
+	// lookups are the same row.
 	if (!out && fileNum >= 0 && fileNum < ROMDATA_MAX_FILES) {
 		s32 modSlot = (modNum >= 0 && modNum < MOD_TEX_MAP_MAX_MODS) ? modNum : 0;
 		struct romaltsource *as = &g_FileAltSource[modSlot][fileNum];

@@ -510,6 +510,18 @@ u8 getTexPath(char *dst, u8 type, u16 id, s32 texnum)
 			// basedir/ext_tex and loaded nothing. On this install that global
 			// directory does not even exist (pd.log: "extTexScanDir: FAILED to
 			// open .../data/ext_tex"), so every such override missed.
+			// Nothing registered this slot, so extension is still the empty
+			// BSS string and there is no file to name. Formatting anyway
+			// produced a path ending in a bare '.' and reported success, and
+			// extTexLoad logged that path at NOTE before stbi_load failed on
+			// it. Unreachable through the only caller - gfx_pc reaches
+			// extTexLoad solely inside its extTexExists branch, which is this
+			// same test - so this is here to keep an unregistered slot an
+			// honest failure rather than a plausible-looking wrong answer.
+			if (tex->texnum < 0) {
+				return 1;
+			}
+
 			char ownerDir[FS_MAXPATH + 1];
 
 			extTexOwnerDir(tex->ownerMod, ownerDir, sizeof(ownerDir));

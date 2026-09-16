@@ -6294,8 +6294,13 @@ struct tex {
   /*0x0c*/ u32 hasloddata : 1;
   /*0x0c*/ u32 unk0c_03 : 1;
 #ifndef PLATFORM_N64
-  /*0x0c*/ u32 modnum : 8; // mod owner (0 = vanilla). Disambiguates cache hits
-                           // when a mod and vanilla share a texturenum.
+  /*0x0c*/ u32 modnum : 8; // 0-based g_TexModNum of whoever loaded it, so it
+                           // disambiguates cache hits when two mods share a
+                           // texturenum. NOT "0 = vanilla": mod 0 is a real
+                           // mod, a vanilla model load leaves g_TexModNum at
+                           // MOD_FILEID_MOD(plain id) == 0, and texdecompress
+                           // folds "no mod context" (-1) into 0 as well, so
+                           // all three land in this one bucket.
 #endif
 #ifdef PLATFORM_N64
   /*0x0c*/ u32 next : 24;

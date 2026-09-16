@@ -378,7 +378,28 @@ static const struct romfilepatch filePatches[] = {
 	{ 0x92b0, 1, "\x6c", "\x99" },
 };
 
-static struct romfile fileSlots[64][ROMDATA_MAX_FILES];
+// fileSlots is [modIdx][localFileId], and a raw file id is mod-LOCAL: every
+// mod's inserted files start at the same number (tools/mkfiletable
+// FIRST_LOCAL_ID == 2018), so id 2019 is mod_fojo/CheadCatherineZ,
+// mod_aio_characters/CbondranchZ and mod_gex_characters/Cbaronsamedi2Z at once
+// on the shipped set. (modIdx, rawId) is the identity; a bare raw id is not.
+//
+// MOD_TEX_MAP_MAX_MODS rows rather than 64 so this array is the same shape as
+// g_FileAltSource[] and g_ModTexMap[], which are declared with that constant
+// and subscripted by the same mod number. While they disagreed,
+// romdataFileGetSlotName(64, ...) and romdataGetFileSlotInfo(64, ...) passed
+// their `< MOD_TEX_MAP_MAX_MODS` guard and read row 64 off the end of this one.
+//
+// The 65th row is a deliberate spare, not slack for an off-by-one. No mod
+// index can reach it: getModDirCount() caps --moddir at ARRAYCOUNT(modDirs)
+// == 64 (port/src/fs.c) and every loop that fills this array is exclusive over
+// g_NumModDirs. It is the row reserved for the vanilla owner that the
+// MOD_FILEID tag now distinguishes from mod 0 - MOD_FILEID_MOD() already
+// answers -1 for vanilla and 0 for mod 0, but row 0 here is still doubly
+// booked as mod 0's row and the global table's fallback. Nothing writes or
+// reads row 64 today; growing the array is what makes the guards honest, not
+// what makes the loops correct.
+static struct romfile fileSlots[MOD_TEX_MAP_MAX_MODS][ROMDATA_MAX_FILES];
 void fileSlotsInit(u32 numMods) {
 	// `i < numMods - 1` skipped the last mod row, and with the shipped default
 	// of one mod dir the bound was 0, so no row was given the patch list at
@@ -807,9 +828,13 @@ static s32 romdataParseFileTable(u8 *data, u32 size, s32 ownerModIdx)
 			}
 
 			s32 modLo = isGlobal ? 0 : ownerModIdx;
-			s32 modHi = isGlobal ? (s32)g_NumModDirs : ownerModIdx;
+			// Exclusive end. The rows a mod index can name are
+			// [0, g_NumModDirs), so `mod <= g_NumModDirs` wrote one row past
+			// the last mod on every global-table entry - fileSlots[64] with
+			// the 64 --moddir entries getModDirCount() still accepts.
+			s32 modEnd = isGlobal ? (s32)g_NumModDirs : ownerModIdx + 1;
 
-			for (s32 mod = modLo; mod <= modHi; ++mod) {
+			for (s32 mod = modLo; mod < modEnd; ++mod) {
 				if (flags & 1) {
 					fileSlots[mod][id].data = g_RomFile + offset;
 					fileSlots[mod][id].size = fileSize;
@@ -876,8 +901,9 @@ static s32 romdataParseFileTable(u8 *data, u32 size, s32 ownerModIdx)
 			if (id >= ROMDATA_MAX_FILES) continue;
 
 			s32 modLo = isGlobal ? 0 : ownerModIdx;
-			s32 modHi = isGlobal ? (s32)g_NumModDirs : ownerModIdx;
-			for (s32 mod = modLo; mod <= modHi; ++mod) {
+			// Exclusive end, as in the v2/v3 path above.
+			s32 modEnd = isGlobal ? (s32)g_NumModDirs : ownerModIdx + 1;
+			for (s32 mod = modLo; mod < modEnd; ++mod) {
 				if (flags & 1) {
 					fileSlots[mod][id].data = g_RomFile + offset;
 					fileSlots[mod][id].size = fileSize;
@@ -1066,7 +1092,10 @@ static inline void romdataInitFiles(void)
 				const u32 nextofs = PD_BE32(offsets[i + 1]);
 				const u32 ofs = PD_BE32(offsets[i]);
 				int mod;
-				for (mod = 0; mod <= g_NumModDirs; ++mod) {
+				// [0, g_NumModDirs). The inclusive bound wrote a row no mod
+				// index can name, and g_NumModDirs is unsigned so `mod` was
+				// converted rather than the bound.
+				for (mod = 0; mod < (s32)g_NumModDirs; ++mod) {
 					fileSlots[mod][i].data = g_RomFile + ofs;
 					fileSlots[mod][i].size = nextofs - ofs;
 					fileSlots[mod][i].source = SRC_UNLOADED;
@@ -1079,7 +1108,7 @@ static inline void romdataInitFiles(void)
 		const u32 *nameOffsets = (u32 *)(g_RomFile + PD_BE32(offsets[i - 1]));
 		for (i = 1; nameOffsets[i]; ++i) {
 			const u32 ofs = PD_BE32(nameOffsets[i]);
-			for (s32 mod = 0; mod <= g_NumModDirs; ++mod) {
+			for (s32 mod = 0; mod < (s32)g_NumModDirs; ++mod) {
 				fileSlots[mod][i].name = (const char *)nameOffsets + ofs; // ofs is relative to the start of the name table
 			}
 		}

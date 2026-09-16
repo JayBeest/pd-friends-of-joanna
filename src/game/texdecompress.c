@@ -2231,7 +2231,7 @@ void texLoad(texnum_t *updateword, struct texpool *pool, bool unusedarg)
 	s8 buffer5kb[5 * 1024 + 0x40];
 	s32 thisoffset;
 	s32 nextoffset;
-	s16 *texnumptr;
+	u16 *texnumptr;
 	s32 bytesout;
 
 	usingsharedpool = 0;
@@ -2361,7 +2361,7 @@ haveCompBytes:
 			}
 
 			// Write the texturenum into the allocation
-			texnumptr = (s16 *) pool->leftpos;
+			texnumptr = (u16 *) pool->leftpos;
 			*texnumptr = g_TexNumToLoad;
 			pool->leftpos += 8;
 

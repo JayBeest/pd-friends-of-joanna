@@ -3299,7 +3299,13 @@ s32 func0f06cd00(struct defaultobj *obj, struct coord *pos, struct coord *arg2, 
 
 					s0 = true;
 
-					if (g_Textures[hitthing.texturenum].surfacetype == SURFACETYPE_DEEPWATER) {
+					// bgTestHitInRoom fills texturenum straight from the display
+					// list, and level geometry now resolves mod-owned textures,
+					// so this can be a mod texture slot at 4096 or above, past
+					// the end of the vanilla-only g_Textures[]. It can also be
+					// -1 when the batch had no texture. Neither is deep water.
+					if (hitthing.texturenum >= 0 && hitthing.texturenum < NUM_TEXTURES
+							&& g_Textures[hitthing.texturenum].surfacetype == SURFACETYPE_DEEPWATER) {
 						struct coord spa4 = {0, 0, 0};
 						s0 = false;
 						sparksCreate(prop->rooms[0], prop, &hitthing.pos, &spa4, &hitthing.unk0c, SPARKTYPE_DEEPWATER);

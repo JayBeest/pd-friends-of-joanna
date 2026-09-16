@@ -894,7 +894,14 @@ struct prop *shotCalculateHits(s32 handnum, bool isshooting, struct coord *gunpo
 									break;
 								}
 
-								texnum = g_Textures[sp694.texturenum].surfacetype;
+								// Same bound the surfacetype lookup above this block
+								// applies to sp694.texturenum: the bg hit carries a
+								// display list texture number, and level geometry now
+								// resolves mod-owned textures, so a mod slot id at
+								// 4096 or above reaches here and g_Textures[] holds
+								// vanilla only.
+								texnum = (sp694.texturenum >= 0 && sp694.texturenum < NUM_TEXTURES)
+									? g_Textures[sp694.texturenum].surfacetype : SURFACETYPE_DEFAULT;
 
 								if (texnum == SURFACETYPE_SHALLOWWATER || texnum == SURFACETYPE_DEEPWATER) {
 									sparktype = SPARKTYPE_SHALLOWWATER;

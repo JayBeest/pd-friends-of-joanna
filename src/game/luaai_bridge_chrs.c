@@ -2622,6 +2622,10 @@ s32 chraiLuaPossessSpawn(s32 bodynum)
 	if (pl == NULL || pl->prop == NULL) {
 		return -1;
 	}
+	// one cube at a time: pd.unpossess first
+	if (luaPossessIsActive()) {
+		return -1;
+	}
 
 	if (bodynum < 0) {
 		bodynum = BODY_EYESPY;
@@ -2648,6 +2652,7 @@ s32 chraiLuaPossessSpawn(s32 bodynum)
 	prop->chr->chrflags |= CHRCFLAG_INVINCIBLE;
 
 	if (!luaPossessBegin((s32)prop->chr->chrnum)) {
+		prop->chr->hidden |= CHRHFLAG_DELETING; // don't leave the cube behind
 		return -1;
 	}
 	return (s32)prop->chr->chrnum;

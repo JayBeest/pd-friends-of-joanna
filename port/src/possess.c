@@ -78,6 +78,11 @@ s32 luaPossessBegin(s32 cube_chrnum)
 	if (pl == NULL || pl->prop == NULL) {
 		return 0;
 	}
+	// A second begin would save the already-frozen control and hand it back
+	// on the way out.
+	if (g_Possess.active) {
+		return 0;
+	}
 
 	g_Possess.active = 1;
 	g_Possess.chrnum = cube_chrnum;

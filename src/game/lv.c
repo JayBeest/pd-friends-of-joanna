@@ -248,6 +248,17 @@ void lvReset(s32 stagenum)
 	// state is torn down below without running any effect's stop().
 	chaosStateResetPerStage();
 #endif
+#ifndef PLATFORM_N64
+	{
+		// pd.spawn_sentry's per-stage count and pd.possess_spawn's fly state
+		// (luaai_bridge_chrs.c, port/src/possess.c): their props die with the
+		// stage.
+		extern void chraiLuaResetSentries(void);
+		extern void luaPossessStageReset(void);
+		chraiLuaResetSentries();
+		luaPossessStageReset();
+	}
+#endif
 
 	var80084014 = false;
 	var80084010 = 0;

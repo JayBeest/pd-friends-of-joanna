@@ -639,6 +639,10 @@ void mainTick(void) {
       playermgrShuffle();
 
       if (g_StageNum < STAGE_TITLE) {
+        // Lua possession (controllable cube, pd.possess_spawn) freecam input —
+        // once per frame; no-op unless possession is active. (Kai be46717.)
+        luaPossessReadInput();
+
         for (i = 0; i < PLAYERCOUNT(); i++) {
           setCurrentPlayerNum(playermgrGetPlayerAtOrder(i));
 
@@ -652,6 +656,11 @@ void mainTick(void) {
           }
 
           lvTickPlayer();
+
+          // Possession: after the body ticks, override this player's camera to
+          // follow the controllable cube's fly pose. No-op unless possession is
+          // active.
+          luaPossessApplyCamera();
         }
       }
 

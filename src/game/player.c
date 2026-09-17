@@ -3682,7 +3682,7 @@ void playerConfigureVi(void)
 }
 
 /**
- * Camera Tilt: lean the view the way the head would.
+ * Camera Tilt: move the view the way the head would.
  *
  * A sidestep rolls the picture into the direction of travel, and a look up
  * or down leans the camera a little further that way for as long as the
@@ -3690,12 +3690,27 @@ void playerConfigureVi(void)
  * tap of the strafe key is a nod and not a jolt, and both come back to level
  * on their own when the input stops.
  *
- * Only the copies the camera matrix is built from are rotated. bond2's basis
- * vectors, which the gun aims and the walk traces along, are left as they
+ * Camera Bob, a setting of its own beside the tilt, bobs the eye up and down
+ * with the steps. It is Quake's V_CalcBob: a sine on a fixed cycle, six
+ * tenths of a second per step, whose height follows the ground speed, so it
+ * fades in over the first strides and out over the last, with the height
+ * itself eased so a wall does not stop it dead. Quake lifts the eye more than
+ * it drops it, three parts up to seven of swing, and that is kept - a bob
+ * that dipped as far as it rose read as the floor moving rather than the
+ * walker. The speed is the distance the player actually covered this tick,
+ * from bondprevpos, not the stick, so walking into a wall does not bob, and a
+ * fall does not either. Six units of lift at a full run at 1, about half of
+ * Quake's in a world where the eye stands 159 units up; 2 is Quake as shipped.
+ *
+ * Only the copies the camera is built from are moved. bond2's basis vectors
+ * and eye, which the gun aims and the walk traces along, are left as they
  * were: the roll is about the look axis, so the centre of the screen still
- * points where it did, and the lean is a degree or two that is gone by the
- * time the look settles. The gun is drawn in screen space and comes with the
- * picture.
+ * points where it did, the lean is a degree or two that is gone by the time
+ * the look settles, and the bob is a few centimetres straight up. The gun is
+ * drawn in screen space and comes with the picture. This runs after the
+ * third person pull-back, so in third person the bob lifts the camera where
+ * the pull-back left it; the volume clearance keeps 20 units under a ceiling,
+ * which is more than the bob asks for below a setting of 3.
  *
  * The right vector is look cross up. Strafing right is a positive sideways
  * speed, and the world's right hand is where that cross product points, so a
@@ -3703,19 +3718,40 @@ void playerConfigureVi(void)
  * which is what a lean is. A positive look speed is up, and a positive lean
  * turns the look toward up.
  *
+ * Tilt Into Run adds the same lean on the axis the roll leaves out: a
+ * positive forward speed is a run, which pitches the view down into it, so it
+ * subtracts from the lean the look gives, and backing away adds. It reads the
+ * stick, not the ground speed the bob uses - a run into a wall leans the way
+ * the walker is pushing, as a blocked sidestep already rolls - and rides the
+ * same chased angle, so the two are one motion rather than two fighting over
+ * the pitch.
+ *
+ * Invert Tilt negates both targets, which turns every lean the other way
+ * about - the roll away from the sidestep, the camera away from the look, the
+ * horizon back rather than down into the run. It is the lean a rider makes
+ * against the motion rather than the one a runner makes with it. The bob is a
+ * lift of the eye with no direction to it and is left where it is.
+ *
  * Dead the lean is retired: the death camera has its own ideas about which
  * way is up.
  */
 #define CAMTILT_ROLL_DEGREES  2.0f  // at a full sidestep, times the setting
 #define CAMTILT_PITCH_DEGREES 1.5f  // at full look speed, times the setting
+#define CAMTILT_FWD_DEGREES   1.5f  // at a full run, times the setting
 #define CAMTILT_RATE          0.15f // of the remaining distance, per 60Hz tick
+#define CAMTILT_BOB_UNITS     6.0f  // peak lift at a full run, times the bob setting
+#define CAMTILT_BOB_CYCLE     36.0f // 60Hz ticks per step, Quake's cl_bobcycle
+#define CAMTILT_RUN_SPEED     10.0f // units per 60Hz tick, bwalk's full stick
+#define CAMTILT_TELEPORT      100.0f // further than this in a tick is not a step
 
-static void playerTiltCamera(struct coord *camup, struct coord *camlook)
+static void playerTiltCamera(struct coord *campos, struct coord *camup, struct coord *camlook)
 {
 	struct player *player = g_Vars.currentplayer;
 	f32 scale = PLAYER_EXTCFG().cameratilt;
+	f32 bobscale = PLAYER_EXTCFG().camerabob;
 	f32 rolltarget = 0;
 	f32 pitchtarget = 0;
+	f32 bobtarget = 0;
 	f32 rate;
 	f32 roll;
 	f32 pitch;
@@ -3745,6 +3781,40 @@ static void playerTiltCamera(struct coord *camup, struct coord *camlook)
 
 		rolltarget = strafe * CAMTILT_ROLL_DEGREES * scale;
 		pitchtarget = lookspeed * CAMTILT_PITCH_DEGREES * scale;
+
+		if (PLAYER_EXTCFG().tiltforward) {
+			f32 forward = player->speedforwards;
+
+			if (forward > 1) {
+				forward = 1;
+			} else if (forward < -1) {
+				forward = -1;
+			}
+
+			pitchtarget -= forward * CAMTILT_FWD_DEGREES * scale;
+		}
+
+		if (PLAYER_EXTCFG().tiltinvert) {
+			rolltarget = -rolltarget;
+			pitchtarget = -pitchtarget;
+		}
+	}
+
+	if (bobscale > 0 && !player->isdead && player->bondmovemode == MOVEMODE_WALK
+			&& !player->isfalling && g_Vars.lvupdate60freal > 0) {
+		f32 dx = player->prop->pos.x - player->bondprevpos.x;
+		f32 dz = player->prop->pos.z - player->bondprevpos.z;
+		f32 speed = sqrtf(dx * dx + dz * dz);
+
+		if (speed < CAMTILT_TELEPORT) {
+			speed /= g_Vars.lvupdate60freal * CAMTILT_RUN_SPEED;
+
+			if (speed > 1) {
+				speed = 1;
+			}
+
+			bobtarget = speed * CAMTILT_BOB_UNITS * bobscale;
+		}
 	}
 
 	rate = CAMTILT_RATE * g_Vars.lvupdate60freal;
@@ -3755,6 +3825,19 @@ static void playerTiltCamera(struct coord *camup, struct coord *camlook)
 
 	player->camtiltroll += (rolltarget - player->camtiltroll) * rate;
 	player->camtiltpitch += (pitchtarget - player->camtiltpitch) * rate;
+	player->camstepamp += (bobtarget - player->camstepamp) * rate;
+
+	player->camstepphase += g_Vars.lvupdate60freal * (M_BADTAU / CAMTILT_BOB_CYCLE);
+
+	if (player->camstepphase > M_BADTAU) {
+		player->camstepphase -= M_BADTAU;
+	}
+
+	if (player->camstepamp > 0.001f) {
+		campos->y += player->camstepamp * (0.3f + 0.7f * sinf(player->camstepphase));
+	} else {
+		player->camstepamp = 0;
+	}
 
 	if (player->camtiltroll > -0.001f && player->camtiltroll < 0.001f
 			&& player->camtiltpitch > -0.001f && player->camtiltpitch < 0.001f) {
@@ -3835,6 +3918,63 @@ bool playerIsThirdPerson(struct player *player)
 
 #ifndef PLATFORM_N64
 /**
+ * How much of the player's own body to draw while a cutscene's camera tweens
+ * into their eyes: 1 for all of it, 0 for none.
+ *
+ * A cutscene that ends with a tween (the Institute's typing scene behind the
+ * Perfect Menu is the one every player sees) slerps the camera over its last
+ * frames from the animation's last shot into the player's eye, and the body
+ * that acted the scene is still standing there while it does. The last third
+ * of the swoop is spent inside the head: the back of the skull fills the frame,
+ * then the inside of the face and eyes, and only then does the tick after the
+ * last frame take the body down. The eased position curve covers most of the
+ * distance in those last frames, so the fade is keyed to how far the camera
+ * still has to go rather than to the tween's fraction.
+ *
+ * Applied in chrRender() as a multiplier on the body's alpha, which puts the
+ * fading body through the translucent pass the way cloaking does. It only ever
+ * bites on the current player's own prop, so other players' bodies in a coop
+ * cutscene, and the body's shot-at and walked-around presence, are untouched.
+ */
+f32 playerGetCutsceneBodyAlphaFrac(struct prop *prop)
+{
+	struct player *player;
+	f32 dx;
+	f32 dy;
+	f32 dz;
+	f32 dist;
+	const f32 gonewithin = 40; // inside the head, whatever the model
+	const f32 fullbeyond = 100; // the shot behind the shoulder is still intact
+
+	if (g_Vars.tickmode != TICKMODE_CUTSCENE
+			|| g_CutsceneTweenDuration60 <= 0
+			|| g_CutsceneTweenFrac <= 0
+			|| prop->type != PROPTYPE_PLAYER
+			|| playermgrGetPlayerNumByProp(prop) != g_Vars.currentplayernum) {
+		return 1;
+	}
+
+	player = g_Vars.currentplayer;
+
+	dx = player->cam_pos.x - player->bond2.eyepos.x;
+	dy = player->cam_pos.y - player->bond2.eyepos.y;
+	dz = player->cam_pos.z - player->bond2.eyepos.z;
+	dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+	if (dist <= gonewithin) {
+		return 0;
+	}
+
+	if (dist >= fullbeyond) {
+		return 1;
+	}
+
+	return (dist - gonewithin) / (fullbeyond - gonewithin);
+}
+#endif
+
+#ifndef PLATFORM_N64
+/**
  * Put the weapons the player is holding into the body's hands, and take out
  * the ones they are not.
  *
@@ -3899,79 +4039,635 @@ static void playerSyncBodyWeapons(struct player *player)
 #endif
 
 /**
- * Back the camera off along the view axis for third person, stopping short of
- * whatever is behind the player.
+ * Take the camera off the eye for third person, stopping short of whatever is
+ * in the way.
  *
- * cdExamLos08() reports the first thing between the eye and where the camera
- * wants to be and cdGetPos() gives the point it hit. The camera stops
- * THIRDPERSON_CAMCLEARANCE short of that rather than at it, because sitting
- * flush against a wall fills the screen with that wall.
+ * The camera sits the distance setting behind the eye and, if the sideways
+ * setting asks for it, so many units to one side of it. Those are two axes but
+ * one offset, and one trace clears it: cdExamLos08() reports the first thing
+ * between the eye and where the camera wants to be, cdGetPos() gives the point
+ * it hit, and the whole offset is scaled down so the camera lands the wall
+ * clearance short of that rather than flush against it, because a camera
+ * against a wall fills the screen with that wall.
+ *
+ * Scaling the offset rather than shortening the distance alone is what keeps
+ * the shoulder the player chose. The camera slides in towards the eye along the
+ * line it was already on, so a wall coming up pulls the view in; it does not
+ * swing it back round behind the player's head on the way.
  *
  * The trace starts at the eye rather than at the player's feet so that it
  * follows the camera exactly, and only BG and closed doors block it. Props do
  * not: pulling the view in every time a simulant walked behind you would be
  * unusable in a match with twenty of them, and a body between the camera and
  * the player reads as an obstruction anyway.
+ *
+ * Floors and ceilings stop it as well as walls. Looking straight up puts the
+ * offset into the ground behind the player's heels, and with walls alone in the
+ * trace the camera went through the floor and drew the room from underneath it
+ * - the same for a low ceiling when looking down. GEOFLAG_FLOOR1 and FLOOR2 are
+ * the pair the rest of the game means by a floor, and carry ceilings too
+ * (cdFindClosestVertical() tells the two apart by which way they face, not by
+ * the flag), with lift floors alongside them the way propobj.c asks for them.
+ *
+ * Coming in is immediate and going back out is eased, because they are not the
+ * same event. A wall arriving is this frame's problem - anything slower draws
+ * the inside of it - while a wall leaving is only space becoming free again,
+ * and snapping the camera out through the metre it gave back is the jump that
+ * reads as a fault. The eye is outside that: below the minimum distance there
+ * is no view to ease towards, so that one is a cut in both directions.
+ *
+ * The body fade runs off the distance this settles on. With the offsets that
+ * is the length of the whole offset after the trace, the volume clearance and
+ * the easing, which is the honest measure of how close the camera is to her:
+ * the fade begins at g_BodyFadeStart and is at its deepest by the minimum
+ * distance, so by the time the camera cuts to the eye she is already almost
+ * gone. Every way this gives up and leaves the camera on the eye leaves the
+ * fade at its deepest too, because the body is still drawn there - the view
+ * model does not come back in third person (playerIsThirdPerson() gates it,
+ * not the distance) - and a camera inside a body has to be able to see out.
  */
-static void playerPullBackCamera(struct coord *campos)
+#define THIRDPERSON_EASE_RATE 0.2f // of what is left to give back, per 60Hz tick
+
+/**
+ * Keep the camera out of the walls, the floor and the ceiling.
+ *
+ * The line trace in playerPullBackCamera() stops the camera crossing a wall,
+ * but it is a line of no width and the clearance it takes is along the line.
+ * A wall running beside the line never registers, so a camera behind a player
+ * walking along a wall sits with its near plane inside the brickwork. That is the clipping that was reported,
+ * and it needs a volume rather than a line.
+ *
+ * Camera Wall Clearance is the radius. cdExamCylMove02() tests a cylinder of
+ * that radius at the camera and, when it is inside a wall, names the edge it
+ * is inside through cdGetEdge(), so the camera is pushed out along that edge's
+ * normal to the eye's side until it is the radius clear - sideways, off the
+ * wall, rather than back towards the player, which is what keeps the view
+ * from collapsing to first person every time a corridor narrows. A corner
+ * takes a second pass for its second wall; three passes are allowed.
+ *
+ * Floors and ceilings are the other half. The line takes its clearance along
+ * itself, and a line at a shallow angle to the floor - looking up, which
+ * walks the camera down behind the heels - is a hand's breadth above it
+ * after thirty units. The camera is lifted to a vertical clearance above the
+ * ground under it and dropped the same below a ceiling.
+ *
+ * Any push moves the camera off the line the eye was traced along, so the
+ * line is traced again afterwards and clamped the way it was the first time.
+ * If after all that the volume is still not clear - a corridor narrower than
+ * twice the radius has no clear spot in it - the camera comes in along the
+ * line by half the radius at a time until a volume of half the radius fits,
+ * which is what a corridor that narrow has room for. Below the minimum
+ * distance there is no view, and false says so.
+ */
+#define CAMERA_VCLEAR       20.0f // above a floor and below a ceiling
+#define CAMERA_CLEAR_PASSES 3
+#define CAMERA_SHORTEN_PASSES 8
+
+static bool playerClearCamera(struct player *player, struct coord *eye, struct coord *cam)
 {
-	struct coord back;
+	RoomNum camrooms[8];
+	RoomNum crossed[21];
+	struct coord v1;
+	struct coord v2;
 	struct coord hit;
-	f32 dist = g_ThirdPersonCamDist;
+	f32 radius = g_ThirdPersonCamClearance;
+	f32 nx;
+	f32 nz;
+	f32 nlen;
+	f32 d;
+	f32 y;
+	f32 dist;
+	s32 pass;
+	bool moved = false;
 
-	g_Vars.currentplayer->thirdpersondist = 0;
+	if (radius < 1) {
+		radius = 1;
+	}
 
-	if (!playerIsThirdPerson(g_Vars.currentplayer)) {
-		g_Vars.currentplayer->bodyfadefrac = 0;
+	for (pass = 0; pass < CAMERA_CLEAR_PASSES; pass++) {
+		func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+		if (cdExamCylMove02(eye, cam, radius, camrooms, CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+					CHECKVERTICAL_YES, CAMERA_VCLEAR, -CAMERA_VCLEAR) != CDRESULT_COLLISION) {
+			break;
+		}
+
+		cdGetEdge(&v1, &v2, __LINE__, "player.c");
+
+		// The edge's normal in the horizontal, turned to the eye's side: the
+		// eye is in the room and so is the face of the wall that matters.
+		nx = v2.z - v1.z;
+		nz = v1.x - v2.x;
+		nlen = sqrtf(nx * nx + nz * nz);
+
+		if (nlen < 0.0001f) {
+			break;
+		}
+
+		nx /= nlen;
+		nz /= nlen;
+
+		if ((eye->x - v1.x) * nx + (eye->z - v1.z) * nz < 0) {
+			nx = -nx;
+			nz = -nz;
+		}
+
+		d = (cam->x - v1.x) * nx + (cam->z - v1.z) * nz;
+
+		if (d >= radius) {
+			// Inside the volume by the edge's end rather than its face; the
+			// normal has nothing to say and the shortening below takes it.
+			break;
+		}
+
+		cam->x += nx * (radius - d);
+		cam->z += nz * (radius - d);
+		moved = true;
+	}
+
+	func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+	y = cdFindGroundAtCyl(cam, radius, camrooms, NULL, NULL);
+
+	if (cam->y - y < CAMERA_VCLEAR) {
+		cam->y = y + CAMERA_VCLEAR;
+		moved = true;
+	}
+
+	y = cam->y + 100000;
+	cdFindCeilingRoomYColourFlagsAtPos(cam, camrooms, &y, NULL, NULL);
+
+	if (y - cam->y < CAMERA_VCLEAR) {
+		cam->y = y - CAMERA_VCLEAR;
+		moved = true;
+	}
+
+	if (moved && cdExamLos08(eye, player->prop->rooms, cam,
+				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT
+				| GEOFLAG_FLOOR1 | GEOFLAG_FLOOR2 | GEOFLAG_LIFTFLOOR) == CDRESULT_COLLISION) {
+		cdGetPos(&hit, __LINE__, "player.c");
+
+		dist = sqrtf((cam->x - eye->x) * (cam->x - eye->x)
+				+ (cam->y - eye->y) * (cam->y - eye->y)
+				+ (cam->z - eye->z) * (cam->z - eye->z));
+
+		d = sqrtf((hit.x - eye->x) * (hit.x - eye->x)
+				+ (hit.y - eye->y) * (hit.y - eye->y)
+				+ (hit.z - eye->z) * (hit.z - eye->z)) - g_ThirdPersonCamClearance;
+
+		if (d < g_ThirdPersonCamMinDist || dist < 1) {
+			return false;
+		}
+
+		cam->x = eye->x + (cam->x - eye->x) * (d / dist);
+		cam->y = eye->y + (cam->y - eye->y) * (d / dist);
+		cam->z = eye->z + (cam->z - eye->z) * (d / dist);
+	}
+
+	for (pass = 0; pass < CAMERA_SHORTEN_PASSES; pass++) {
+		func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+		if (cdTestVolume(cam, radius * 0.5f, camrooms, CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+					CHECKVERTICAL_YES, CAMERA_VCLEAR, -CAMERA_VCLEAR)) {
+			return true;
+		}
+
+		dist = sqrtf((cam->x - eye->x) * (cam->x - eye->x)
+				+ (cam->y - eye->y) * (cam->y - eye->y)
+				+ (cam->z - eye->z) * (cam->z - eye->z));
+
+		d = dist - radius * 0.5f;
+
+		if (d < g_ThirdPersonCamMinDist || dist < 1) {
+			return false;
+		}
+
+		cam->x = eye->x + (cam->x - eye->x) * (d / dist);
+		cam->y = eye->y + (cam->y - eye->y) * (d / dist);
+		cam->z = eye->z + (cam->z - eye->z) * (d / dist);
+	}
+
+	return true;
+}
+
+/**
+ * Camera Tether: how far the rod may lag behind the aim, and how much of what
+ * is left it gives back per 60Hz tick.
+ *
+ * The lag is capped because the view direction is the aim, not the rod: the
+ * picture always looks where the crosshair is, and a rod swung far enough
+ * round puts the body at the edge of that picture and then outside it. At the
+ * default distance the body leaves a 60 degree field of view about 30 degrees
+ * off the rod, so even Loose is a body at the edge of the frame, briefly,
+ * with the recentre bringing it back.
+ */
+struct thirdpersontether {
+	f32 maxangle; // radians off the rest bearing behind the aim
+	f32 rate;     // of the remaining angle, per 60Hz tick
+};
+
+static const struct thirdpersontether g_ThirdPersonTethers[] = {
+	{ 0,                  0     }, // TETHER_OFF, never read
+	{ 60 * M_PI / 180.0f, 0.02f }, // TETHER_LOOSE
+	{ 45 * M_PI / 180.0f, 0.05f }, // TETHER_NORMAL
+	{ 30 * M_PI / 180.0f, 0.12f }, // TETHER_TIGHT
+};
+
+/**
+ * Camera Tether: turn the rigid offset into one on a rod that pivots about the
+ * eye.
+ *
+ * The rigid camera hangs off the back of the aim: turn, and it swings round
+ * with you; walk sideways, and it walks with you. The tethered one keeps the
+ * rigid offset's length and height but not its bearing. Its bearing is
+ * wherever the rod's far end stood last frame, seen from where the eye is
+ * now, so walking drags the camera along behind the direction of travel and
+ * turning on the spot leaves it where it was while the body turns in frame.
+ * That is the whole of the tether: a rod of fixed length, free to pivot, that
+ * the player pulls about the level.
+ *
+ * Only the horizontal bearing is tethered. The height rides the rigid offset
+ * as before, because a rod that could pivot vertically drops the body out of
+ * the bottom of the frame on every stair and ledge, and nothing tilts the
+ * view to follow it down. The height offset has a usable range for the same
+ * reason.
+ *
+ * Two things are done to the bearing every frame after the drag. It is held
+ * within the setting's angle of the rest bearing - the one the rigid camera
+ * would use, which is behind the aim with the sideways and forward offsets
+ * folded in, so a shoulder preset still rests over that shoulder - because
+ * the view looks where the crosshair is and a body too far off that line
+ * leaves the picture. And what is left is eased back towards rest, so a turn
+ * finishes with the camera behind the aim again rather than wherever the turn
+ * happened to leave it.
+ *
+ * The far end is remembered untraced. A wall brings the camera in along the
+ * rod; the rod itself is still full length, and the drag next frame wants the
+ * end of the rod and not the camera, or every wall would also shorten the
+ * tether and the camera would swing in against it.
+ *
+ * The rest bearing and the drag are read off the horizontal parts of the
+ * offset and the eye alone, and a rigid offset with no horizontal part (a
+ * camera straight above the eye) has no rod to pivot and is left as it is.
+ *
+ * The eye is bond2's own and not the copy the camera is built from. That copy
+ * has the damage shake and the camera tilt's bob already added, and a rod
+ * that pivoted about it would read every shake as the player moving and turn
+ * it into a bearing: a simulant's hits sent the camera thirty degrees round
+ * the player. The rod pivots about the player; the shake moves the picture
+ * with them.
+ */
+static void playerTetherCamera(struct player *player, struct coord *eye, struct coord *offset)
+{
+	const struct thirdpersontether *tether;
+	f32 rodlen;
+	f32 restx;
+	f32 restz;
+	f32 dirx = 0;
+	f32 dirz = 0;
+	f32 dirlen;
+	f32 angle;
+	f32 rate;
+	f32 sinangle;
+	f32 cosangle;
+
+	if (g_ThirdPersonCamTether <= TETHER_OFF || g_ThirdPersonCamTether > TETHER_MAX) {
 		return;
 	}
 
-	back.x = campos->x - g_Vars.currentplayer->bond2.look.x * dist;
-	back.y = campos->y - g_Vars.currentplayer->bond2.look.y * dist;
-	back.z = campos->z - g_Vars.currentplayer->bond2.look.z * dist;
+	tether = &g_ThirdPersonTethers[g_ThirdPersonCamTether];
 
-	if (cdExamLos08(campos, g_Vars.currentplayer->prop->rooms, &back,
+	rodlen = sqrtf(offset->x * offset->x + offset->z * offset->z);
+
+	if (rodlen < 1) {
+		return;
+	}
+
+	restx = offset->x / rodlen;
+	restz = offset->z / rodlen;
+
+	if (player->thirdpersontethered) {
+		// The drag: the rod's end stays put and the eye moves under it.
+		dirx = player->thirdpersontetherpos.x - eye->x;
+		dirz = player->thirdpersontetherpos.z - eye->z;
+		dirlen = sqrtf(dirx * dirx + dirz * dirz);
+	} else {
+		dirlen = 0;
+	}
+
+	if (dirlen < 1) {
+		// Nothing to read, or the player walked exactly onto the rod's end and
+		// left it no bearing: behind the aim it goes.
+		dirx = restx;
+		dirz = restz;
+	} else {
+		dirx /= dirlen;
+		dirz /= dirlen;
+	}
+
+	// The signed angle from rest round to the rod, so the cap and the recentre
+	// are one clamp and one scale on a number. The game's atan2f answers in
+	// 0 to tau and never below zero, so a rod a hair to the other side of rest
+	// comes back as nearly a full turn, and clamping that lands it on the far
+	// cap: the wrap has to come first.
+	angle = atan2f(restx * dirz - restz * dirx, restx * dirx + restz * dirz);
+
+	if (angle > M_PI) {
+		angle -= M_TAU;
+	}
+
+	if (angle > tether->maxangle) {
+		angle = tether->maxangle;
+	} else if (angle < -tether->maxangle) {
+		angle = -tether->maxangle;
+	}
+
+	rate = tether->rate * g_Vars.lvupdate60freal;
+
+	if (rate > 1) {
+		rate = 1;
+	}
+
+	angle -= angle * rate;
+
+	sinangle = sinf(angle);
+	cosangle = cosf(angle);
+
+	dirx = restx * cosangle - restz * sinangle;
+	dirz = restx * sinangle + restz * cosangle;
+
+	offset->x = dirx * rodlen;
+	offset->z = dirz * rodlen;
+
+	player->thirdpersontetherpos.x = eye->x + offset->x;
+	player->thirdpersontetherpos.y = eye->y + offset->y;
+	player->thirdpersontetherpos.z = eye->z + offset->z;
+	player->thirdpersontethered = true;
+}
+
+static void playerPullBackCamera(struct coord *campos)
+{
+	struct player *player = g_Vars.currentplayer;
+	struct coord offset;
+	struct coord back;
+	struct coord hit;
+	f32 prevdist = player->thirdpersondist;
+	f32 dist;
+	f32 len;
+
+	player->thirdpersondist = 0;
+
+	if (!playerIsThirdPerson(player)) {
+		// A spell on the eye - the low ready, or the camera off - restarts the
+		// tether behind the aim, the same as the first frame of third person
+		// does, and the body facing the aim, which is where first person left
+		// it.
+		player->bodyfadefrac = 0;
+		player->thirdpersontethered = false;
+		player->thirdpersonbodyset = false;
+		return;
+	}
+
+	offset.x = -player->bond2.look.x * g_ThirdPersonCamDist;
+	offset.y = -player->bond2.look.y * g_ThirdPersonCamDist;
+	offset.z = -player->bond2.look.z * g_ThirdPersonCamDist;
+
+	// Sideways is along look cross up, the same right hand playerTiltCamera()
+	// rolls into, so a positive setting puts the camera over the player's right
+	// shoulder. bond2's own vectors and not the tilted copies the camera is
+	// built from: the tilt is a lean of the picture, and the camera walking
+	// sideways with every step is not what was asked for.
+	if (g_ThirdPersonCamSide != 0) {
+		struct coord *look = &player->bond2.look;
+		struct coord *up = &player->bond2.up;
+
+		offset.x += (look->y * up->z - look->z * up->y) * g_ThirdPersonCamSide;
+		offset.y += (look->z * up->x - look->x * up->z) * g_ThirdPersonCamSide;
+		offset.z += (look->x * up->y - look->y * up->x) * g_ThirdPersonCamSide;
+	}
+
+	// Forward and back is along the direction the player faces with the pitch
+	// taken out of it, which is the axis the pull-back above is not: that one
+	// rides the look vector, so looking up walks the camera down towards the
+	// floor and looking down lifts it. This one holds its height whatever the
+	// view is doing, and negative brings the camera round in front of the
+	// player rather than behind them.
+	//
+	// The facing comes back out of the same right vector the sideways offset
+	// uses rather than out of the look vector, because the right vector is
+	// horizontal at every pitch - (right.z, -right.x) is it turned a quarter
+	// turn - and flattening the look vector has nothing left to normalise with
+	// the view straight up or straight down.
+	if (g_ThirdPersonCamForward != 0) {
+		struct coord *look = &player->bond2.look;
+		struct coord *up = &player->bond2.up;
+		f32 rightx = look->y * up->z - look->z * up->y;
+		f32 rightz = look->x * up->y - look->y * up->x;
+		f32 rightlen = sqrtf(rightx * rightx + rightz * rightz);
+
+		if (rightlen > 0.0001f) {
+			offset.x -= rightz / rightlen * g_ThirdPersonCamForward;
+			offset.z += rightx / rightlen * g_ThirdPersonCamForward;
+		}
+	}
+
+	// Height is straight up in the world and not along the camera's own up
+	// vector, for the same reason forward and back is level: the two of them
+	// place the camera relative to the player, and a placement that swings
+	// about as the view pitches is the thing the pull-back already does.
+	offset.y += g_ThirdPersonCamHeight;
+
+	// Camera Tether: the same offset, on a rod that pivots about the eye rather
+	// than one bolted to the back of the aim.
+	playerTetherCamera(player, &player->bond2.eyepos, &offset);
+
+	len = sqrtf(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+
+	// Nowhere to go, and nothing to divide by below.
+	if (len < 1) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	back.x = campos->x + offset.x;
+	back.y = campos->y + offset.y;
+	back.z = campos->z + offset.z;
+
+	dist = len;
+
+	if (cdExamLos08(campos, player->prop->rooms, &back,
 				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
-				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT) == CDRESULT_COLLISION) {
+				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT
+				| GEOFLAG_FLOOR1 | GEOFLAG_FLOOR2 | GEOFLAG_LIFTFLOOR) == CDRESULT_COLLISION) {
 		cdGetPos(&hit, __LINE__, "player.c");
 
 		dist = sqrtf((hit.x - campos->x) * (hit.x - campos->x)
 				+ (hit.y - campos->y) * (hit.y - campos->y)
 				+ (hit.z - campos->z) * (hit.z - campos->z)) - g_ThirdPersonCamClearance;
 
-		// Nothing between here and THIRDPERSON_CAMMINDIST is a view: leave the
-		// camera on the eye. The body is not put away with it - it is drawn
-		// wherever the camera ends up - so this is the frame it has to be
-		// possible to see through, and the fade below has already run most of
-		// its length getting here.
+		// Nothing between here and the minimum distance is a view: leave the
+		// camera on the eye, inside a body that is faded as far as it goes.
 		if (dist < g_ThirdPersonCamMinDist) {
-			g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+			player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
 			return;
 		}
 	}
 
-	// The body goes translucent as the camera closes on it rather than at the
-	// moment it ends up inside. The trace shortens smoothly as she backs into
-	// a corner, so the fade is smooth all the way to the clamp above, and the
-	// cut to the eye happens with the body already almost gone.
+	// The fraction of the offset that fits, so both axes come in together.
+	back.x = campos->x + offset.x * (dist / len);
+	back.y = campos->y + offset.y * (dist / len);
+	back.z = campos->z + offset.z * (dist / len);
+
+	// Off the walls, the floor and the ceiling: a volume where the line
+	// above was a line. This may move the camera off the line, so the
+	// distance is read back from wherever it ends up.
+	if (!playerClearCamera(player, campos, &back)) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	offset.x = back.x - campos->x;
+	offset.y = back.y - campos->y;
+	offset.z = back.z - campos->z;
+
+	len = sqrtf(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+
+	if (len < g_ThirdPersonCamMinDist || len < 1) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	dist = len;
+
+	// Further out than last frame, and last frame was a view of its own rather
+	// than the eye: give the room back over a few frames instead of all at once.
+	if (prevdist > 0 && dist > prevdist) {
+		f32 rate = THIRDPERSON_EASE_RATE * g_Vars.lvupdate60freal;
+
+		if (rate > 1) {
+			rate = 1;
+		}
+
+		dist = prevdist + (dist - prevdist) * rate;
+	}
+
+	// Translucent as the camera closes on her rather than at the moment it ends
+	// up inside. The distance shortens smoothly as she backs into a corner, so
+	// the fade is smooth all the way to the cut above.
 	if (dist >= g_BodyFadeStart) {
-		g_Vars.currentplayer->bodyfadefrac = 0;
+		player->bodyfadefrac = 0;
 	} else {
-		g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
 			* (g_BodyFadeStart - dist)
 			/ (g_BodyFadeStart - g_ThirdPersonCamMinDist);
 	}
 
-	g_Vars.currentplayer->thirdpersondist = dist;
+	player->thirdpersondist = dist;
 
-	campos->x -= g_Vars.currentplayer->bond2.look.x * dist;
-	campos->y -= g_Vars.currentplayer->bond2.look.y * dist;
-	campos->z -= g_Vars.currentplayer->bond2.look.z * dist;
+	campos->x += offset.x * (dist / len);
+	campos->y += offset.y * (dist / len);
+	campos->z += offset.z * (dist / len);
 
 	// Kept for the death camera, which stops here rather than working out
 	// somewhere of its own to stand.
-	g_Vars.currentplayer->thirdpersoncampos = *campos;
+	player->thirdpersoncampos = *campos;
 }
+
+/**
+ * How far in front of the camera the player's own shots should start.
+ *
+ * The player's shot is not fired from the eye. bgunCalculatePlayerShotSpread()
+ * builds it at the camera's own origin, through the pixel the crosshair is
+ * drawn on, and everything downstream - the bullet, the melee swing's reach,
+ * the laser stream, the rocket's spawn point - is measured from there. Stock
+ * never had to think about it because the camera was the eye.
+ *
+ * Third person moves the camera and leaves that assumption behind, and the
+ * cases divide by what they do with the origin. A bullet only wants the line,
+ * and the line is the same one whichever point on it the shot starts from, so
+ * hitscan was correct from the first day. Everything that measures a distance
+ * from the origin or puts an object at it was not: a melee swing spent its
+ * range on the ground behind Joanna and never reached what she was standing
+ * against, the laser stream's three hundred units ended before they got to her,
+ * and a rocket spawned at the camera and flew past her from behind.
+ *
+ * So the origin walks up its own ray by as far as the camera was backed off.
+ * The ray is untouched, so the crosshair still marks what will be hit and no
+ * bullet changes; the origin lands at the player, which is what the rest of it
+ * was asking for. With a sideways offset it lands beside them rather than on
+ * them, on the ray the crosshair is aimed down, which is the same trade the
+ * offset makes everywhere else.
+ *
+ * Zero for every camera that is on the eye, and for every mode that is not this
+ * playable third person: thirdpersondist is only written by the normal tick, so a
+ * cutscene or an eyespy entered from third person would otherwise carry the
+ * last value it had.
+ */
+f32 playerGetShotOriginPullback(void)
+{
+#ifdef PLATFORM_N64
+	return 0;
+#else
+	struct player *player = g_Vars.currentplayer;
+
+	if (player->cameramode != CAMERAMODE_DEFAULT || !playerIsThirdPerson(player)) {
+		return 0;
+	}
+
+	// The forward offset can bring the camera round in front of the eye, and
+	// then the origin belongs back down the ray rather than up it. The distance
+	// itself carries no sign - it is the length of an offset that may point
+	// anywhere - so which side of the eye the camera came to rest on is read
+	// off the look vector, and every consumer of this takes the negative the
+	// same way it takes the positive.
+	if ((player->bond2.eyepos.x - player->thirdpersoncampos.x) * player->bond2.look.x
+			+ (player->bond2.eyepos.y - player->thirdpersoncampos.y) * player->bond2.look.y
+			+ (player->bond2.eyepos.z - player->thirdpersoncampos.z) * player->bond2.look.z < 0) {
+		return -player->thirdpersondist;
+	}
+
+	return player->thirdpersondist;
+#endif
+}
+
+#ifndef PLATFORM_N64
+/**
+ * The vector from the third person camera to the eye, for a thing built in the
+ * camera's own space that should have been built at the player.
+ *
+ * The muzzle is the one that matters. bgun0f0a5550() reads it off the view
+ * model's muzzle node and multiplies by the camera matrix, so it comes out
+ * wherever the gun would be if it were being drawn - which in third person is a
+ * couple of metres behind the player, next to the camera, and is where the
+ * rockets and the beams were coming from. This puts it back at the hands.
+ *
+ * The exact eye rather than the pullback above, because a muzzle is a point and
+ * not a ray: with a sideways offset the beam should leave the player's gun, not
+ * the air beside them.
+ *
+ * False when there is nothing to correct, so the caller adds nothing.
+ */
+bool playerGetCameraToEyeOffset(struct coord *offset)
+{
+	struct player *player = g_Vars.currentplayer;
+
+	// The distance and not the pullback above: that one is signed by which side
+	// of the eye the camera is on, and a muzzle in front of the player wants
+	// putting back at the hands just as much as one behind them does.
+	if (player->cameramode != CAMERAMODE_DEFAULT
+			|| !playerIsThirdPerson(player)
+			|| player->thirdpersondist <= 0) {
+		return false;
+	}
+
+	offset->x = player->bond2.eyepos.x - player->thirdpersoncampos.x;
+	offset->y = player->bond2.eyepos.y - player->thirdpersoncampos.y;
+	offset->z = player->bond2.eyepos.z - player->thirdpersoncampos.z;
+
+	return true;
+}
+#endif
 
 /**
  * Watch the body fall, from wherever the camera was standing when it did.
@@ -4665,7 +5361,7 @@ void playerTick(bool arg0)
 		}
 
 		// The lean is applied last, to whatever basis the camera ended up with.
-		playerTiltCamera(&camup, &camlook);
+		playerTiltCamera(&spf4, &camup, &camlook);
 
 		player0f0c1840(&spf4,
 				&camup,
@@ -5598,8 +6294,9 @@ Gfx *playerRenderHud(Gfx *gdl)
 		// her. The view model is drawn in screen space from an eye the camera
 		// is no longer sitting at, so it would hang across the picture. Only
 		// the model goes: bgunTickGameplay2() above still runs, and the
-		// crosshair below is still correct, the camera having moved only along
-		// the axis it aims down.
+		// crosshair below is still correct, because the shot is built at the
+		// camera through the crosshair's own pixel wherever the camera stands
+		// (playerGetShotOriginPullback()).
 		//
 		// The toggle rather than the distance. A wall can hold the camera on
 		// the eye with third person still on, and the view model used to come
@@ -5610,6 +6307,22 @@ Gfx *playerRenderHud(Gfx *gdl)
 		// body is drawn on, so the two can never disagree - and it is already
 		// false while aiming, which is the case that genuinely wants the gun
 		// back.
+		//
+		// The light glares go on before the gun rather than after it. A glare
+		// is a depth-less screen rectangle whose only occlusion is the line of
+		// sight test in artifactTestLos(), and the view model is not in the
+		// world that test walks, so a light behind the gun drew its glare on
+		// top of the gun. Drawn first, the opaque gun simply paints over it -
+		// the gun goes into a freshly cleared depth buffer, so this is the
+		// depth test the rectangle cannot have. The tell is a translucent gun
+		// wherever a light sits behind it; the fix is Murk's
+		// (perfect_dark_netplay, PORT_GLARE_OCCLUSION.md). In third person the
+		// gun is not drawn and the body occludes the glare through
+		// shotTestLos() instead.
+		if (g_Vars.currentplayer->visionmode != VISIONMODE_XRAY) {
+			gdl = bgRenderArtifacts(gdl);
+		}
+
 		if (!playerIsThirdPerson(g_Vars.currentplayer)) {
 #ifndef PLATFORM_N64
 			// pd.ipod_ad "iPod Ad": the first-person weapon renders pure white.
@@ -5626,10 +6339,6 @@ Gfx *playerRenderHud(Gfx *gdl)
 		}
 
 		gdl = lasersightRenderDot(gdl);
-
-		if (g_Vars.currentplayer->visionmode != VISIONMODE_XRAY) {
-			gdl = bgRenderArtifacts(gdl);
-		}
 
 		if (g_NbombsActive) {
 			gdl = nbombRenderOverlay(gdl);
@@ -6498,6 +7207,124 @@ s32 playerTickBeams(struct prop *prop)
 	return 0;
 }
 
+#ifndef PLATFORM_N64
+/**
+ * Camera Tether: the body faces where it is going, not where the camera looks.
+ *
+ * Stock builds the body's facing from vv_theta, and vv_theta is the camera's
+ * yaw, so orbiting the camera with the right stick turned the body with it
+ * and a tethered camera looked like the rigid one with a lag. With the tether
+ * on, the body keeps a facing of its own: while the left stick moves it, it
+ * turns towards the direction of travel (which is camera-relative already,
+ * because the walk is along vv_theta); while it stands, it holds; and while
+ * the trigger is held, and for a moment after, it faces the camera, because
+ * the shot is fired from the camera through the crosshair and a body firing
+ * over its shoulder would be aiming somewhere the bullet is not going.
+ *
+ * The walk animation is chosen from the sideways and forwards speeds taken
+ * relative to the body, not the look, so a body facing its travel plays the
+ * forward run rather than a strafe, and the chooser's own angleoffset is left
+ * to chase whatever residual a turn in progress leaves - the same partial
+ * turn stock gives a strafe, applied on top of the body's facing rather than
+ * the look's. speedtheta is zeroed: the look turning is the camera orbiting,
+ * and the body has nothing to turn in place for.
+ *
+ * Body Turn Speed (g_TetherBodyTurnSpeed, Stance.BodyTurnSpeed) is how fast the body comes round, in
+ * degrees per 60Hz tick; the default's about-turn takes a tenth of a second.
+ * TETHER_FIRE_HOLD is how long a released trigger keeps the body facing the
+ * camera, so a tap does not flick it.
+ */
+#define TETHER_FIRE_HOLD 30
+
+static bool playerTetherBodyActive(struct player *player, s32 playernum)
+{
+	return g_ThirdPersonCamTether != TETHER_OFF
+		&& playernum == g_Vars.currentplayernum
+		&& playerIsThirdPerson(player);
+}
+
+static void playerTetherBody(struct player *player, struct chrdata *chr, f32 *facing, f32 *sideways, f32 *forwards, f32 *speedtheta)
+{
+	f32 look = *facing;
+	f32 target;
+	f32 diff;
+	f32 limit;
+	f32 speed;
+	f32 travel;
+	bool firing;
+
+	if (!player->thirdpersonbodyset) {
+		player->thirdpersonbodytheta = look;
+		player->thirdpersonbodyset = true;
+	}
+
+	if (!chrIsDead(chr)) {
+		speed = sqrtf(*sideways * *sideways + *forwards * *forwards);
+
+		firing = player->hands[HAND_LEFT].triggeron
+			|| player->hands[HAND_RIGHT].triggeron
+			|| player->hands[HAND_LEFT].firing
+			|| player->hands[HAND_RIGHT].firing;
+
+		if (firing) {
+			player->thirdpersonfirehold = TETHER_FIRE_HOLD;
+		} else if (player->thirdpersonfirehold > 0) {
+			player->thirdpersonfirehold -= g_Vars.lvupdate60;
+		}
+
+		if (player->thirdpersonfirehold > 0) {
+			target = look;
+		} else if (speed >= 0.05f) {
+			// The same reading of the speeds the animation chooser makes,
+			// which is what puts the body facing at look - angle when it
+			// turns towards a strafe. Here it goes the whole way.
+			target = look - atan2f(*sideways, *forwards);
+		} else {
+			target = player->thirdpersonbodytheta;
+		}
+
+		diff = target - player->thirdpersonbodytheta;
+
+		while (diff > M_PI) {
+			diff -= M_TAU;
+		}
+
+		while (diff < -M_PI) {
+			diff += M_TAU;
+		}
+
+		limit = g_TetherBodyTurnSpeed * (M_PI / 180.0f) * g_Vars.lvupdate60freal;
+
+		if (diff > limit) {
+			diff = limit;
+		} else if (diff < -limit) {
+			diff = -limit;
+		}
+
+		player->thirdpersonbodytheta += diff;
+
+		while (player->thirdpersonbodytheta >= M_TAU) {
+			player->thirdpersonbodytheta -= M_TAU;
+		}
+
+		while (player->thirdpersonbodytheta < 0) {
+			player->thirdpersonbodytheta += M_TAU;
+		}
+
+		// The speeds as the body sees them: the travel angle in look space,
+		// less how far the body is turned from the look.
+		if (speed >= 0.05f) {
+			travel = atan2f(*sideways, *forwards) - (look - player->thirdpersonbodytheta);
+			*sideways = speed * sinf(travel);
+			*forwards = speed * cosf(travel);
+		}
+	}
+
+	*speedtheta = 0;
+	*facing = player->thirdpersonbodytheta;
+}
+#endif
+
 s32 playerTickThirdPerson(struct prop *prop)
 {
 	s32 playernum = playermgrGetPlayerNumByProp(prop);
@@ -6518,6 +7345,10 @@ s32 playerTickThirdPerson(struct prop *prop)
 	struct prop *leftprop;
 	struct prop *rightprop;
 	struct coord sp5c;
+	f32 facing;
+	f32 speedsideways;
+	f32 speedforwards;
+	f32 speedtheta;
 
 	if (g_Vars.currentplayerindex == 0 && player->haschrbody) {
 		chr->hidden &= ~CHRHFLAG_00000800;
@@ -6618,6 +7449,22 @@ s32 playerTickThirdPerson(struct prop *prop)
 				|| (player->cameramode == CAMERAMODE_THIRDPERSON && player->visionmode == VISIONMODE_SLAYERROCKET))) {
 		chr->actiontype = ACT_BONDMULTI;
 
+		facing = (360.0f - player->vv_theta) * 0.017450513318181f;
+		speedsideways = player->speedsideways;
+		speedforwards = player->speedforwards;
+		speedtheta = player->speedtheta;
+
+#ifndef PLATFORM_N64
+		// Camera Tether: the body's own facing, and the speeds relative to
+		// it. Outside the block below because the facing is applied after
+		// it, and every tick, whether or not this one animates the body.
+		if (playerTetherBodyActive(player, playernum)) {
+			playerTetherBody(player, chr, &facing, &speedsideways, &speedforwards, &speedtheta);
+		} else {
+			player->thirdpersonbodyset = false;
+		}
+#endif
+
 		if ((chr->hidden & CHRHFLAG_00000800) == 0) {
 #ifndef PLATFORM_N64
 			// Our own body, and only on the tick that belongs to it. Another
@@ -6633,7 +7480,7 @@ s32 playerTickThirdPerson(struct prop *prop)
 			rightprop = chrGetHeldProp(chr, HAND_RIGHT);
 			animnum = modelGetAnimNum(chr->model);
 
-			playerChooseThirdPersonAnimation(chr, bmoveGetCrouchPosByPlayer(playernum), player->speedsideways, player->speedforwards, player->speedtheta, &player->angleoffset, &chr->act_bondmulti.animcfg);
+			playerChooseThirdPersonAnimation(chr, bmoveGetCrouchPosByPlayer(playernum), speedsideways, speedforwards, speedtheta, &player->angleoffset, &chr->act_bondmulti.animcfg);
 
 			if (chrIsDead(chr)) {
 				shootrotx = 0;
@@ -6673,7 +7520,7 @@ s32 playerTickThirdPerson(struct prop *prop)
 
 		modelSetRootPosition(chr->model, &sp8c);
 
-		angle = (360.0f - player->vv_theta) * 0.017450513318181f - player->angleoffset;
+		angle = facing - player->angleoffset;
 
 		if (angle >= M_BADTAU) {
 			angle -= M_BADTAU;

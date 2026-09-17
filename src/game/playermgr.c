@@ -376,6 +376,8 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->rolltime60 = 0;
 	g_Vars.players[index]->camtiltroll = 0;
 	g_Vars.players[index]->camtiltpitch = 0;
+	g_Vars.players[index]->camstepphase = 0;
+	g_Vars.players[index]->camstepamp = 0;
 
 	g_Vars.players[index]->autoyaimenabled = true;
 	g_Vars.players[index]->autoaimy = 0;
@@ -680,6 +682,13 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->thirdpersoncampos.x = 0;
 	g_Vars.players[index]->thirdpersoncampos.y = 0;
 	g_Vars.players[index]->thirdpersoncampos.z = 0;
+	g_Vars.players[index]->thirdpersontetherpos.x = 0;
+	g_Vars.players[index]->thirdpersontetherpos.y = 0;
+	g_Vars.players[index]->thirdpersontetherpos.z = 0;
+	g_Vars.players[index]->thirdpersontethered = false;
+	g_Vars.players[index]->thirdpersonbodytheta = 0;
+	g_Vars.players[index]->thirdpersonbodyset = false;
+	g_Vars.players[index]->thirdpersonfirehold = 0;
 #endif
 	g_Vars.players[index]->pausemode = PAUSEMODE_UNPAUSED;
 	g_Vars.players[index]->pausetime60 = 0;

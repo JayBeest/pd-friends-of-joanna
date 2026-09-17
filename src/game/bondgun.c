@@ -3756,6 +3756,18 @@ void bgun0f09d8dc(f32 breathing, f32 arg1, f32 arg2, f32 arg3, f32 arg4)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Gun Sway With Bob: the gun is drawn in screen space and rides with the
+	// picture, so with the step bob up the world bobbed under a gun that
+	// hardly moved, which read as floating. Scale the walking share only -
+	// whatever the speed put above the idle tenth - by one more than the bob
+	// setting. That and the breathing floors below are stock's, so the gun at
+	// rest is the gun at rest.
+	if (PLAYER_EXTCFG().gunswaywithbob && PLAYER_EXTCFG().camerabob > 0) {
+		player->gunposamplitude = 0.1f + (player->gunposamplitude - 0.1f) * (1.0f + PLAYER_EXTCFG().camerabob);
+	}
+#endif
+
 	if (bmoveGetCrouchPos() != CROUCHPOS_SQUAT) {
 		if (player->gunposamplitude < 0.3f * g_Vars.currentplayer->bondbreathing) {
 			player->gunposamplitude = 0.3f * g_Vars.currentplayer->bondbreathing;
@@ -5586,6 +5598,7 @@ void bgunCalculatePlayerShotSpread(struct coord *gunpos2d, struct coord *gundir2
 	f32 spread = 0;
 	f32 scaledspread;
 	f32 randfactor;
+	f32 pullback;
 	struct weaponfunc *func = currentPlayerGetWeaponFunction(handnum);
 	struct player *player = g_Vars.currentplayer;
 
@@ -5634,11 +5647,20 @@ void bgunCalculatePlayerShotSpread(struct coord *gunpos2d, struct coord *gundir2
 	crosspos[1] = player->crosspos[1] + (randfactor * scaledspread * camGetScreenHeight())
 		/ viGetHeight();
 
-	gunpos2d->x = 0;
-	gunpos2d->y = 0;
-	gunpos2d->z = 0;
-
 	cam0f0b4c3c(crosspos, gundir2d, 1);
+
+	// The shot leaves the camera, and the third person camera is not at the
+	// eye. Slide the origin along its own ray to where she is, so that anything
+	// measuring from it - the laser stream's length, a rocket's spawn point, a
+	// glass pane's hit test - measures from her and not from the picture's
+	// vantage point behind her. The ray does not move, so nothing a bullet does
+	// changes. playerGetShotOriginPullback() has the rest, and returns 0 for
+	// every camera that is on the eye.
+	pullback = playerGetShotOriginPullback();
+
+	gunpos2d->x = gundir2d->x * pullback;
+	gunpos2d->y = gundir2d->y * pullback;
+	gunpos2d->z = gundir2d->z * pullback;
 
 #ifndef PLATFORM_N64
 	// Chaos "backfire" (pd.backfire): rotate the shot ray 180 degrees about
@@ -8584,6 +8606,24 @@ void bgun0f0a5550(s32 handnum)
 
 		hand->muzzlez = -hand->cammtx.m[3][2];
 	}
+
+#ifndef PLATFORM_N64
+	// Every branch above put the muzzle where the view model's is, and the view
+	// model is placed from the camera - posmtx is cammtx through the camera
+	// matrix, and the two node branches transform by it directly. In third
+	// person that lands it beside the camera, behind her, which is where the
+	// rockets would spawn and the beams would start from. Move it to where it
+	// would be if the camera had stayed on the eye.
+	{
+		struct coord eyeoffset;
+
+		if (playerGetCameraToEyeOffset(&eyeoffset)) {
+			hand->muzzlepos.x += eyeoffset.x;
+			hand->muzzlepos.y += eyeoffset.y;
+			hand->muzzlepos.z += eyeoffset.z;
+		}
+	}
+#endif
 
 	switch (weaponnum) {
 	case WEAPON_ROCKETLAUNCHER:

@@ -314,8 +314,12 @@ void mainInit(void) {
     modConfigLoad(MOD_CONFIG_FNAME);
   }
 
-  // Disabled: use vanilla maps until mod loader is ready
-  // mpSetArenaMode(g_NumMpArenas_AIO > 0);
+  // Build the arena list once every modconfig has been read. With no
+  // mod-declared MP stage this leaves g_MpArenas on the vanilla table and
+  // g_NumMpArenaGroups at 0, which is the unmodded game's exact state.
+  mpArenasRebuild();
+  modStageRegReport();
+  modStageRegWarnUnlisted();
 
   langInit();
   lvInit();

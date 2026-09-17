@@ -1122,8 +1122,18 @@ bool shotTestLos(struct coord *gunpos2d, struct coord *gundir2d, struct coord *g
 	while (propptr >= g_Vars.onscreenprops) {
 		prop = *propptr;
 		if (prop) {
+			// The player's own body is left out, being behind the eye - except
+			// with the third person camera off the eye, where the camera is
+			// behind the body and the body is the nearest thing that can stand
+			// between it and a light. The glares are the only caller, and a
+			// glare drawn over the body is the same fault as one drawn over the
+			// gun (playerRenderHud()).
 			if (prop->type == PROPTYPE_CHR
-					|| (prop->type == PROPTYPE_PLAYER && prop->chr && (g_Vars.in_cutscene || playermgrGetPlayerNumByProp(prop) != g_Vars.currentplayernum))) {
+					|| (prop->type == PROPTYPE_PLAYER && prop->chr && (g_Vars.in_cutscene || playermgrGetPlayerNumByProp(prop) != g_Vars.currentplayernum
+#ifndef PLATFORM_N64
+						|| g_Vars.currentplayer->thirdpersondist > 0
+#endif
+						))) {
 				chrTestHit(prop, &shotdata, false, true);
 			} else if (prop->type == PROPTYPE_WEAPON || (prop->type == PROPTYPE_DOOR && ((struct doorobj *)prop->obj)->doortype != DOORTYPE_LASER)
 					|| (prop->type == PROPTYPE_OBJ && prop->obj->type != OBJTYPE_GLASS && prop->obj->type != OBJTYPE_TINTEDGLASS)) {

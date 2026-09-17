@@ -197,8 +197,10 @@ void luaOverlayAdd(s32 kind, s32 x, s32 y, s32 w, s32 h, u32 color,
 
 /* Protected: [name (light userdata), argc ints...]. Looking the list up
  * allocates (the key strings), so it runs inside lua_pcall like everything
- * else that can raise. Each handler runs in its own lua_pcall, so a broken
- * handler is logged and the rest still run. */
+ * else that can raise. Each handler runs in its own luaaiPcall, so a broken
+ * handler is logged and the rest still run, and outside an entity call each
+ * handler gets its own instruction budget: one that loops is stopped without
+ * taking the handlers after it down too. */
 static int luaEventDispatchP(lua_State *L)
 {
 	const char *name = (const char *)lua_touserdata(L, 1);
@@ -221,7 +223,7 @@ static int luaEventDispatchP(lua_State *L)
 			for (a = 0; a < argc; a++) {
 				lua_pushvalue(L, 2 + a);
 			}
-			if (lua_pcall(L, argc, 0, 0) != LUA_OK) {
+			if (luaaiPcall(L, argc, 0) != LUA_OK) {
 				luaApiLog2("event error: ", luaaiErrStr(L, -1));
 				lua_pop(L, 1); /* error msg */
 			}
@@ -259,7 +261,9 @@ static void luaEventDispatchInts(const char *name, int argc, const lua_Integer *
 		lua_pushinteger(L, argv[a]);
 	}
 
-	if (luaaiPcall(L, argc + 1, 0) != LUA_OK) {
+	/* Not luaaiPcall: the lookup runs no Lua code, and arming here would
+	 * make every handler share one budget. */
+	if (lua_pcall(L, argc + 1, 0, 0) != LUA_OK) {
 		luaApiLog2("event error: ", luaaiErrStr(L, -1));
 		lua_pop(L, 1);
 	}

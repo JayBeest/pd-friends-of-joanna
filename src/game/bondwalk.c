@@ -48,6 +48,8 @@ void bwalkInit(void)
 
 	g_Vars.currentplayer->camtiltroll = 0;
 	g_Vars.currentplayer->camtiltpitch = 0;
+	g_Vars.currentplayer->camstepphase = 0;
+	g_Vars.currentplayer->camstepamp = 0;
 
 	g_Vars.currentplayer->swaypos = 0;
 	g_Vars.currentplayer->swayoffset = 0;

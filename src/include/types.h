@@ -2972,6 +2972,10 @@ struct player {
   // starting nor stopping is a jolt.
   /*ext*/ f32 camtiltroll;
   /*ext*/ f32 camtiltpitch;
+  // ... and the step bob: where in the walk cycle the eye is, in radians,
+  // and how high it is bobbing, chasing the ground speed.
+  /*ext*/ f32 camstepphase;
+  /*ext*/ f32 camstepamp;
   /*ext*/ f32 codaimfrac; // COD Style Aiming: how far the gun has come up to the sights, 0 to 1
   // The combat roll's push, in world units per tick, and the frame the roll
   // started. Held as a vector rather than a direction and a speed so that
@@ -3011,6 +3015,23 @@ struct player {
   // so the two are read together: a distance of 0 means there is no frozen
   // camera to go back to, and the death is the stock first person one.
   /*ext*/ struct coord thirdpersoncampos;
+  // Camera Tether: where the far end of the rod stood last frame, before any
+  // wall brought the camera in, so this frame can read which way round the
+  // player it is pointing. Only x and z are used; the height is not
+  // tethered. Nothing to read until the flag says a frame has written it -
+  // the first frame of third person, and every one after a spell on the eye,
+  // starts the rod behind the aim.
+  /*ext*/ struct coord thirdpersontetherpos;
+  /*ext*/ bool thirdpersontethered;
+  // Camera Tether: the body's own facing, in the radians chrSetLookAngle()
+  // takes, kept apart from vv_theta so the right stick turns the camera and
+  // not the body. It turns to face where the left stick moves the body, holds
+  // while the body stands, and faces the camera for as long as the trigger is
+  // held and a moment after (the countdown, in 60Hz ticks). Not worth reading
+  // until the flag says a frame has written it.
+  /*ext*/ f32 thirdpersonbodytheta;
+  /*ext*/ bool thirdpersonbodyset;
+  /*ext*/ s32 thirdpersonfirehold;
 };
 
 struct ailist {
@@ -6434,6 +6455,10 @@ struct extplayerconfig {
   f32 radialmenuspeed;
   f32 crosshairsway;
   f32 cameratilt;
+  f32 camerabob;
+  s32 gunswaywithbob;
+  s32 tiltforward;
+  s32 tiltinvert;
   s32 codaiming;
   s32 codaimlock;
   s32 extcontrols;

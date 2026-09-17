@@ -275,6 +275,11 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterFloat("Stance.CamDist", &g_ThirdPersonCamDist, 0.f, 1000.f);
 	configRegisterFloat("Stance.CamClearance", &g_ThirdPersonCamClearance, 0.f, 200.f);
 	configRegisterFloat("Stance.CamMinDist", &g_ThirdPersonCamMinDist, 0.f, 500.f);
+	configRegisterFloat("Stance.CamSide", &g_ThirdPersonCamSide, -150.f, 150.f);
+	configRegisterFloat("Stance.CamForward", &g_ThirdPersonCamForward, -150.f, 150.f);
+	configRegisterFloat("Stance.CamHeight", &g_ThirdPersonCamHeight, -150.f, 150.f);
+	configRegisterInt("Stance.CamTether", &g_ThirdPersonCamTether, TETHER_OFF, TETHER_MAX);
+	configRegisterFloat("Stance.BodyTurnSpeed", &g_TetherBodyTurnSpeed, 5.f, 90.f);
 	configRegisterFloat("Stance.FadeStart", &g_BodyFadeStart, 0.f, 1000.f);
 	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
 	configRegisterInt("Stance.LowerBodyMask", &g_AnimSplitLowerMask, 0, 0x7fff);
@@ -299,6 +304,10 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 		configRegisterFloat(strFmt("Game.Player%d.RadialMenuSpeed", i), &g_PlayerExtCfg[j].radialmenuspeed, 0.f, 10.f);
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairSway", i), &g_PlayerExtCfg[j].crosshairsway, 0.f, 10.f);
 		configRegisterFloat(strFmt("Game.Player%d.CameraTilt", i), &g_PlayerExtCfg[j].cameratilt, 0.f, 4.f);
+		configRegisterFloat(strFmt("Game.Player%d.CameraBob", i), &g_PlayerExtCfg[j].camerabob, 0.f, 4.f);
+		configRegisterInt(strFmt("Game.Player%d.GunSwayWithBob", i), &g_PlayerExtCfg[j].gunswaywithbob, 0, 1);
+		configRegisterInt(strFmt("Game.Player%d.TiltIntoRun", i), &g_PlayerExtCfg[j].tiltforward, 0, 1);
+		configRegisterInt(strFmt("Game.Player%d.InvertTilt", i), &g_PlayerExtCfg[j].tiltinvert, 0, 1);
 		configRegisterInt(strFmt("Game.Player%d.CodAiming", i), &g_PlayerExtCfg[j].codaiming, 0, 1);
 		configRegisterInt(strFmt("Game.Player%d.CodAimLock", i), &g_PlayerExtCfg[j].codaimlock, 0, 1);
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairEdgeBoundary", i), &g_PlayerExtCfg[j].crosshairedgeboundary, 0.0f, 1.0f);

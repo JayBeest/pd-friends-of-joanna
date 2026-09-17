@@ -1375,6 +1375,86 @@ static MenuItemHandlerResult menuhandlerCameraTilt(s32 operation, struct menuite
 	return 0;
 }
 
+/**
+ * Tilt Into Run: running pitches the view down into the run and backing away
+ * pitches it up, on the axis the roll leaves out. Off by default - pitching
+ * the horizon with every step is the part people either want or cannot stand.
+ * Nothing without Camera Tilt itself.
+ */
+static MenuItemHandlerResult menuhandlerTiltIntoRun(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].tiltforward;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].tiltforward = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt <= 0;
+	}
+
+	return 0;
+}
+
+/**
+ * Invert Tilt: every lean the other way about. Which of the two reads as
+ * weight is taste. Nothing without Camera Tilt itself.
+ */
+static MenuItemHandlerResult menuhandlerInvertTilt(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].tiltinvert;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].tiltinvert = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].cameratilt <= 0;
+	}
+
+	return 0;
+}
+
+/**
+ * Camera Bob: how high the eye bobs with a step. Its own amount rather than
+ * a part of Camera Tilt, because the lean and the bob are separate motions
+ * and a player may want either without the other. 1 is half of Quake's bob,
+ * 2 is Quake as shipped.
+ */
+static MenuItemHandlerResult menuhandlerCameraBob(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GETSLIDER:
+		data->slider.value = g_PlayerExtCfg[g_ExtMenuPlayer].camerabob * 10.f + 0.5f;
+		break;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].camerabob = (f32)data->slider.value / 10.f;
+		break;
+	}
+
+	return 0;
+}
+
+/**
+ * Gun Sway With Bob: the gun's own step motion scaled up with the bob, by one
+ * more than the bob setting, so the two move as one body. Nothing without
+ * Camera Bob itself.
+ */
+static MenuItemHandlerResult menuhandlerGunSwayWithBob(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].gunswaywithbob;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].gunswaywithbob = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].camerabob <= 0;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCrosshairEdgeBoundary(s32 operation, struct menuitem* item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1619,6 +1699,38 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		(uintptr_t)"Camera Tilt",
 		40,
 		menuhandlerCameraTilt,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Tilt Into Run",
+		0,
+		menuhandlerTiltIntoRun,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Invert Tilt",
+		0,
+		menuhandlerInvertTilt,
+	},
+	{
+		MENUITEMTYPE_SLIDER,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+		(uintptr_t)"Camera Bob",
+		40,
+		menuhandlerCameraBob,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Gun Sway With Bob",
+		0,
+		menuhandlerGunSwayWithBob,
 	},
 	{
 		MENUITEMTYPE_CHECKBOX,

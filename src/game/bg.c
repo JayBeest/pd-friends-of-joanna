@@ -3036,18 +3036,44 @@ void bgLoadRoom(s32 roomnum)
 		itergdl2 = gfxblocks[0];
 
 #ifndef PLATFORM_N64
-		// Scope this room's texture loads to the mod that owns the stage, the same
-		// way modeldef scopes a model's loads to the mod that owns the model. Without
-		// this, bg geometry resolves its texture numbers with g_TexModNum left at
-		// whatever the last model load set, so a mod's own level textures either miss
-		// or pick up another mod's slot.
+		// Scope this room's texture loads, the same way modeldef scopes a model's
+		// loads. Without it, bg geometry resolves its texture numbers with
+		// g_TexModNum left at whatever the last model load set, so a mod's own
+		// level textures either miss or pick up another mod's slot.
 		//
-		// modNumFromStage returns -1 for a stage no mod claims, so vanilla rooms keep
-		// g_TexModNum == -1 and load exactly as they did before. g_TexCurrentModelFileNum
-		// is deliberately left alone: bg has no model file id, and 0 is the right id to
-		// put in the EXT packet for it.
+		// WHICH owner, though, was two different answers in this one function
+		// eleven lines apart: the room's BYTES come from
+		// g_Stages[g_StageIndex].bgfileid via bgLoadFile -> fileLoadPartToAddr ->
+		// romdataFileLoad, which resolves the owner from the id, while the
+		// TEXTURES were scoped by modNumFromStage(g_Vars.stagenum), which reads
+		// g_ModStageNums. They agreed only because a stage's claim and its
+		// bgfile are written by the same mod in every config shipped today.
+		//
+		// Derive from the bg file id first, because the texture numbers being
+		// resolved are read out of that file's bytes - they are in the namespace
+		// of whoever authored it, which is exactly the rule modeldef.c already
+		// uses (`g_TexModNum = MOD_FILEID_MOD(filenum)`). Reading the same
+		// g_Stages field bgLoadFile reads makes the bytes and their textures one
+		// answer by derivation rather than by two globals happening to agree.
+		//
+		// Fall back to the stage claim when the bg file has no owner, and NOT
+		// straight to -1. A mod that claims a stage without declaring a bgfile -
+		// every one of the 17 stages in the working roster, and mod_allinone's
+		// stage 0x18 in PD_AIO_March_2026 - leaves bgfileid at its vanilla ROM
+		// value, so the file id can say nothing about it. Dropping to -1 there
+		// would stop that mod's texture overrides reaching the vanilla geometry
+		// it claimed, which is a retexture mod's whole point; the fallback keeps
+		// today's behaviour for exactly those stages.
+		//
+		// Vanilla is preserved either way: an unclaimed stage's bgfileid is the
+		// hand-authored raw id in g_Stages, MOD_FILEID_MOD answers -1 for it,
+		// and modNumFromStage answers -1 too, so g_TexModNum stays -1 and the
+		// room loads as before. g_TexCurrentModelFileNum is deliberately left
+		// alone: bg has no model file id, and 0 is the right id for the EXT
+		// packet.
 		s32 prevTexMod = g_TexModNum;
-		g_TexModNum = modNumFromStage(g_Vars.stagenum);
+		const s32 bgFileOwner = MOD_FILEID_MOD(g_Stages[g_StageIndex].bgfileid);
+		g_TexModNum = (bgFileOwner >= 0) ? bgFileOwner : modNumFromStage(g_Vars.stagenum);
 #endif
 
 		for (i = 0; i < numgdls; i++) {

@@ -494,25 +494,86 @@ static u8 *audioConvertToDevice(SDL_AudioFormat fmt, u8 channels, s32 freq, cons
 	return out;
 }
 
+// External sounds are ring-tone sized. SDL_LoadWAV and audioLoadMp3 read the
+// whole file before decoding, so the file itself is capped too.
+#define AUDIO_EXT_MAXFILESIZE (32 * 1024 * 1024)
+
 static s32 audioFileExists(const char *path)
 {
 	struct stat st;
-	return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+	return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode)
+		&& st.st_size > 0 && (long long)st.st_size <= (long long)AUDIO_EXT_MAXFILESIZE;
+}
+
+// pd.play_file takes paths from scripts, so it only reaches the game's own
+// folders: a relative path, or one starting with `$B/`, `$S/` or `$M/`. No
+// absolute paths, no other `$` prefixes, no `.` or `..` components, no
+// backslashes or colons.
+static s32 audioExtPathIsSafe(const char *path)
+{
+	const char *p = path;
+	size_t len;
+
+	if (!path || !path[0]) {
+		return 0;
+	}
+
+	len = strlen(path);
+
+	if (len >= FS_MAXPATH || fsPathIsAbsolute(path)) {
+		return 0;
+	}
+
+	if (strchr(path, '\\') || strchr(path, ':')) {
+		return 0;
+	}
+
+	if (path[0] == '$') {
+		if ((path[1] != 'B' && path[1] != 'S' && path[1] != 'M') || path[2] != '/') {
+			return 0;
+		}
+		p = path + 3;
+	}
+
+	// every component must be a real name
+	while (*p) {
+		const char *slash = strchr(p, '/');
+		size_t n = slash ? (size_t)(slash - p) : strlen(p);
+
+		if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) {
+			return 0;
+		}
+
+		p += n;
+
+		if (*p == '/') {
+			p++;
+		}
+	}
+
+	return 1;
 }
 
 // Where pd.play_file looks for `path`. Kai opened it relative to the working
-// directory. Here it goes through fs.c's rules first: `$B/`, `$S/`, `$M/`,
-// `$E/` and `$H/` expand to the base, save, mod, exe and home dirs; absolute
-// paths and `./` / `../` paths are used as given; a bare relative path is looked
-// up in the mod dirs (for files/ and textures/ paths, as fs.c does) and then in
-// the base dir. If a bare relative path is not found there, the working
-// directory is tried last, because that is where this build loads
-// scripts/init.lua from, so a script's own `scripts/...` sound files resolve the
-// same way the script did.
+// directory. Here it goes through fs.c's rules first: `$B/`, `$S/` and `$M/`
+// expand to the base, save and mod dirs; a bare relative path is looked up in
+// the mod dirs (for files/ and textures/ paths, as fs.c does) and then in the
+// base dir. If a bare relative path is not found there, the working directory
+// is tried last, because that is where this build loads scripts/init.lua from,
+// so a script's own `scripts/...` sound files resolve the same way the script
+// did. Only regular files up to AUDIO_EXT_MAXFILESIZE count; NULL when the path
+// is refused or nothing is found.
 static const char *audioResolveExtPath(const char *path)
 {
 	static char resolved[FS_MAXPATH + 1];
-	const char *full = fsFullPath(path);
+	const char *full;
+
+	if (!audioExtPathIsSafe(path)) {
+		sysLogPrintf(LOG_WARNING, "audio: refusing external sound path '%s'", path ? path : "(null)");
+		return NULL;
+	}
+
+	full = fsFullPath(path);
 
 	if (full != path) {
 		// fsFullPath hands back its own static buffer; keep a copy.
@@ -524,11 +585,12 @@ static const char *audioResolveExtPath(const char *path)
 		return full;
 	}
 
-	if (path[0] != '$' && !fsPathIsAbsolute(path) && !fsPathIsCwdRelative(path) && audioFileExists(path)) {
+	if (path[0] != '$' && audioFileExists(path)) {
 		return path;
 	}
 
-	return full;
+	sysLogPrintf(LOG_WARNING, "audio: external sound '%s' not found", path);
+	return NULL;
 }
 
 s32 audioPlayExternal(const char *path, s32 loop, s32 followMusic)
@@ -542,6 +604,10 @@ s32 audioPlayExternal(const char *path, s32 loop, s32 followMusic)
 	}
 
 	fullpath = audioResolveExtPath(path);
+
+	if (!fullpath) {
+		return 0;
+	}
 
 	// Try WAV first, then MP3 — by content, not extension, so either format
 	// works whatever the file is called.

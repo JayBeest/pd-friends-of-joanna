@@ -20,6 +20,7 @@
 #include "game/music.h"
 #include "mod.h"
 #include "game/stancetuning.h"
+#include "lib/snd.h"
 #include "system.h"
 #include "utils.h"
 #include "game/mplayer/setup.h"
@@ -229,6 +230,24 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
+
+	// The audio pool sizes Rare picked for a 1999 cartridge. Every default is 0
+	// or the original number, so leaving these alone changes nothing. They are
+	// read once during sndInit, so a change needs a restart; the audio panel
+	// shows what the pools actually came up as.
+	//
+	// Raise HeapSize first and generously -- everything else here is allocated
+	// out of it and alHeapAlloc does not fail, it just hands back memory it does
+	// not have. AcmdListLen wants raising in step with the voice pools, not
+	// ahead of them. Nothing here touches the N64 build.
+	configRegisterInt("Audio.HeapSize", &g_SndHeapLenKb, 0, 65536);
+	configRegisterInt("Audio.SynMaxPVoices", &g_SndSynMaxPVoices, 1, 512);
+	configRegisterInt("Audio.SynMaxVVoices", &g_SndSynMaxVVoices, 1, 512);
+	configRegisterInt("Audio.SynMaxUpdates", &g_SndSynMaxUpdates, 1, 1024);
+	configRegisterInt("Audio.SeqpMaxVoices", &g_SndSeqpMaxVoices, 1, 512);
+	configRegisterInt("Audio.SeqpMaxEvents", &g_SndSeqpMaxEvents, 1, 1024);
+	configRegisterInt("Audio.SeqBufferSize", &g_SndSeqBufferKb, 0, 4096);
+	configRegisterInt("Audio.AcmdListLen", &g_SndAcmdListLen, 0, 65536);
 
 	// The stance knobs. Every one of these was a guess that only play could
 	// settle, so they are settable: here for where they start, and the Fojo

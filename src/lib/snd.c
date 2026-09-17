@@ -77,6 +77,40 @@ struct seqtable *g_SeqTable;
 u32 g_SeqBufferSize;
 ALIGNED16 struct sndcache g_SndCache;
 
+#ifndef PLATFORM_N64
+// fojo: Rare's audio pool sizes, as knobs. Every default below is the number
+// that was already hardcoded here, so a build with no config set behaves
+// exactly as it did before.
+//
+// These are read once, during sndInit, so changing one needs a restart. The
+// audio panel shows what the pools actually got.
+//
+// Why the numbers are small in the first place: on N64 the CPU does not mix
+// audio, it builds a list of Acmds for the RSP, which has 4K of DMEM and a
+// slice of a frame to work in. The port implements every one of those commands
+// in C instead (port/src/mixer.c), so on this side raising a pool costs host
+// CPU per voice and nothing else.
+//
+// alHeapAlloc does not fail -- it bumps a pointer and returns memory it does
+// not have -- so give the heap headroom rather than a tight fit when raising
+// anything that comes out of it, which is all of this.
+s32 g_SndHeapLenKb = 0;        // 0 = the per-version default in sndInit
+s32 g_SndSeqpMaxVoices = 44;   // per sequence player
+s32 g_SndSeqpMaxEvents = 64;
+s32 g_SndSeqBufferKb = 0;      // 0 = MAX_SEQ_SIZE_*; costs this x3, one per slot
+s32 g_SndSynMaxVVoices = 44;   // virtual: notes that can be logically alive
+s32 g_SndSynMaxPVoices = 30;   // physical: notes actually mixed, the real cap
+s32 g_SndSynMaxUpdates = 64;
+
+// What sndInit actually used. Recorded because the knobs above are read once at
+// boot, so the panel can report what the pools came up as rather than what the
+// config currently says -- a change nobody has restarted into shows as a
+// disagreement between the two.
+static s32 g_SndLiveHeapLen;
+static s32 g_SndLivePVoices;
+static s32 g_SndLiveVVoices;
+#endif
+
 const char g_SndGuardString[] = "RUSSES SOUND GUARD STRING";
 const char var70053b3c[] = "Snd: SoundHeaderCacheInit\n";
 
@@ -1410,6 +1444,11 @@ void seqInit(struct seqinstance *seq)
 	config.debugFlags = 0;
 	config.heap = &g_SndHeap;
 
+#ifndef PLATFORM_N64
+	config.maxVoices = g_SndSeqpMaxVoices;
+	config.maxEvents = g_SndSeqpMaxEvents;
+#endif
+
 	func00030c98(&config);
 
 	if (IS4MB()) {
@@ -1417,6 +1456,12 @@ void seqInit(struct seqinstance *seq)
 	} else {
 		g_SeqBufferSize = MAX_SEQ_SIZE_8MB;
 	}
+
+#ifndef PLATFORM_N64
+	if (g_SndSeqBufferKb > 0) {
+		g_SeqBufferSize = 1024 * (u32)g_SndSeqBufferKb;
+	}
+#endif
 
 	seq->data = alHeapAlloc(&g_SndHeap, 1, g_SeqBufferSize);
 	seq->seqp = alHeapAlloc(&g_SndHeap, 1, sizeof(N_ALCSPlayer));
@@ -1484,6 +1529,15 @@ void sndInit(void)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// An explicit size wins outright, including over the 4MB subtractions above.
+	if (g_SndHeapLenKb > 0) {
+		heaplen = 1024 * (u32)g_SndHeapLenKb;
+	}
+
+	g_SndLiveHeapLen = (s32)heaplen;
+#endif
+
 	if (!g_SndDisabled) {
 		// Allocate memory for the audio heap,
 		// clear it and give it to the audio library
@@ -1538,6 +1592,16 @@ void sndInit(void)
 		synconfig.maxVVoices = 44;
 		synconfig.maxPVoices = 30;
 		synconfig.maxUpdates = 64;
+
+#ifndef PLATFORM_N64
+		synconfig.maxVVoices = g_SndSynMaxVVoices;
+		synconfig.maxPVoices = g_SndSynMaxPVoices;
+		synconfig.maxUpdates = g_SndSynMaxUpdates;
+
+		g_SndLivePVoices = synconfig.maxPVoices;
+		g_SndLiveVVoices = synconfig.maxVVoices;
+#endif
+
 		synconfig.dmaproc = NULL;
 		synconfig.outputRate = 0;
 		synconfig.heap = &g_SndHeap;
@@ -2600,3 +2664,28 @@ s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced)
 
 	return total;
 }
+
+#ifndef PLATFORM_N64
+// Length of the per-frame Acmd list. Lives in audiomgr.c and, like several
+// naudio globals, is declared in no header.
+extern s32 var800918ec;
+
+/**
+ * What the audio pools actually came up as at boot, and how much of the heap
+ * they took.
+ *
+ * alHeapAlloc only bumps `cur` and never fails, so used running up to total is
+ * the warning and used exceeding it is memory the heap does not own. The guard
+ * string at the base of the heap (checked in sndTick) is the other half of the
+ * same story.
+ */
+void snddebugGetPools(struct snddebugpools *out)
+{
+	out->heapused = (s32)(g_SndHeap.cur - g_SndHeap.base);
+	out->heaptotal = g_SndLiveHeapLen;
+	out->pvoices = g_SndLivePVoices;
+	out->vvoices = g_SndLiveVVoices;
+	out->seqbuffer = (s32)g_SeqBufferSize;
+	out->acmdlen = var800918ec;
+}
+#endif

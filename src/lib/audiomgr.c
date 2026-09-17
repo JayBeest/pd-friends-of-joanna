@@ -5,6 +5,7 @@
 #include "constants.h"
 #include "bss.h"
 #include "lib/audiodma.h"
+#include "lib/snd.h"
 #include "lib/lib_2fc60.h"
 #include "lib/profile.h"
 #include "lib/libc/ll.h"
@@ -38,6 +39,10 @@ u32 g_AmgrFreqPerTick;
 u32 var800918e4;
 s32 var800918e8;
 s32 var800918ec;
+
+#ifndef PLATFORM_N64
+s32 g_SndAcmdListLen = 0; // 0 = the 2000 below (halved on a 4MB console)
+#endif
 void *g_AudioSp;
 
 u32 var8005cf90 = 0x00000000;
@@ -101,6 +106,19 @@ void amgrCreate(ALSynConfig *config)
 #if !PAL
 	if (IS4MB()) {
 		var800918ec >>= 1;
+	}
+#endif
+
+#ifndef PLATFORM_N64
+	// How many Acmds one audio frame is allowed to emit. Nothing bounds-checks
+	// this: n_alAudioFrame is never told the buffer length and reports what it
+	// wrote afterwards, so overrunning it is a silent heap write rather than a
+	// dropped voice. A frame builds in chunks of SAMPLES (184), so the cost is
+	// roughly chunks x voices x a handful -- a few hundred at the stock 30
+	// physical voices, which leaves about 4x headroom in 2000. Raise it in step
+	// with the voice pools rather than ahead of them.
+	if (g_SndAcmdListLen > 0) {
+		var800918ec = g_SndAcmdListLen;
 	}
 #endif
 

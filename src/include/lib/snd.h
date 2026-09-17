@@ -43,4 +43,28 @@ void sndPlayUfo(s32 seconds);
 void sndStopUfo(void);
 void sndTickUfo(void);
 
+#ifndef PLATFORM_N64
+// fojo: audio pool sizes as knobs. The block at the top of snd.c says what each
+// one costs and why the defaults are what they are. All read once, in sndInit.
+extern s32 g_SndHeapLenKb;
+extern s32 g_SndSeqpMaxVoices;
+extern s32 g_SndSeqpMaxEvents;
+extern s32 g_SndSeqBufferKb;
+extern s32 g_SndSynMaxVVoices;
+extern s32 g_SndSynMaxPVoices;
+extern s32 g_SndSynMaxUpdates;
+extern s32 g_SndAcmdListLen;
+
+struct snddebugpools {
+	s32 heapused;
+	s32 heaptotal;
+	s32 pvoices;
+	s32 vvoices;
+	s32 seqbuffer;
+	s32 acmdlen;
+};
+
+void snddebugGetPools(struct snddebugpools *out);
+#endif
+
 #endif

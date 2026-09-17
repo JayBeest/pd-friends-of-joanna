@@ -188,6 +188,19 @@ extern "C" void snddebugSetWetScale(s32 slot, f32 scale);
 extern "C" bool snddebugSetFxParam(s32 bus, s32 section, s32 param, s32 value);
 extern "C" void snddebugSetVoiceCap(s32 slot, s32 cap);
 extern "C" s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced);
+
+// Pool sizes, as they came up at boot. Declared here rather than by including
+// lib/snd.h, same as everything else this file reaches for -- the game headers
+// carry no __cplusplus guard.
+struct snddebugpools {
+	s32 heapused;
+	s32 heaptotal;
+	s32 pvoices;
+	s32 vvoices;
+	s32 seqbuffer;
+	s32 acmdlen;
+};
+extern "C" void snddebugGetPools(struct snddebugpools *out);
 extern "C" u16 snddebugGetSfxVolume(void);
 extern "C" void sndSetSfxVolume(u16 volume);
 extern "C" void musicSetVolume(u16 volume);
@@ -4430,6 +4443,40 @@ static void imguiOverlayDrawAudioPanel(void)
 		s32 total = snddebugCountSfxVoices(&numfree, &numalloced);
 		ImGui::Text("sfx voices: %d alloced, %d free, %d total",
 				(int)numalloced, (int)numfree, (int)total);
+	}
+
+	if (ImGui::CollapsingHeader("Pools")) {
+		struct snddebugpools pools;
+		snddebugGetPools(&pools);
+
+		ImGui::TextWrapped("What the pools came up as at boot. The sizes are "
+				"config knobs (Audio.*) but sndInit reads them once, so editing "
+				"one and not restarting shows up as these not matching what you "
+				"set.");
+
+		const float frac = pools.heaptotal > 0
+			? (float)pools.heapused / (float)pools.heaptotal
+			: 0.0f;
+		char overlay[64];
+		snprintf(overlay, sizeof(overlay), "%d / %d KB",
+				(int)(pools.heapused / 1024), (int)(pools.heaptotal / 1024));
+		ImGui::ProgressBar(frac, ImVec2(-FLT_MIN, 0), overlay);
+		ImGui::SameLine();
+		ImGui::Text("sound heap");
+
+		if (frac >= 1.0f) {
+			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+					"heap is full -- alHeapAlloc does not fail, it hands back "
+					"memory it does not own. Raise Audio.HeapSize.");
+		}
+
+		ImGui::Text("voices: %d physical, %d virtual",
+				(int)pools.pvoices, (int)pools.vvoices);
+		ImGui::TextDisabled("virtual over physical means the synth demotes by "
+				"priority rather than hard-cutting");
+		ImGui::Text("seq buffer: %d bytes each, x%d slots",
+				(int)pools.seqbuffer, (int)snddebugNumSlots());
+		ImGui::Text("acmd list: %d commands", (int)pools.acmdlen);
 	}
 
 	if (ImGui::CollapsingHeader("Music tracks", ImGuiTreeNodeFlags_DefaultOpen)) {

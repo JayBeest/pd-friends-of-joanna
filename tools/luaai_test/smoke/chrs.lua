@@ -140,7 +140,8 @@ local function phase1()
 		local ok = pd.chr_give_weapon(a, WEAPON_CMP150, true)
 		local now = pd.chr_weapon(a)
 		local back = pd.chr_give_weapon(a, st.origweapon)
-		return ok and now == WEAPON_CMP150 and pd.chr_weapon(a) == st.origweapon,
+		return ok and now == WEAPON_CMP150 and pd.chr_weapon(a) == st.origweapon
+				and pd.chr_give_weapon(a, 200) == false and pd.chr_give_weapon(a, -3) == false,
 			string.format("got %d, restored %s -> %d", now, tostring(back), pd.chr_weapon(a))
 	end)
 	check("chr_scale", function() return pd.chr_scale(a, 2) and pd.chr_scale(a, 0.5) end)
@@ -170,7 +171,9 @@ local function phase1()
 		return ok and dist2(x, z, px, pz) < 400 * 400,
 			string.format("ok=%s dist %.0f", tostring(ok), math.sqrt(dist2(x, z, px, pz)))
 	end)
-	check("chr_yeet", function() return pd.chr_yeet(pick(n, 3), 50) end)
+	check("chr_yeet", function()
+		return pd.chr_yeet(pick(n, 3), 50) and not pd.chr_yeet(pick(n, 3), 0 / 0)
+	end)
 	check("chr_set_body", function()
 		local c = pick(n, 4)
 		local ok = pd.chr_set_body(c, BODY_DD_GUARD)
@@ -216,6 +219,10 @@ local function phase1()
 	check("possess_spawn", function()
 		st.cube = pd.possess_spawn()
 		return st.cube ~= nil and pd.chr_info(st.cube) ~= nil, "chr " .. tostring(st.cube)
+	end)
+	check("possess_spawn twice", function()
+		-- one cube at a time
+		return pd.possess_spawn() == nil
 	end)
 end
 

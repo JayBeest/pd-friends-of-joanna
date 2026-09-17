@@ -99,7 +99,12 @@ local function phase1()
 	setter("gangsta", true)
 	setter("zoom_scale", 2.5)
 	setter("gun_sound", W.DY357)
+	setter("weapon_rename", W.CMP150, "Nokia \226\128\148 3315\195") -- non-ASCII, scrubbed
 	setter("weapon_rename", W.CMP150, "Nokia 3315")
+	check("float and int bounds", function()
+		return pd.spread(0 / 0) == true and pd.ammo_cost(0x7fffffff) == true
+			and pd.spread(4.0) == true and pd.ammo_cost(3) == true
+	end)
 	setter("one_bullet", true)
 	setter("forced_fire", true)
 	setter("rapid_fire", true)

@@ -101,9 +101,18 @@ local function registry()
 		local d = pd.menu_add("Smoke probe", function() end)
 		return not bad and d == 3, "next index " .. tostring(d)
 	end)
+	check("menu_add_slider bounds", function()
+		-- a max of 0 would divide by zero in the menu: clamped, still added
+		local z = pd.menu_add_slider("zero max", function() return 0 end, function() end, 0, 0)
+		pd.menu_set_label(z, "Smoke \226\128\148 label") -- non-ASCII, scrubbed
+		return z == 4, "index " .. tostring(z)
+	end)
 	check("registry full", function()
-		local last, n = nil, 4
+		local last, n = nil, 5
 		while true do
+			if n == 300 and pd.menu_add_slider("late", function() return 0 end, function() end, 0, 1) ~= -1 then
+				return false, "slider past entry 255 accepted"
+			end
 			last = pd.menu_add("fill " .. n, function() end, "Fill")
 			if last < 0 then
 				break

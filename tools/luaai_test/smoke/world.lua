@@ -104,6 +104,13 @@ local function setall()
 		return isint(n) and n >= 0 and n <= 3, n .. " thrown"
 	end)
 	check("gust", function() return pd.gust(150) == true end)
+	check("force bounds", function()
+		-- a NaN or inf force is refused, so the player's velocity stays finite
+		local refused = pd.gust(0 / 0) == false and pd.gust(1 / 0) == false
+			and pd.haunt(0 / 0) == 0 and pd.haunt(-1 / 0) == 0
+		local x, y, z = pd.player_pos()
+		return refused and x == x and y == y and z == z
+	end)
 	check("rubber_objects", function() return pd.rubber_objects(true) == true end)
 	check("weather", function()
 		local off = pd.weather(0)
@@ -123,6 +130,13 @@ local function setall()
 
 	-- audio
 	check("sound", function() return pd.sound(1) == true end)
+	check("sound bounds", function()
+		-- config ids stop at the end of the mapping table; ids are 0..0xffff
+		local mp3 = pd.sound(0x81b9) -- a config that maps to an MP3 voice line
+		return pd.sound(-1) == false and pd.sound(0x10000) == false
+			and pd.sound(0x9000) == false and pd.sound(0xffff) == false
+			and pd.sound(0x8148) == true, "mapped mp3 " .. tostring(mp3)
+	end)
 	check("metronome_click", function() return pd.metronome_click() == true end)
 	check("ext_volume", function()
 		state.extvol = pd.ext_volume()
@@ -139,6 +153,19 @@ local function setall()
 		return isint(wav) and wav > 0 and isint(mp3) and isint(sav) and missing == false,
 			string.format("wav %s mp3 %s save %s missing %s", tostring(wav), tostring(mp3),
 				tostring(sav), tostring(missing))
+	end)
+	check("play_file refuses", function()
+		-- only the game's folders, only regular files
+		local took = {}
+		for _, p in ipairs({ "/dev/zero", "../world_smoke.wav", "scripts/../scripts/world_smoke.wav",
+				"./scripts/world_smoke.wav", "$H/world_smoke.wav", "$E/world_smoke.wav",
+				"$S/../world_smoke.wav", "C:/world_smoke.wav", "scripts\\world_smoke.wav",
+				"scripts", "scripts/world_smoke_fifo" }) do
+			if pd.play_file(p) ~= false then
+				took[#took + 1] = p
+			end
+		end
+		return #took == 0, #took > 0 and table.concat(took, " ") or nil
 	end)
 	check("music_bpm", function()
 		state.bpm = pd.music_bpm()

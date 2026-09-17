@@ -192,6 +192,19 @@ steps[#steps + 1] = function()
 	check("gormless", function() return pd.gormless(true) == true and pd.gormless(false) == true end)
 	check("player_speed", function() return pd.player_speed(2) == true and pd.player_speed() == true end)
 	check("model_rom_ok", function() return type(pd.model_rom_ok()) == "boolean", tostring(pd.model_rom_ok()) end)
+	if not pd.model_rom_ok() then
+		check("load_model_rom refuses", function()
+			-- only the game's folders, only regular ROM-sized files
+			local took = {}
+			for _, p in ipairs({ "/dev/zero", "/", "..", "../rom", "./scripts", "scripts/../scripts",
+					"$H/rom", "$E/rom", "C:/rom", "scripts\\rom", "scripts/smoke" }) do
+				if pd.load_model_rom(p) ~= false then
+					took[#took + 1] = p
+				end
+			end
+			return #took == 0, #took > 0 and table.concat(took, " ") or nil
+		end)
+	end
 	check("mark_home", function()
 		home = pos()
 		return pd.mark_home() == true and home ~= nil

@@ -98,6 +98,13 @@ local function runall()
 		local w, h = pd.text_size("core smoke")
 		return isnum(w, h) and w > 0 and h > 0, w .. "x" .. h
 	end)
+	check("text high bytes", function()
+		-- the font is ASCII: other bytes are drawn and measured as '?'
+		pd.draw_text(14, 30, "caf\195\169 \226\128\148 \1\127\195", 0xffffffff, 5)
+		local w = pd.text_size("caf\195\169\195")
+		local w2 = pd.text_size("caf???")
+		return w == w2, w .. " vs " .. w2
+	end)
 	check("each_chr", function()
 		local n = 0
 		pd.each_chr(function(chrnum, list, off, alert, islua)

@@ -120,6 +120,63 @@ void *modAnimationLoadData(u16 num);
 
 void *modSequenceLoad(u16 num, u32 *outSize);
 
+/*
+ * The stage registry: what a mod says a stage IS, kept apart from what the
+ * stage block changes about one.
+ *
+ * Before this existed a mod that wanted an arena had to declare the stage and
+ * then repeat its stagenum in a separate MpArena block, with nothing holding
+ * the two in step. One record per stagenum is the whole point.
+ *
+ * MODSTAGE_KIND_NONE is the default for a stage block that does not spell
+ * `kind`, and the choice was measured rather than guessed. The nine
+ * modconfig.txt files in the tree spell `kind` nowhere; inferring it from the
+ * keys present would have moved stages into menus that never listed them -
+ * mod_kakariko_stages names mpsetupfile on stage 0x24 (1 arena injected) and
+ * mod_fojo names setupfile on 17 stages (17 missions injected). A missing
+ * `kind` therefore means "changes something about a stage that is already
+ * wherever it already is", which is exactly what those files are doing.
+ *
+ * SOLO and MP are bits so BOTH is their union and a caller asks
+ * "is this MP-capable" without enumerating four values.
+ *
+ * MODSTAGE_KIND_SOLO is recorded and reported but nothing lists it yet, and
+ * modStageRegReport says so out loud rather than leaving a mod author to
+ * wonder. Listing it means growing g_SoloStages, which is NUM_SOLOSTAGES=21
+ * rows indexed straight by menuhandlerMissionList's data->list.value, is the
+ * index of g_GameFile.besttimes[21][3] and of the coopcompletions bitmask in
+ * the save file, carries three lang ids and no customname, and picks its
+ * thumbnail as g_TexGeneralConfigs + 13 + stageindex. That is a save-format
+ * change, not a menu change, so it is deliberately not bundled with the
+ * arena side.
+ */
+enum modStageKind {
+	MODSTAGE_KIND_NONE = 0,
+	MODSTAGE_KIND_SOLO = 1,
+	MODSTAGE_KIND_MP   = 2,
+	MODSTAGE_KIND_BOTH = 3,
+};
+
+struct modStageRegEntry {
+	s16 stagenum;
+	s8 modnum;          /* mod whose block last declared this stage */
+	u8 kind;            /* enum modStageKind, unioned across blocks */
+	u8 requirefeature;  /* challengeIsFeatureUnlocked arg; 0 = always unlocked */
+	u16 langid;         /* legacy MpArena name; 0 when there is none */
+	char *name;         /* owned display string, or NULL - see arenaname */
+};
+
+extern struct modStageRegEntry *g_ModStageReg;
+extern s32 g_NumModStageReg;
+
+void modStageRegReset(void);
+struct modStageRegEntry *modStageRegFind(s32 stagenum);
+struct modStageRegEntry *modStageRegRecord(s32 stagenum, s32 modnum, s32 kind,
+		const char *name, s32 langid, s32 requirefeature);
+s32 modStageRegCount(s32 kindmask);
+void modStageRegReport(void);
+void modStageRegWarnUnlisted(void);
+
 void modLoadTextureSurfaceType(void);
 void modUnloadTextureSurfaceType(void);
 void modSwitch(s32 modnum, s32 stagenum);

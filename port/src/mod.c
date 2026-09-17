@@ -519,16 +519,26 @@ void modResetMplayerArrays(void)
 		g_NumMpBodies = g_NumMpBodies_Original;
 	}
 
+	// g_MpArenas points into g_MpArenas_AIO whenever a mod declared an arena,
+	// so the pointer goes home before the array it names is released.
+	// The rows no longer own their customname strings - mpArenasRebuild lends
+	// them from the registry, which frees them in modStageRegReset below - so
+	// freeing them here would be a double free.
+	mpSetArenaMode(false);
+
 	if (g_MpArenas_AIO) {
-		for (s32 i = 0; i < g_NumMpArenas_AIO; i++) {
-			if (g_MpArenas_AIO[i].customname) {
-				free(g_MpArenas_AIO[i].customname);
-			}
-		}
 		free(g_MpArenas_AIO);
 		g_MpArenas_AIO = NULL;
-		g_NumMpArenas_AIO = 0;
 	}
+	g_NumMpArenas_AIO = 0;
+
+	if (g_MpArenaGroups) {
+		free(g_MpArenaGroups);
+		g_MpArenaGroups = NULL;
+	}
+	g_NumMpArenaGroups = 0;
+
+	modStageRegReset();
 
 	for (s32 i = 0; i < g_NumModHeadNames; ++i) {
 		free(g_ModHeadNames[i].name);
@@ -1417,21 +1427,167 @@ static char *modConfigParseMpBodies(char *p, char *token)
 	return p;
 }
 
-static char *modConfigParseMpArena(char *p, char *token)
+struct modStageRegEntry *g_ModStageReg = NULL;
+s32 g_NumModStageReg = 0;
+
+void modStageRegReset(void)
 {
-	struct mparena *new_array;
+	for (s32 i = 0; i < g_NumModStageReg; i++) {
+		free(g_ModStageReg[i].name);
+	}
+	free(g_ModStageReg);
+	g_ModStageReg = NULL;
+	g_NumModStageReg = 0;
+}
 
-	sysLogPrintf(LOG_NOTE, "modconfig: parsing MpArena block");
+struct modStageRegEntry *modStageRegFind(s32 stagenum)
+{
+	for (s32 i = 0; i < g_NumModStageReg; i++) {
+		if (g_ModStageReg[i].stagenum == stagenum) {
+			return &g_ModStageReg[i];
+		}
+	}
 
-	new_array = realloc(g_MpArenas_AIO, (g_NumMpArenas_AIO + 1) * sizeof(struct mparena));
-	if (!new_array) {
-		sysLogPrintf(LOG_ERROR, "modconfig: failed to allocate memory for MpArena");
+	return NULL;
+}
+
+s32 modStageRegCount(s32 kindmask)
+{
+	s32 count = 0;
+
+	for (s32 i = 0; i < g_NumModStageReg; i++) {
+		if (g_ModStageReg[i].kind & kindmask) {
+			count++;
+		}
+	}
+
+	return count;
+}
+
+/*
+ * Record what a mod said about a stage.
+ *
+ * Keyed by stagenum and updated in place, because one modconfig is parsed
+ * several times per boot: pdmain runs modConfigLoad once per mod dir and again
+ * for mod 0, modCacheAllConfigs runs it once more per mod, and modSwitch falls
+ * back to it when the cache is cold. Appending would put one arena row in the
+ * Combat Simulator list per parse rather than per stage.
+ *
+ * A stagenum with no g_Stages row cannot be loaded at all - stageGetIndex is
+ * what romdata and bg key off - so it is refused here rather than offered in a
+ * menu that would fail on selection. modConfigParseStage already bails on that
+ * case before reaching this, so the check bites only for a legacy MpArena
+ * block, which names a stagenum with no stage block behind it.
+ */
+struct modStageRegEntry *modStageRegRecord(s32 stagenum, s32 modnum, s32 kind,
+		const char *name, s32 langid, s32 requirefeature)
+{
+	struct modStageRegEntry *e;
+
+	if (stageGetIndex(stagenum) < 0) {
+		sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: no stage table row; not registered", stagenum);
 		return NULL;
 	}
 
-	g_MpArenas_AIO = new_array;
-	struct mparena *item = &g_MpArenas_AIO[g_NumMpArenas_AIO];
-	memset(item, 0, sizeof(struct mparena));
+	e = modStageRegFind(stagenum);
+
+	if (!e) {
+		struct modStageRegEntry *grown = realloc(g_ModStageReg,
+				(g_NumModStageReg + 1) * sizeof(struct modStageRegEntry));
+
+		if (!grown) {
+			sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: out of memory registering stage", stagenum);
+			return NULL;
+		}
+
+		g_ModStageReg = grown;
+		e = &g_ModStageReg[g_NumModStageReg];
+		memset(e, 0, sizeof(*e));
+		e->stagenum = stagenum;
+		g_NumModStageReg++;
+	}
+
+	// Last writer wins on the owning mod, matching g_ModStageNums above, which
+	// the same block has already overwritten the same way.
+	e->modnum = (s8)modnum;
+	e->kind |= (u8)(kind & MODSTAGE_KIND_BOTH);
+
+	if (requirefeature > 0) {
+		e->requirefeature = (u8)requirefeature;
+	}
+
+	if (langid > 0) {
+		e->langid = (u16)langid;
+	}
+
+	if (name && name[0]) {
+		free(e->name);
+		e->name = strDuplicate(name);
+	}
+
+	return e;
+}
+
+/*
+ * Gated on PD_DEBUG_MODSTAGE=1 like modStageDumpOwnership, and filtered the
+ * same way: grep '^MODSTAGE ' pd.log.
+ */
+void modStageRegReport(void)
+{
+	static const char *const kindnames[] = { "none", "solo", "mp", "both" };
+
+	if (!g_DebugModStage) {
+		return;
+	}
+
+	for (s32 i = 0; i < g_NumModStageReg; i++) {
+		const struct modStageRegEntry *e = &g_ModStageReg[i];
+
+		MODSTAGE("reg stage=0x%02x kind=%s mod=%d feature=%d name='%s'",
+				e->stagenum, kindnames[e->kind & MODSTAGE_KIND_BOTH], e->modnum,
+				e->requirefeature, e->name ? e->name : "");
+	}
+
+	MODSTAGE("reg summary entries=%d solo=%d mp=%d", g_NumModStageReg,
+			modStageRegCount(MODSTAGE_KIND_SOLO), modStageRegCount(MODSTAGE_KIND_MP));
+}
+
+/*
+ * Ungated, unlike the report above, because a mod author who wrote `kind solo`
+ * would otherwise get silence and assume it worked. See enum modStageKind for
+ * what listing a solo stage would actually cost.
+ */
+void modStageRegWarnUnlisted(void)
+{
+	const s32 solo = modStageRegCount(MODSTAGE_KIND_SOLO);
+
+	if (solo > 0) {
+		sysLogPrintf(LOG_WARNING,
+				"modconfig: %d stage(s) declared 'kind solo'; recorded in the stage registry "
+				"but not yet listed - the mission list is indexed by save-file stage index",
+				solo);
+	}
+}
+
+/*
+ * The legacy standalone arena declaration.
+ *
+ * It now feeds the registry instead of appending straight to g_MpArenas_AIO,
+ * so there is one collector rather than two. Nothing in the tree or in
+ * PD_AIO_March_2026 spells MpArena in a modconfig.txt - the string survives
+ * only inside the prebuilt pd.exe - so keeping every key it ever accepted
+ * costs nothing and stops an unseen config hard-failing on an unknown key.
+ * Prefer `kind mp` inside the stage block: it cannot drift from the stage
+ * declaration the way a repeated stagenum can.
+ */
+static char *modConfigParseMpArena(char *p, char *token)
+{
+	s32 stagenum = -1;
+	s32 requirefeature = 0;
+	s32 langid = 0;
+	char name[64];
+
+	name[0] = '\0';
 
 	p = strParseToken(p, token, NULL);
 	if (token[0] != '{' || token[1] != '\0') return NULL;
@@ -1441,21 +1597,23 @@ static char *modConfigParseMpArena(char *p, char *token)
 	while (p && token[0] && strcmp(token, "}") != 0) {
 		if (!strcmp(token, "stagenum")) {
 			PARSE_INT("MpArena", "stagenum", tmp, 0, 0xFFFF, NULL);
-			item->stagenum = tmp;
+			stagenum = tmp;
 		} else if (!strcmp(token, "requirefeature")) {
 			PARSE_INT("MpArena", "requirefeature", tmp, 0, 255, NULL);
-			item->requirefeature = tmp;
+			requirefeature = tmp;
 		} else if (!strcmp(token, "name")) {
 			PARSE_INT("MpArena", "name", tmp, 0, 0xFFFF, NULL);
-			item->name = tmp;
+			langid = tmp;
 		} else if (!strcmp(token, "label") || !strcmp(token, "literalname")) {
 			p = strParseToken(p, token, NULL);
 			if (!p) return NULL;
-			item->customname = strDuplicate(strUnquote(token));
+			strncpy(name, strUnquote(token), sizeof(name) - 1);
+			name[sizeof(name) - 1] = '\0';
 		} else if (!strcmp(token, "group")) {
+			// Retired with MpArenaGroup; see modConfigLoad. Still parsed so an
+			// older config does not hard-fail on an unknown key.
 			p = strParseToken(p, token, NULL);
 			if (!p) return NULL;
-			item->group = strDuplicate(strUnquote(token));
 		} else {
 			sysLogPrintf(LOG_ERROR, "modconfig: MpArena: invalid key: %s", token);
 			return NULL;
@@ -1465,53 +1623,14 @@ static char *modConfigParseMpArena(char *p, char *token)
 
 	if (token[0] != '}') return NULL;
 
-	g_NumMpArenas_AIO++;
-	return p;
-}
-
-static char *modConfigParseMpArenaGroup(char *p, char *token)
-{
-	struct mparenagroup *new_array;
-
-	new_array = realloc(g_MpArenaGroups, (g_NumMpArenaGroups + 1) * sizeof(struct mparenagroup));
-	if (!new_array) {
-		sysLogPrintf(LOG_ERROR, "modconfig: failed to allocate memory for MpArenaGroup");
+	if (stagenum < 0) {
+		sysLogPrintf(LOG_ERROR, "modconfig: MpArena: block names no stagenum");
 		return NULL;
 	}
 
-	g_MpArenaGroups = new_array;
-	struct mparenagroup *item = &g_MpArenaGroups[g_NumMpArenaGroups];
-	memset(item, 0, sizeof(struct mparenagroup));
-	item->startindex = -1;
+	modStageRegRecord(stagenum, g_ModNum, MODSTAGE_KIND_MP,
+			name[0] ? name : NULL, langid, requirefeature);
 
-	p = strParseToken(p, token, NULL);
-	if (token[0] != '{' || token[1] != '\0') return NULL;
-
-	s32 tmp = 0;
-	p = strParseToken(p, token, NULL);
-	while (p && token[0] && strcmp(token, "}") != 0) {
-		if (!strcmp(token, "name") || !strcmp(token, "literalname")) {
-			p = strParseToken(p, token, NULL);
-			if (!p) return NULL;
-			item->name = strDuplicate(strUnquote(token));
-		} else if (!strcmp(token, "langid")) {
-			PARSE_INT("MpArenaGroup", "langid", tmp, 0, 0xFFFF, NULL);
-			item->langid = tmp;
-		} else if (!strcmp(token, "startindex")) {
-			PARSE_INT("MpArenaGroup", "startindex", tmp, 0, 10000, NULL);
-			item->startindex = tmp;
-		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: MpArenaGroup: invalid key: %s", token);
-			return NULL;
-		}
-		p = strParseToken(p, token, NULL);
-	}
-
-	if (token[0] != '}') return NULL;
-
-	g_NumMpArenaGroups++;
-	sysLogPrintf(LOG_NOTE, "modconfig: added MpArenaGroup '%s' (langid=%d, startindex=%d)",
-		item->name ? item->name : "(null)", item->langid, item->startindex);
 	return p;
 }
 
@@ -1557,6 +1676,12 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 	// parse keyvalues until } is reached
 	s32 tmp = 0;
 	char *tmps = NULL;
+	// Held in a fixed buffer rather than a strDuplicate because every failure
+	// arm below returns straight out of the function; strUnquote points into
+	// `token`, which the next strParseToken overwrites.
+	s32 kind = MODSTAGE_KIND_NONE;
+	char arenaname[64];
+	arenaname[0] = '\0';
 	p = strParseToken(p, token, NULL);
 	while (p && token[0] && strcmp(token, "}") != 0) {
 		if (!strcmp(token, "bgfile")) {
@@ -1607,6 +1732,32 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 				sysLogPrintf(LOG_NOTE, "modConfigParseStage: returning NULL (weather parse failed for stage 0x%02x)", stagenum);
 				return NULL;
 			}
+		} else if (!strcmp(token, "kind")) {
+			// kind solo|mp|both|none - what the stage IS, not what this block
+			// changes about it. Absent means none; see enum modStageKind.
+			PARSE_STAGE_STRING("", "kind", tmps);
+			if (!strcmp(tmps, "solo")) {
+				kind = MODSTAGE_KIND_SOLO;
+			} else if (!strcmp(tmps, "mp")) {
+				kind = MODSTAGE_KIND_MP;
+			} else if (!strcmp(tmps, "both")) {
+				kind = MODSTAGE_KIND_BOTH;
+			} else if (!strcmp(tmps, "none")) {
+				kind = MODSTAGE_KIND_NONE;
+			} else {
+				sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: invalid kind: %s", stagenum, tmps);
+				return NULL;
+			}
+		} else if (!strcmp(token, "arenaname")) {
+			// Named for the field it reaches: struct mparena's customname,
+			// which setup.c prefers over the langid at :367, :2831 and :2846,
+			// so a mod names an arena with a plain string and ships no lang
+			// files. It is not called stagename because nothing on the solo
+			// side reads a display string - struct solostage has three langids
+			// and no customname at all.
+			PARSE_STAGE_STRING("", "arenaname", tmps);
+			strncpy(arenaname, tmps, sizeof(arenaname) - 1);
+			arenaname[sizeof(arenaname) - 1] = '\0';
 		} else if (!strcmp(token, "use_mod_files")) {
 			// Retired. Both this and force_vanilla were per-stage overrides of
 			// g_NotLoadMod, the All-Solos-in-Multi switch fojo never sets. The
@@ -1630,6 +1781,11 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 		sysLogPrintf(LOG_ERROR, "modconfig: unterminated stage 0x%02x block", stagenum);
 		return NULL;
 	}
+
+	// Recorded only once the block has parsed cleanly, so a malformed block
+	// cannot put a half-read stage in a menu. sidx >= 0 was checked above, so
+	// everything reaching here has a g_Stages row and can actually load.
+	modStageRegRecord(stagenum, modnum, kind, arenaname[0] ? arenaname : NULL, 0, 0);
 
 	return p;
 }
@@ -1737,11 +1893,17 @@ s32 modLoadAIO(void)
 
 		while (p && token[0]) {
 			if (!strcmp(token, "MpArena")) {
-				// Skip arenas - using vanilla list
-				p = modConfigSkipBlock(p, token);
+				// No longer skipped: it feeds the registry, which is keyed by
+				// stagenum, so this second pass over the same file re-records
+				// rather than duplicating.
+				p = modConfigParseMpArena(p, token);
+				if (!p) {
+					sysLogPrintf(LOG_ERROR, "modLoadAIO: malformed MpArena block");
+					break;
+				}
 				continue;
 			} else if (!strcmp(token, "MpArenaGroup")) {
-				// Skip arena groups - using vanilla list
+				// Retired; see modConfigLoad.
 				p = modConfigSkipBlock(p, token);
 				continue;
 			} else if (!strcmp(token, "MpHeads")) {
@@ -1945,13 +2107,26 @@ s32 modConfigLoad(const char *fname)
 				break;
 			}
 		} else if (!strcmp(token, "MpArena")) {
-			if (!g_MainIsBooting) {
-				p = modConfigParseMpArena(p, token);
-			} else {
-				p = modConfigSkipBlock(p, token);
-			}
+			// Parsed at boot too, unlike the blocks above it. Those edit the
+			// mplayer arrays, which are not up yet while g_MainIsBooting;
+			// this one only writes the registry, which is plain malloc, and
+			// the arena list is not built until pdmain calls mpArenasRebuild
+			// after every modconfig has been read.
+			p = modConfigParseMpArena(p, token);
 			if (!p) {
 				sysLogPrintf(LOG_ERROR, "modconfig: malformed MpArena block");
+				success = false;
+				break;
+			}
+		} else if (!strcmp(token, "MpArenaGroup")) {
+			// Retired. Its parser was defined and called from nowhere, so no
+			// config could ever have used it, and the arena groups are now
+			// derived from the merged list in mpArenasRebuild. Skipped rather
+			// than rejected so a config carrying one does not hard-fail.
+			sysLogPrintf(LOG_WARNING, "modconfig: 'MpArenaGroup' is retired and ignored");
+			p = modConfigSkipBlock(p, token);
+			if (!p) {
+				sysLogPrintf(LOG_ERROR, "modconfig: malformed MpArenaGroup block");
 				success = false;
 				break;
 			}
@@ -2459,8 +2634,12 @@ void modSwitch(s32 modnum, s32 stagenum) {
   bodiesInit();          // recount guard-head arrays now mods are loaded
   fojoPatchGuardHeads(); // splice FoJo Calico/Poplin into female guard pool
   fojoInitChrBioCharacters(); // resolve FoJo bio chr ids to runtime mpheadnums
-	// Load AIO assets (heads, bodies, character models) but keep vanilla arenas
+	// Load AIO assets (heads, bodies, character models)
 	modLoadAIO();
-	// Always use vanilla arena list (don't switch to AIO arenas)
-	// mpSetArenaMode(true);
+
+	// The fallback modConfigLoad above can register stages that were not in
+	// the registry at boot, so the list is rebuilt rather than assumed. With
+	// no mod-declared arena this repoints nothing - see mpArenasRebuild.
+	mpArenasRebuild();
+	modStageRegReport();
 }

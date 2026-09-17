@@ -291,7 +291,6 @@ static int l_ctx_run(lua_State *L)
 	luaL_argcheck(L, arg >= 0 && arg <= 0xffff, 2, "opcode out of range");
 	opcode = (u32)arg;
 
-
 	for (i = 3; i <= top && n < (u32)sizeof(operands); i++) {
 		operands[n++] = (u8)(luaL_checkinteger(L, i) & 0xff);
 	}

@@ -21,7 +21,7 @@
  * amount (clamped to full). */
 static int l_pd_player_heal(lua_State *L)
 {
-	f32 amount = (f32)luaL_optnumber(L, 1, 0.0);
+	f32 amount = luaApiOptNum(L, 1, 0.0f);
 	lua_pushboolean(L, chraiLuaPlayerHeal(amount) != 0);
 	return 1;
 }
@@ -32,7 +32,7 @@ static int l_pd_player_heal(lua_State *L)
  * close or finish its fill animation. */
 static int l_pd_player_set_shield(lua_State *L)
 {
-	f32 frac = (f32)luaL_optnumber(L, 1, 1.0);
+	f32 frac = luaApiOptNum(L, 1, 1.0f);
 	s32 silent = lua_toboolean(L, 2);
 	lua_pushboolean(L, chraiLuaPlayerSetShield(frac, silent) != 0);
 	return 1;
@@ -112,7 +112,7 @@ static int l_pd_player_crouch(lua_State *L)
  * secs <= 0 cancels an active boost. */
 static int l_pd_boost(lua_State *L)
 {
-	f32 secs = (f32)luaL_optnumber(L, 1, 10.0);
+	f32 secs = luaApiOptNum(L, 1, 10.0f);
 	/* bgunAddBoost takes ticks; keep the product inside an s32. */
 	if (secs > 3600.0f) {
 		secs = 3600.0f;
@@ -124,7 +124,7 @@ static int l_pd_boost(lua_State *L)
 /* pd.player_set_health(frac) -> bool. Set health 0.01..1 (never kills). */
 static int l_pd_player_set_health(lua_State *L)
 {
-	f32 frac = (f32)luaL_checknumber(L, 1);
+	f32 frac = luaApiNum(L, 1);
 	lua_pushboolean(L, chraiLuaPlayerSetHealth(frac) != 0);
 	return 1;
 }
@@ -225,7 +225,7 @@ static int l_pd_load_model_rom(lua_State *L)
  * damage path; ~1.0 is roughly one gunshot. */
 static int l_pd_player_damage(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaPlayerDamage((f32)luaL_checknumber(L, 1)) != 0);
+	lua_pushboolean(L, chraiLuaPlayerDamage(luaApiNum(L, 1)) != 0);
 	return 1;
 }
 
@@ -242,7 +242,7 @@ static int l_pd_button_block(lua_State *L)
  * (0.45 = the XBLA special). 0/none = off. */
 static int l_pd_deadzone(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaDeadzone((f32)luaL_optnumber(L, 1, 0.0)) != 0);
+	lua_pushboolean(L, chraiLuaDeadzone(luaApiOptNum(L, 1, 0.0f)) != 0);
 	return 1;
 }
 
@@ -264,7 +264,7 @@ static int l_pd_warp_home(lua_State *L)
  * stick sensitivity (config sliders untouched). 1 or no arg restores. */
 static int l_pd_sens_boost(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaSensBoost((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaSensBoost(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -279,7 +279,7 @@ static int l_pd_player_freeze(lua_State *L)
  * ("Gotta go fast"). 1 = normal. */
 static int l_pd_player_speed(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaPlayerSpeed((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaPlayerSpeed(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -287,7 +287,7 @@ static int l_pd_player_speed(lua_State *L)
  * degrees (spins the real player — view, aim, heading). */
 static int l_pd_player_add_yaw(lua_State *L)
 {
-	f32 deg = (f32)luaL_checknumber(L, 1);
+	f32 deg = luaApiNum(L, 1);
 	lua_pushboolean(L, chraiLuaPlayerAddYaw(deg) != 0);
 	return 1;
 }
@@ -297,8 +297,8 @@ static int l_pd_player_add_yaw(lua_State *L)
  * given (the effect glides it via pd.player_pitch instead). */
 static int l_pd_player_slip(lua_State *L)
 {
-	f32 push = (f32)luaL_optnumber(L, 1, 25.0);
-	f32 pitch = (f32)luaL_optnumber(L, 2, 999.0); /* > 180 = leave pitch alone */
+	f32 push = luaApiOptNum(L, 1, 25.0f);
+	f32 pitch = luaApiOptNum(L, 2, 999.0f); /* > 180 = leave pitch alone */
 	lua_pushboolean(L, chraiLuaPlayerSlip(push, pitch) != 0);
 	return 1;
 }
@@ -307,7 +307,7 @@ static int l_pd_player_slip(lua_State *L)
  * forward, negative backward) — knockback-style, collision-respecting. */
 static int l_pd_player_push(lua_State *L)
 {
-	f32 mag = (f32)luaL_checknumber(L, 1);
+	f32 mag = luaApiNum(L, 1);
 	lua_pushboolean(L, chraiLuaPlayerPush(mag) != 0);
 	return 1;
 }
@@ -369,8 +369,8 @@ static int l_pd_trapdoor(lua_State *L)
  * omitted = same as accel. */
 static int l_pd_ice_floor(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaIceFloor((f32)luaL_optnumber(L, 1, 1.0),
-			(f32)luaL_optnumber(L, 2, -1.0)) != 0);
+	lua_pushboolean(L, chraiLuaIceFloor(luaApiOptNum(L, 1, 1.0f),
+			luaApiOptNum(L, 2, -1.0f)) != 0);
 	return 1;
 }
 
@@ -388,7 +388,7 @@ static int l_pd_player_pitch(lua_State *L)
 	if (lua_gettop(L) < 1 || lua_isnil(L, 1)) {
 		lua_pushnumber(L, chraiLuaPlayerPitchGet());
 	} else {
-		lua_pushboolean(L, chraiLuaPlayerPitchSet((f32)luaL_checknumber(L, 1)) != 0);
+		lua_pushboolean(L, chraiLuaPlayerPitchSet(luaApiNum(L, 1)) != 0);
 	}
 	return 1;
 }

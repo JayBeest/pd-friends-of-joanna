@@ -42,6 +42,17 @@ local function check(name, fn)
 	end
 end
 
+-- Hostile-float helper. Every pd.* float argument now goes through
+-- luaApiNum/luaApiOptNum (src/game/luaai_api_internal.h): a non-finite value
+-- is an argument error, not a silent 0, so a script that means it can pcall.
+-- refused(fn, ...) is true when the call was refused that way.
+local function refused(fn, ...)
+	local ok, err = pcall(fn, ...)
+	return (not ok) and tostring(err):find("finite") ~= nil
+end
+
+local NAN, INF = 0 / 0, 1 / 0
+
 local function isint(v)
 	return type(v) == "number" and math.type(v) == "integer"
 end
@@ -105,11 +116,24 @@ local function setall()
 	end)
 	check("gust", function() return pd.gust(150) == true end)
 	check("force bounds", function()
-		-- a NaN or inf force is refused, so the player's velocity stays finite
-		local refused = pd.gust(0 / 0) == false and pd.gust(1 / 0) == false
-			and pd.haunt(0 / 0) == 0 and pd.haunt(-1 / 0) == 0
+		-- a NaN or inf force is refused at the bridge now (it used to fall
+		-- through to the isfinite guard inside chraiLuaGust and return false),
+		-- so the player's velocity stays finite either way
+		local rej = refused(pd.gust, NAN) and refused(pd.gust, INF)
+			and refused(pd.haunt, NAN) and refused(pd.haunt, -INF)
 		local x, y, z = pd.player_pos()
-		return refused and x == x and y == y and z == z
+		return rej and x == x and y == y and z == z
+	end)
+	check("world float bounds", function()
+		-- audio_pitch is a resample ratio the shifter divides by, and
+		-- audio_reverb a wet fraction the tail is scaled by; both were
+		-- unclamped. NaN refused, finite extremes clamped and audible.
+		local rej = refused(pd.audio_pitch, NAN) and refused(pd.audio_pitch, INF)
+			and refused(pd.audio_reverb, NAN) and refused(pd.music_rate, NAN)
+		local clamped = pd.audio_pitch(0) == true and pd.audio_pitch(1e9) == true
+			and pd.audio_reverb(-1e9) == true and pd.audio_reverb(1e9) == true
+		pd.audio_pitch() pd.audio_reverb()
+		return rej and clamped, string.format("refused=%s clamped=%s", tostring(rej), tostring(clamped))
 	end)
 	check("rubber_objects", function() return pd.rubber_objects(true) == true end)
 	check("weather", function()

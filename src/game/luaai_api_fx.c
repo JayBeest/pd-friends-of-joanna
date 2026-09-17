@@ -62,7 +62,7 @@ static int l_pd_draw_sprite(lua_State *L)
 	s32 w = (s32)luaL_checkinteger(L, 4);
 	s32 h = (s32)luaL_checkinteger(L, 5);
 	u32 color = (u32)luaL_optinteger(L, 6, 0x000000ffu);
-	f32 secs = (f32)luaL_optnumber(L, 7, 0.0);
+	f32 secs = luaApiOptNum(L, 7, 0.0f);
 
 	luaOverlayAdd(OVL_SPRITE, x, y, w, h, color, NULL, texnum, 0.f, secs);
 	return 0;
@@ -225,9 +225,10 @@ static int l_pd_draw_image(lua_State *L)
 	s32 cy = (s32)luaL_checkinteger(L, 3);
 	s32 w = (s32)luaL_checkinteger(L, 4);
 	s32 h = (s32)luaL_checkinteger(L, 5);
-	f32 angle = (f32)(luaL_optnumber(L, 6, 0.0) * (3.14159265358979 / 180.0)); /* deg -> rad */
+	/* deg -> rad. 4 turns either way is as much as a spin reads as. */
+	f32 angle = luaApiOptNumR(L, 6, 0.0f, -1440.0f, 1440.0f) * (f32)(3.14159265358979 / 180.0);
 	u32 color = (u32)luaL_optinteger(L, 7, 0xffffffffu);
-	f32 secs = (f32)luaL_optnumber(L, 8, 0.0);
+	f32 secs = luaApiOptNum(L, 8, 0.0f);
 
 	luaOverlayAdd(OVL_IMAGE, cx, cy, w, h, color, NULL, handle, angle, secs);
 	return 0;
@@ -328,7 +329,7 @@ static int l_pd_fade(lua_State *L)
 	s32 g = (s32)luaL_checkinteger(L, 2);
 	s32 b = (s32)luaL_checkinteger(L, 3);
 	s32 a = (s32)luaL_checkinteger(L, 4);
-	f32 time60 = (f32)luaL_checknumber(L, 5);
+	f32 time60 = luaApiNum(L, 5);
 	lua_pushboolean(L, chraiLuaScreenFade(r, g, b, a, time60) != 0);
 	return 1;
 }
@@ -363,7 +364,8 @@ static int l_pd_shiny(lua_State *L)
  * pillars). 0/absent = off. */
 static int l_pd_hud_squish(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaHudSquish((f32)luaL_optnumber(L, 1, 0.0)) != 0);
+	/* a fraction of the HUD height; past a few the HUD is off screen */
+	lua_pushboolean(L, chraiLuaHudSquish(luaApiOptNumR(L, 1, 0.0f, 0.0f, 8.0f)) != 0);
 	return 1;
 }
 
@@ -441,7 +443,7 @@ static int l_pd_upside_down(lua_State *L)
  * re-setting each tick. */
 static int l_pd_screen_roll(lua_State *L)
 {
-	f32 deg = (f32)luaL_optnumber(L, 1, 0.0);
+	f32 deg = luaApiOptNumR(L, 1, 0.0f, -3600.0f, 3600.0f);
 	lua_pushboolean(L, chraiLuaScreenRoll(deg) != 0);
 	return 1;
 }
@@ -451,7 +453,7 @@ static int l_pd_screen_roll(lua_State *L)
  * deliberately no off switch. */
 static int l_pd_fake_crash(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaFakeCrash((f32)luaL_optnumber(L, 1, 3.0)) != 0);
+	lua_pushboolean(L, chraiLuaFakeCrash(luaApiOptNum(L, 1, 3.0f)) != 0);
 	return 1;
 }
 
@@ -537,14 +539,16 @@ static int l_pd_half_mirror(lua_State *L)
  * vertices flow at different speeds and arrive out of step). */
 static int l_pd_vertex_wobble(lua_State *L)
 {
-	f32 amp = (f32)luaL_optnumber(L, 1, 0.0);
-	f32 freq = (f32)luaL_optnumber(L, 2, 0.03);
-	f32 phase = (f32)luaL_optnumber(L, 3, 0.0);
-	f32 sag = (f32)luaL_optnumber(L, 4, 0.0);
-	f32 desync = (f32)luaL_optnumber(L, 5, 0.0);
+	f32 amp = luaApiOptNum(L, 1, 0.0f);
+	/* radians per world unit: past a few the wobble is per-vertex noise */
+	f32 freq = luaApiOptNumR(L, 2, 0.03f, -16.0f, 16.0f);
+	/* the animation angle, advanced by the caller every tick; it wraps */
+	f32 phase = luaApiOptNumR(L, 3, 0.0f, -1.0e5f, 1.0e5f);
+	f32 sag = luaApiOptNum(L, 4, 0.0f);
+	f32 desync = luaApiOptNum(L, 5, 0.0f);
 	/* nearfade: world-unit radius the wobble ramps in over, so geometry close
 	 * to the camera barely strays from its true position. 0 = off. */
-	f32 nearfade = (f32)luaL_optnumber(L, 6, 0.0);
+	f32 nearfade = luaApiOptNumR(L, 6, 0.0f, 0.0f, 1.0e5f); /* world units */
 	lua_pushboolean(L, chraiLuaVertexWobble(amp, freq, phase, sag, desync, nearfade) != 0);
 	return 1;
 }
@@ -579,7 +583,8 @@ static int l_pd_crt(lua_State *L)
  * k ~ 1.4 = peephole, negative = pincushion, 0/absent = off. */
 static int l_pd_lens(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaLens((f32)luaL_optnumber(L, 1, 0.0)) != 0);
+	/* the bridge clamps to [-0.8, 4]; NaN passed both of its tests */
+	lua_pushboolean(L, chraiLuaLens(luaApiOptNumR(L, 1, 0.0f, -0.8f, 4.0f)) != 0);
 	return 1;
 }
 
@@ -594,7 +599,7 @@ static int l_pd_t_pose(lua_State *L)
  * wide, 0.5 = extra tall, 1 / no arg = normal. */
 static int l_pd_aspect_scale(lua_State *L)
 {
-	f32 mult = (f32)luaL_optnumber(L, 1, 1.0);
+	f32 mult = luaApiOptNum(L, 1, 1.0f);
 	lua_pushboolean(L, chraiLuaAspectScale(mult) != 0);
 	return 1;
 }
@@ -603,7 +608,7 @@ static int l_pd_aspect_scale(lua_State *L)
  * <1 tunnel vision, 1 / no arg = normal. */
 static int l_pd_fov_scale(lua_State *L)
 {
-	f32 mult = (f32)luaL_optnumber(L, 1, 1.0);
+	f32 mult = luaApiOptNum(L, 1, 1.0f);
 	lua_pushboolean(L, chraiLuaFovScale(mult) != 0);
 	return 1;
 }

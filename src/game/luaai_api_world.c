@@ -170,14 +170,14 @@ static int l_pd_ext_volume(lua_State *L)
  * unlike pd.audio_pitch, which shifts pitch at constant tempo. */
 static int l_pd_music_rate(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaMusicRate((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaMusicRate(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
 /* pd.haunt(force) -> count. Hurl up to a few LOS-visible props at the player. */
 static int l_pd_haunt(lua_State *L)
 {
-	lua_pushinteger(L, chraiLuaHaunt((f32)luaL_optnumber(L, 1, 200.0)));
+	lua_pushinteger(L, chraiLuaHaunt(luaApiOptNum(L, 1, 200.0f)));
 	return 1;
 }
 
@@ -225,7 +225,8 @@ static int l_pd_audio_radio(lua_State *L)
  * pd.audio_reverb() turns it off. */
 static int l_pd_audio_reverb(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaAudioReverb((f32)luaL_optnumber(L, 1, 0.0)) != 0);
+	/* a wet/dry fraction */
+	lua_pushboolean(L, chraiLuaAudioReverb(luaApiOptNumR(L, 1, 0.0f, 0.0f, 1.0f)) != 0);
 	return 1;
 }
 
@@ -241,7 +242,8 @@ static int l_pd_audio_reverse(lua_State *L)
  * helium, 0.65 = demon. pd.audio_pitch() restores normal pitch. */
 static int l_pd_audio_pitch(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaAudioPitch((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	/* a resample ratio: 0 would divide by zero in the shifter, 1 = off */
+	lua_pushboolean(L, chraiLuaAudioPitch(luaApiOptNumR(L, 1, 1.0f, 0.05f, 8.0f)) != 0);
 	return 1;
 }
 
@@ -299,7 +301,7 @@ static int l_pd_room_highlight(lua_State *L)
 /* pd.gust([force]) -> bool. Shove everything in one random direction. */
 static int l_pd_gust(lua_State *L)
 {
-	f32 force = (f32)luaL_optnumber(L, 1, 150.0);
+	f32 force = luaApiOptNum(L, 1, 150.0f);
 	lua_pushboolean(L, chraiLuaGust(force) != 0);
 	return 1;
 }
@@ -319,7 +321,7 @@ static int l_pd_rubber_objects(lua_State *L)
 static int l_pd_song(lua_State *L)
 {
 	s32 slot = (s32)luaL_optinteger(L, 1, -1);
-	f32 frac = (f32)luaL_optnumber(L, 2, 0.0);
+	f32 frac = luaApiOptNum(L, 2, 0.0f);
 	lua_pushboolean(L, chraiLuaPlaySong(slot, frac) != 0);
 	return 1;
 }

@@ -204,7 +204,7 @@ static int l_pd_gangsta(lua_State *L)
 /* pd.zoom_scale(mult) -> bool. Scale weapon aim-zoom FOV; >1 zooms OUT. */
 static int l_pd_zoom_scale(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaZoomScale((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaZoomScale(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -272,7 +272,7 @@ static int l_pd_no_reload(lua_State *L)
 /* pd.spread(mult) -> bool. Chaos Weapon Spread: scale weapon shot spread. */
 static int l_pd_spread(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaSpread((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaSpread(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -287,7 +287,7 @@ static int l_pd_drop_weapon(lua_State *L)
 /* pd.gun_fov(deg) -> bool. Viewmodel FOV override; 0 restores. */
 static int l_pd_gun_fov(lua_State *L)
 {
-	f32 deg = (f32)luaL_optnumber(L, 1, 0.0);
+	f32 deg = luaApiOptNum(L, 1, 0.0f);
 	lua_pushboolean(L, chraiLuaGunFov(deg) != 0);
 	return 1;
 }

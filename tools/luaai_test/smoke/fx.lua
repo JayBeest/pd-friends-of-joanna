@@ -31,6 +31,17 @@ end
 
 local HOLD = 8 -- frames each effect stays on
 
+-- Hostile-float helper. Every pd.* float argument now goes through
+-- luaApiNum/luaApiOptNum (src/game/luaai_api_internal.h): a non-finite value
+-- is an argument error, not a silent 0, so a script that means it can pcall.
+-- refused(fn, ...) is true when the call was refused that way.
+local function refused(fn, ...)
+	local ok, err = pcall(fn, ...)
+	return (not ok) and tostring(err):find("finite") ~= nil
+end
+
+local NAN, INF = 0 / 0, 1 / 0
+
 local img = nil
 local frozen = 0
 local fpscapped = nil
@@ -98,6 +109,32 @@ local steps = {
 		function() return pd.aspect_scale() == true end },
 	{ "internal_res", function() return pd.internal_res(120) == true end,
 		function() return pd.internal_res() == true end },
+	-- Hostile: NaN and inf into every fx float. gfx_screen_roll, the wobble
+	-- phase, the lens k and the HUD squish are all read straight by the
+	-- renderer, where a NaN poisons a matrix for good (its own clamps are
+	-- comparisons, and every comparison against NaN is false).
+	{ "fx float bounds", function()
+			local all = refused(pd.screen_roll, NAN)
+				and refused(pd.screen_roll, INF)
+				and refused(pd.vertex_wobble, 12, NAN, 0, 4, 1, 200)
+				and refused(pd.vertex_wobble, 12, 0.03, NAN, 4, 1, 200)
+				and refused(pd.vertex_wobble, 12, 0.03, 0, 4, 1, INF)
+				and refused(pd.lens, NAN)
+				and refused(pd.hud_squish, NAN)
+				and refused(pd.fade, 255, 255, 255, 200, NAN)
+				and refused(pd.fov_scale, NAN)
+				and refused(pd.aspect_scale, INF)
+				and refused(pd.fake_crash, NAN)
+			-- the finite extremes clamp instead, and leave the frame drawable
+			local clamped = pd.screen_roll(1e9) == true and pd.lens(1e9) == true
+				and pd.hud_squish(1e9) == true
+				and pd.vertex_wobble(12, 1e9, 1e9, 4, 1, 1e9) == true
+			return all and clamped, string.format("refused=%s clamped=%s", tostring(all), tostring(clamped))
+		end,
+		function()
+			pd.screen_roll() pd.lens() pd.hud_squish() pd.vertex_wobble()
+			return true
+		end },
 	{ "hud_message", function() pd.hud_message("fx smoke: hello") return true end,
 		function() pd.hud_message("fx smoke: big banner", 1) return true end },
 	-- Hostile: one 200-character unbroken word. textWrap accumulates a word

@@ -49,6 +49,17 @@ local function near(a, b, eps)
 	return type(a) == "number" and math.abs(a - b) <= (eps or 0.01)
 end
 
+-- Hostile-float helper. Every pd.* float argument now goes through
+-- luaApiNum/luaApiOptNum (src/game/luaai_api_internal.h): a non-finite value
+-- is an argument error, not a silent 0, so a script that means it can pcall.
+-- refused(fn, ...) is true when the call was refused that way.
+local function refused(fn, ...)
+	local ok, err = pcall(fn, ...)
+	return (not ok) and tostring(err):find("finite") ~= nil
+end
+
+local NAN, INF = 0 / 0, 1 / 0
+
 local function pos()
 	local x, y, z = pd.player_pos()
 	return x and { x = x, y = y, z = z } or nil
@@ -121,6 +132,32 @@ steps[#steps + 1] = function()
 		return ok and near(s, 0.5, 0.05) and ok2 and near(s2, 0), fmt(s) .. " " .. fmt(s2)
 	end)
 	check("show_health", function() return pd.show_health() == true end)
+	check("player float bounds", function()
+		-- NaN into every player float. player_push and player_slip already
+		-- had their own isfinite guards; the rest reached bondwalk and the
+		-- camera with whatever the script said.
+		local before = pos()
+		local rej = refused(pd.player_set_health, NAN)
+			and refused(pd.player_heal, NAN)
+			and refused(pd.player_damage, INF)
+			and refused(pd.deadzone, NAN)
+			and refused(pd.sens_boost, NAN)
+			and refused(pd.player_speed, INF)
+			and refused(pd.player_add_yaw, NAN)
+			and refused(pd.player_push, NAN)
+			and refused(pd.player_slip, NAN)
+			and refused(pd.ice_floor, NAN)
+			and refused(pd.boost, NAN)
+			and refused(pd.player_set_shield, NAN)
+		local clamped = pd.sens_boost(1e9) == true and pd.player_speed(1e9) == true
+			and pd.deadzone(1e9) == true
+		pd.sens_boost() pd.player_speed() pd.deadzone()
+		local after = pos()
+		-- the player is still where it was and its position is still finite
+		local sane = after ~= nil and after.x == after.x and dist(before, after) < 500
+		return rej and clamped and sane,
+			string.format("refused=%s clamped=%s sane=%s", tostring(rej), tostring(clamped), tostring(sane))
+	end)
 	check("invincible", function()
 		return pd.invincible(true) == true and pd.invincible(false) == true
 	end)

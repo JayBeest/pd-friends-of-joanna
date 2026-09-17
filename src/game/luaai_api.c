@@ -136,6 +136,48 @@ void luaApiTextScrub(char *s)
 	}
 }
 
+/* ------------------------------------------------------------------------- *
+ * Script floats -- see luaai_api_internal.h for why.
+ * ------------------------------------------------------------------------- */
+
+static f32 luaApiFinite(lua_State *L, s32 idx, double d, f32 lo, f32 hi)
+{
+	f32 v;
+
+	if (!isfinite(d)) {
+		luaL_argerror(L, idx, "not a finite number");
+	}
+
+	/* Narrow AFTER the test: a double past FLT_MAX becomes an f32 inf. */
+	v = (f32)(d < (double)lo ? (double)lo : d > (double)hi ? (double)hi : d);
+
+	return v;
+}
+
+f32 luaApiNumR(lua_State *L, s32 idx, f32 lo, f32 hi)
+{
+	return luaApiFinite(L, idx, luaL_checknumber(L, idx), lo, hi);
+}
+
+f32 luaApiNum(lua_State *L, s32 idx)
+{
+	return luaApiNumR(L, idx, -LUAAPI_F_LIMIT, LUAAPI_F_LIMIT);
+}
+
+f32 luaApiOptNumR(lua_State *L, s32 idx, f32 def, f32 lo, f32 hi)
+{
+	if (lua_isnoneornil(L, idx)) {
+		return def; /* unclamped: a default may be an out-of-range sentinel */
+	}
+
+	return luaApiFinite(L, idx, luaL_checknumber(L, idx), lo, hi);
+}
+
+f32 luaApiOptNum(lua_State *L, s32 idx, f32 def)
+{
+	return luaApiOptNumR(L, idx, def, -LUAAPI_F_LIMIT, LUAAPI_F_LIMIT);
+}
+
 /* Few enough names that a linear list is fine. */
 #define LUA_UNAVAILABLE_MAX 16
 static const char *g_LuaUnavailableLogged[LUA_UNAVAILABLE_MAX];
@@ -318,7 +360,7 @@ static int l_pd_draw_box(lua_State *L)
 	s32 w = (s32)luaL_checkinteger(L, 3);
 	s32 h = (s32)luaL_checkinteger(L, 4);
 	u32 color = (u32)luaL_optinteger(L, 5, 0xffffffffu);
-	f32 secs = (f32)luaL_optnumber(L, 6, 0.0);
+	f32 secs = luaApiOptNum(L, 6, 0.0f);
 
 	luaOverlayAdd(OVL_BOX, x, y, w, h, color, NULL, 0, 0.f, secs);
 	return 0;
@@ -331,7 +373,7 @@ static int l_pd_draw_text(lua_State *L)
 	s32 y = (s32)luaL_checkinteger(L, 2);
 	const char *text = luaL_checkstring(L, 3);
 	u32 color = (u32)luaL_optinteger(L, 4, 0xffffffffu);
-	f32 secs = (f32)luaL_optnumber(L, 5, 0.0);
+	f32 secs = luaApiOptNum(L, 5, 0.0f);
 
 	luaOverlayAdd(OVL_TEXT, x, y, 0, 0, color, text, 0, 0.f, secs);
 	return 0;

@@ -84,6 +84,42 @@ void luaApiLogUnavailable(const char *name);
 void luaApiTextScrub(char *s);
 
 /* ------------------------------------------------------------------------- *
+ * Script floats
+ * ------------------------------------------------------------------------- */
+
+/* A Lua number is a double and a script may hand any pd.* function inf, NaN
+ * or 1e30. Downstream it becomes an f32 and feeds the model frame walk, the
+ * matrix stack, the audio DSP and a lot of fixed-point conversion, where a
+ * non-finite value is a hung or never-ending frame rather than a wrong
+ * picture: modelSetAnimation with speed = inf walks the frame list forever,
+ * NaN poisons a global that nothing later can clear. Every float argument a
+ * pd.* function takes goes through one of these four.
+ *
+ * Non-finite is an ARGUMENT ERROR, not a clamp. Turning NaN silently into 0
+ * hides the script bug at the point it can still be found, and the error is
+ * catchable with pcall, so a script that means it can handle it.
+ *
+ * LUAAPI_F_LIMIT is the generic net for a bridge with no meaningful range of
+ * its own: wider than any world coordinate this game has (the largest stage
+ * is well under 1e5 units), small enough that squaring it stays finite in
+ * f32, and small enough that a frame counter built from it terminates. Where
+ * a bridge does have a range -- an animation speed, a pitch ratio, a wet
+ * fraction -- it passes that instead, with the *R forms. */
+#define LUAAPI_F_LIMIT 1.0e6f
+
+/* Required argument idx. Errors if it is not a number or not finite. */
+f32 luaApiNum(lua_State *L, s32 idx);
+
+/* Optional argument idx, def when absent or nil. */
+f32 luaApiOptNum(lua_State *L, s32 idx, f32 def);
+
+/* As above, clamped to [lo, hi] instead of LUAAPI_F_LIMIT. def is returned
+ * unclamped, so a bridge can keep an out-of-range sentinel default (pitch =
+ * 999 meaning "leave it alone"). */
+f32 luaApiNumR(lua_State *L, s32 idx, f32 lo, f32 hi);
+f32 luaApiOptNumR(lua_State *L, s32 idx, f32 def, f32 lo, f32 hi);
+
+/* ------------------------------------------------------------------------- *
  * Calling back into Lua (luaai.c)
  * ------------------------------------------------------------------------- */
 

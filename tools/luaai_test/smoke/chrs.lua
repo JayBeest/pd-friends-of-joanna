@@ -45,6 +45,17 @@ local function dist2(ax, az, bx, bz)
 	return (ax - bx) * (ax - bx) + (az - bz) * (az - bz)
 end
 
+-- Hostile-float helper. Every pd.* float argument now goes through
+-- luaApiNum/luaApiOptNum (src/game/luaai_api_internal.h): a non-finite value
+-- is an argument error, not a silent 0, so a script that means it can pcall.
+-- refused(fn, ...) is true when the call was refused that way.
+local function refused(fn, ...)
+	local ok, err = pcall(fn, ...)
+	return (not ok) and tostring(err):find("finite") ~= nil
+end
+
+local NAN, INF = 0 / 0, 1 / 0
+
 -- Living non-player chrs, nearest first.
 local function npcs()
 	local px, py, pz = pd.player_pos()
@@ -108,6 +119,18 @@ local function phase1()
 
 	-- Per-chr mutators with a read-back where Lua can see the result.
 	check("chr_anim", function() return pd.chr_anim(a, ANIM_SURRENDER_002E, 1.0) and not pd.chr_anim(-1, 0) end)
+	check("chr_anim hostile speed", function()
+		-- modelSetAnimation walks the frame list at `speed` every tick, so
+		-- 1e9 never reaches the end of the animation and inf/NaN never
+		-- terminate at all. 1e9 clamps, inf and NaN are refused.
+		local clamped = pd.chr_anim(a, ANIM_SURRENDER_002E, 1e9) == true
+			and pd.chr_anim(a, ANIM_SURRENDER_002E, -1e9) == true
+		local rej = refused(pd.chr_anim, a, ANIM_SURRENDER_002E, INF)
+			and refused(pd.chr_anim, a, ANIM_SURRENDER_002E, -INF)
+			and refused(pd.chr_anim, a, ANIM_SURRENDER_002E, NAN)
+		pd.chr_anim(a, ANIM_SURRENDER_002E, 1.0)
+		return clamped and rej, string.format("clamped=%s refused=%s", tostring(clamped), tostring(rej))
+	end)
 	check("chr_set_shield", function()
 		local before = pd.chr_info(a).shield
 		local ok = pd.chr_set_shield(a, 4)
@@ -172,7 +195,26 @@ local function phase1()
 			string.format("ok=%s dist %.0f", tostring(ok), math.sqrt(dist2(x, z, px, pz)))
 	end)
 	check("chr_yeet", function()
-		return pd.chr_yeet(pick(n, 3), 50) and not pd.chr_yeet(pick(n, 3), 0 / 0)
+		-- the NaN force is refused at the bridge now, before chraiLuaChrYeet
+		return pd.chr_yeet(pick(n, 3), 50) and refused(pd.chr_yeet, pick(n, 3), NAN)
+	end)
+	check("chrs float bounds", function()
+		-- NaN into every chrs float: each must be refused, and the chr the
+		-- calls named must still be readable afterwards
+		local c = pick(n, 3)
+		local px, py, pz = pd.player_pos()
+		local all = refused(pd.chr_set_shield, c, NAN)
+			and refused(pd.chr_damage, c, INF)
+			and refused(pd.chr_scale, c, NAN)
+			and refused(pd.chr_yscale, c, NAN)
+			and refused(pd.chr_speed, NAN)
+			and refused(pd.chr_armor, c, NAN)
+			and refused(pd.chr_summon, c, NAN, 0)
+			and refused(pd.damage_scale, NAN)
+			and refused(pd.spawn_ally_clone, NAN)
+			and refused(pd.explosion_at, NAN, py, pz)
+			and refused(pd.grenade, px, INF, pz)
+		return all and pd.chr_info(c) ~= nil and px == px, tostring(all)
 	end)
 	check("chr_set_body", function()
 		local c = pick(n, 4)

@@ -47,6 +47,17 @@ local function setter(name, ...)
 	check(name, function() return pd[name](table.unpack(args, 1, n)) == true end)
 end
 
+-- Hostile-float helper. Every pd.* float argument now goes through
+-- luaApiNum/luaApiOptNum (src/game/luaai_api_internal.h): a non-finite value
+-- is an argument error, not a silent 0, so a script that means it can pcall.
+-- refused(fn, ...) is true when the call was refused that way.
+local function refused(fn, ...)
+	local ok, err = pcall(fn, ...)
+	return (not ok) and tostring(err):find("finite") ~= nil
+end
+
+local NAN, INF = 0 / 0, 1 / 0
+
 local function phase0()
 	-- inventory
 	check("give_weapon", function() return pd.give_weapon(W.CMP150) == true end)
@@ -115,7 +126,12 @@ local function phase1()
 	end)
 	setter("weapon_rename", W.CMP150, "Nokia 3315")
 	check("float and int bounds", function()
-		return pd.spread(0 / 0) == true and pd.ammo_cost(0x7fffffff) == true
+		-- NaN into a weapons float is an argument error now, not a stored NaN
+		local rej = refused(pd.spread, NAN) and refused(pd.zoom_scale, INF)
+			and refused(pd.gun_fov, NAN)
+		local clamped = pd.spread(1e9) == true and pd.zoom_scale(1e9) == true
+			and pd.gun_fov(1e9) == true
+		return rej and clamped and pd.ammo_cost(0x7fffffff) == true
 			and pd.spread(4.0) == true and pd.ammo_cost(3) == true
 	end)
 	setter("one_bullet", true)

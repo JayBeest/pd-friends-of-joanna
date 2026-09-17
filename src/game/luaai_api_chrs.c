@@ -35,9 +35,9 @@ static int l_pd_spawn_at_chr(lua_State *L)
 static int l_pd_spawn(lua_State *L)
 {
 	s32 weaponnum = (s32)luaL_checkinteger(L, 1);
-	f32 x = (f32)luaL_checknumber(L, 2);
-	f32 y = (f32)luaL_checknumber(L, 3);
-	f32 z = (f32)luaL_checknumber(L, 4);
+	f32 x = luaApiNum(L, 2);
+	f32 y = luaApiNum(L, 3);
+	f32 z = luaApiNum(L, 4);
 	s32 ref = (s32)luaL_optinteger(L, 5, -1);
 	lua_pushboolean(L, chrsApiSpawnAtPos(ref, weaponnum, x, y, z) != 0);
 	return 1;
@@ -48,7 +48,10 @@ static int l_pd_chr_anim(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
 	s32 animnum = (s32)luaL_checkinteger(L, 2);
-	f32 speed = (f32)luaL_optnumber(L, 3, 1.0);
+	/* modelSetAnimation walks the frame list at this rate every tick: an
+	 * enormous speed never reaches the end of the animation in one frame,
+	 * so it is a hang, not a fast animation. Negative plays backwards. */
+	f32 speed = luaApiOptNumR(L, 3, 1.0f, -10.0f, 10.0f);
 	lua_pushboolean(L, chraiLuaChrAnim(chrnum, animnum, speed) != 0);
 	return 1;
 }
@@ -57,7 +60,7 @@ static int l_pd_chr_anim(lua_State *L)
 static int l_pd_chr_set_shield(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	f32 value = (f32)luaL_checknumber(L, 2);
+	f32 value = luaApiNum(L, 2);
 	lua_pushboolean(L, chraiLuaChrSetShield(chrnum, value) != 0);
 	return 1;
 }
@@ -124,8 +127,8 @@ static int l_pd_spawn_ally(lua_State *L)
  * chaos effect. */
 static int l_pd_spawn_ally_clone(lua_State *L)
 {
-	f32 frac = (f32)luaL_optnumber(L, 1, 0.5);
-	f32 yscale = (f32)luaL_optnumber(L, 2, 0.0);
+	f32 frac = luaApiOptNum(L, 1, 0.5f);
+	f32 yscale = luaApiOptNum(L, 2, 0.0f);
 	s32 chrnum = chraiLuaSpawnAllyClone(frac, yscale);
 	if (chrnum < 0) {
 		lua_pushnil(L);
@@ -139,7 +142,7 @@ static int l_pd_spawn_ally_clone(lua_State *L)
 static int l_pd_chr_yeet(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	f32 force = (f32)luaL_optnumber(L, 2, 100.0);
+	f32 force = luaApiOptNum(L, 2, 100.0f);
 	lua_pushboolean(L, chraiLuaYeetChr(chrnum, force) != 0);
 	return 1;
 }
@@ -157,9 +160,9 @@ static int l_pd_explosion(lua_State *L)
  * portal-walked from the player). The Live Grenade / Martyrdom fuse boom. */
 static int l_pd_explosion_at(lua_State *L)
 {
-	f32 x = (f32)luaL_checknumber(L, 1);
-	f32 y = (f32)luaL_checknumber(L, 2);
-	f32 z = (f32)luaL_checknumber(L, 3);
+	f32 x = luaApiNum(L, 1);
+	f32 y = luaApiNum(L, 2);
+	f32 z = luaApiNum(L, 3);
 	s32 type = (s32)luaL_optinteger(L, 4, 9);
 	lua_pushboolean(L, chrsApiExplodeAtPos(x, y, z, type) != 0);
 	return 1;
@@ -170,9 +173,9 @@ static int l_pd_explosion_at(lua_State *L)
  * its own fuse). */
 static int l_pd_grenade(lua_State *L)
 {
-	f32 x = (f32)luaL_checknumber(L, 1);
-	f32 y = (f32)luaL_checknumber(L, 2);
-	f32 z = (f32)luaL_checknumber(L, 3);
+	f32 x = luaApiNum(L, 1);
+	f32 y = luaApiNum(L, 2);
+	f32 z = luaApiNum(L, 3);
 	s32 chrnum = (s32)luaL_optinteger(L, 4, -1); /* room-search seed (martyrdom corpses) */
 	lua_pushboolean(L, chraiLuaSpawnGrenade(x, y, z, chrnum) != 0);
 	return 1;
@@ -267,7 +270,7 @@ static int l_pd_no_drops(lua_State *L)
 /* pd.damage_scale(frac) -> bool. Scale all chr/player damage (1 = normal). */
 static int l_pd_damage_scale(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaDamageScale((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaDamageScale(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -275,7 +278,7 @@ static int l_pd_damage_scale(lua_State *L)
  * (movement + attack cadence follow). 1 = normal. */
 static int l_pd_chr_speed(lua_State *L)
 {
-	lua_pushboolean(L, chraiLuaChrSpeed((f32)luaL_optnumber(L, 1, 1.0)) != 0);
+	lua_pushboolean(L, chraiLuaChrSpeed(luaApiOptNum(L, 1, 1.0f)) != 0);
 	return 1;
 }
 
@@ -284,7 +287,7 @@ static int l_pd_chr_speed(lua_State *L)
 static int l_pd_chr_damage(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	lua_pushboolean(L, chraiLuaChrDamage(chrnum, (f32)luaL_checknumber(L, 2)) != 0);
+	lua_pushboolean(L, chraiLuaChrDamage(chrnum, luaApiNum(L, 2)) != 0);
 	return 1;
 }
 
@@ -293,7 +296,7 @@ static int l_pd_chr_damage(lua_State *L)
 static int l_pd_chr_scale(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	lua_pushboolean(L, chraiLuaChrScale(chrnum, (f32)luaL_checknumber(L, 2)) != 0);
+	lua_pushboolean(L, chraiLuaChrScale(chrnum, luaApiNum(L, 2)) != 0);
 	return 1;
 }
 
@@ -302,7 +305,7 @@ static int l_pd_chr_scale(lua_State *L)
 static int l_pd_chr_yscale(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	lua_pushboolean(L, chraiLuaChrYscale(chrnum, (f32)luaL_checknumber(L, 2)) != 0);
+	lua_pushboolean(L, chraiLuaChrYscale(chrnum, luaApiNum(L, 2)) != 0);
 	return 1;
 }
 
@@ -323,7 +326,7 @@ static int l_pd_chr_hum(lua_State *L)
 static int l_pd_chr_armor(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	f32 amount = (f32)luaL_optnumber(L, 2, 30.0);
+	f32 amount = luaApiOptNum(L, 2, 30.0f);
 	lua_pushboolean(L, chraiLuaChrArmor(chrnum, amount) != 0);
 	return 1;
 }
@@ -345,9 +348,9 @@ static int l_pd_chr_armor_clear(lua_State *L)
 static int l_pd_clone_chr(lua_State *L)
 {
 	s32 c = chraiLuaCloneChr((s32)luaL_checkinteger(L, 1),
-			(f32)luaL_checknumber(L, 2),
-			(f32)luaL_checknumber(L, 3),
-			(f32)luaL_checknumber(L, 4));
+			luaApiNum(L, 2),
+			luaApiNum(L, 3),
+			luaApiNum(L, 4));
 
 	if (c < 0) {
 		lua_pushnil(L);
@@ -422,10 +425,10 @@ static int l_pd_spawn_body(lua_State *L)
 {
 	s32 bodynum = (s32)luaL_checkinteger(L, 1);
 	s32 weaponnum = (s32)luaL_optinteger(L, 2, -1);
-	f32 dx = (f32)luaL_optnumber(L, 3, 0.0);
-	f32 dz = (f32)luaL_optnumber(L, 4, 0.0);
+	f32 dx = luaApiOptNum(L, 3, 0.0f);
+	f32 dz = luaApiOptNum(L, 4, 0.0f);
 	s32 sunglasses = lua_toboolean(L, 5);
-	f32 mindist = (f32)luaL_optnumber(L, 6, 0.0); /* > 0: fail a placement that slid closer than this */
+	f32 mindist = luaApiOptNum(L, 6, 0.0f); /* > 0: fail a placement that slid closer than this */
 	lua_pushinteger(L, chraiLuaSpawnBody(bodynum, weaponnum, dx, dz, sunglasses, mindist));
 	return 1;
 }
@@ -475,8 +478,8 @@ static int l_pd_civil_war(lua_State *L)
 static int l_pd_chr_summon(lua_State *L)
 {
 	s32 chrnum = (s32)luaL_checkinteger(L, 1);
-	f32 dx = (f32)luaL_optnumber(L, 2, 0.0);
-	f32 dz = (f32)luaL_optnumber(L, 3, 0.0);
+	f32 dx = luaApiOptNum(L, 2, 0.0f);
+	f32 dz = luaApiOptNum(L, 3, 0.0f);
 	lua_pushboolean(L, chraiLuaChrSummon(chrnum, dx, dz) != 0);
 	return 1;
 }
@@ -515,8 +518,8 @@ static int l_pd_frag_out(lua_State *L)
  * player's position plus a horizontal offset (floor-snapped). */
 static int l_pd_spawn_sentry(lua_State *L)
 {
-	f32 dx = (f32)luaL_optnumber(L, 1, 0.0);
-	f32 dz = (f32)luaL_optnumber(L, 2, 0.0);
+	f32 dx = luaApiOptNum(L, 1, 0.0f);
+	f32 dz = luaApiOptNum(L, 2, 0.0f);
 	lua_pushboolean(L, chraiLuaSpawnSentry(dx, dz) != 0);
 	return 1;
 }

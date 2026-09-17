@@ -377,6 +377,11 @@ s32 chraiLuaExplodeAtPos(f32 x, f32 y, f32 z, s32 type)
 		rooms[1] = -1;
 	}
 
+	// g_ExplosionTypes has no bound of its own; explosionCreate only rejects NONE
+	if (type <= EXPLOSIONTYPE_NONE || type > EXPLOSIONTYPE_HUGE25) {
+		return 0;
+	}
+
 	return explosionCreateSimple(NULL, &pos, rooms, (s16)type, g_Vars.bondplayernum) ? 1 : 0;
 }
 

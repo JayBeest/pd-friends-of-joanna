@@ -3898,79 +3898,470 @@ static void playerSyncBodyWeapons(struct player *player)
 #endif
 
 /**
- * Back the camera off along the view axis for third person, stopping short of
- * whatever is behind the player.
+ * Take the camera off the eye for third person, stopping short of whatever is
+ * in the way.
  *
- * cdExamLos08() reports the first thing between the eye and where the camera
- * wants to be and cdGetPos() gives the point it hit. The camera stops
- * THIRDPERSON_CAMCLEARANCE short of that rather than at it, because sitting
- * flush against a wall fills the screen with that wall.
+ * The camera sits the distance setting behind the eye and, if the sideways
+ * setting asks for it, so many units to one side of it. Those are two axes but
+ * one offset, and one trace clears it: cdExamLos08() reports the first thing
+ * between the eye and where the camera wants to be, cdGetPos() gives the point
+ * it hit, and the whole offset is scaled down so the camera lands the wall
+ * clearance short of that rather than flush against it, because a camera
+ * against a wall fills the screen with that wall.
+ *
+ * Scaling the offset rather than shortening the distance alone is what keeps
+ * the shoulder the player chose. The camera slides in towards the eye along the
+ * line it was already on, so a wall coming up pulls the view in; it does not
+ * swing it back round behind the player's head on the way.
  *
  * The trace starts at the eye rather than at the player's feet so that it
  * follows the camera exactly, and only BG and closed doors block it. Props do
  * not: pulling the view in every time a simulant walked behind you would be
  * unusable in a match with twenty of them, and a body between the camera and
  * the player reads as an obstruction anyway.
+ *
+ * Floors and ceilings stop it as well as walls. Looking straight up puts the
+ * offset into the ground behind the player's heels, and with walls alone in the
+ * trace the camera went through the floor and drew the room from underneath it
+ * - the same for a low ceiling when looking down. GEOFLAG_FLOOR1 and FLOOR2 are
+ * the pair the rest of the game means by a floor, and carry ceilings too
+ * (cdFindClosestVertical() tells the two apart by which way they face, not by
+ * the flag), with lift floors alongside them the way propobj.c asks for them.
+ *
+ * Coming in is immediate and going back out is eased, because they are not the
+ * same event. A wall arriving is this frame's problem - anything slower draws
+ * the inside of it - while a wall leaving is only space becoming free again,
+ * and snapping the camera out through the metre it gave back is the jump that
+ * reads as a fault. The eye is outside that: below the minimum distance there
+ * is no view to ease towards, so that one is a cut in both directions.
+ *
+ * The body fade runs off the distance this settles on. With the offsets that
+ * is the length of the whole offset after the trace, the volume clearance and
+ * the easing, which is the honest measure of how close the camera is to her:
+ * the fade begins at g_BodyFadeStart and is at its deepest by the minimum
+ * distance, so by the time the camera cuts to the eye she is already almost
+ * gone. Every way this gives up and leaves the camera on the eye leaves the
+ * fade at its deepest too, because the body is still drawn there - the view
+ * model does not come back in third person (playerIsThirdPerson() gates it,
+ * not the distance) - and a camera inside a body has to be able to see out.
  */
+#define THIRDPERSON_EASE_RATE 0.2f // of what is left to give back, per 60Hz tick
+
+/**
+ * Keep the camera out of the walls, the floor and the ceiling.
+ *
+ * The line trace in playerPullBackCamera() stops the camera crossing a wall,
+ * but it is a line of no width and the clearance it takes is along the line.
+ * A wall running beside the line never registers, so a camera behind a player
+ * walking along a wall sits with its near plane inside the brickwork. That is the clipping that was reported,
+ * and it needs a volume rather than a line.
+ *
+ * Camera Wall Clearance is the radius. cdExamCylMove02() tests a cylinder of
+ * that radius at the camera and, when it is inside a wall, names the edge it
+ * is inside through cdGetEdge(), so the camera is pushed out along that edge's
+ * normal to the eye's side until it is the radius clear - sideways, off the
+ * wall, rather than back towards the player, which is what keeps the view
+ * from collapsing to first person every time a corridor narrows. A corner
+ * takes a second pass for its second wall; three passes are allowed.
+ *
+ * Floors and ceilings are the other half. The line takes its clearance along
+ * itself, and a line at a shallow angle to the floor - looking up, which
+ * walks the camera down behind the heels - is a hand's breadth above it
+ * after thirty units. The camera is lifted to a vertical clearance above the
+ * ground under it and dropped the same below a ceiling.
+ *
+ * Any push moves the camera off the line the eye was traced along, so the
+ * line is traced again afterwards and clamped the way it was the first time.
+ * If after all that the volume is still not clear - a corridor narrower than
+ * twice the radius has no clear spot in it - the camera comes in along the
+ * line by half the radius at a time until a volume of half the radius fits,
+ * which is what a corridor that narrow has room for. Below the minimum
+ * distance there is no view, and false says so.
+ */
+#define CAMERA_VCLEAR       20.0f // above a floor and below a ceiling
+#define CAMERA_CLEAR_PASSES 3
+#define CAMERA_SHORTEN_PASSES 8
+
+static bool playerClearCamera(struct player *player, struct coord *eye, struct coord *cam)
+{
+	RoomNum camrooms[8];
+	RoomNum crossed[21];
+	struct coord v1;
+	struct coord v2;
+	struct coord hit;
+	f32 radius = g_ThirdPersonCamClearance;
+	f32 nx;
+	f32 nz;
+	f32 nlen;
+	f32 d;
+	f32 y;
+	f32 dist;
+	s32 pass;
+	bool moved = false;
+
+	if (radius < 1) {
+		radius = 1;
+	}
+
+	for (pass = 0; pass < CAMERA_CLEAR_PASSES; pass++) {
+		func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+		if (cdExamCylMove02(eye, cam, radius, camrooms, CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+					CHECKVERTICAL_YES, CAMERA_VCLEAR, -CAMERA_VCLEAR) != CDRESULT_COLLISION) {
+			break;
+		}
+
+		cdGetEdge(&v1, &v2, __LINE__, "player.c");
+
+		// The edge's normal in the horizontal, turned to the eye's side: the
+		// eye is in the room and so is the face of the wall that matters.
+		nx = v2.z - v1.z;
+		nz = v1.x - v2.x;
+		nlen = sqrtf(nx * nx + nz * nz);
+
+		if (nlen < 0.0001f) {
+			break;
+		}
+
+		nx /= nlen;
+		nz /= nlen;
+
+		if ((eye->x - v1.x) * nx + (eye->z - v1.z) * nz < 0) {
+			nx = -nx;
+			nz = -nz;
+		}
+
+		d = (cam->x - v1.x) * nx + (cam->z - v1.z) * nz;
+
+		if (d >= radius) {
+			// Inside the volume by the edge's end rather than its face; the
+			// normal has nothing to say and the shortening below takes it.
+			break;
+		}
+
+		cam->x += nx * (radius - d);
+		cam->z += nz * (radius - d);
+		moved = true;
+	}
+
+	func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+	y = cdFindGroundAtCyl(cam, radius, camrooms, NULL, NULL);
+
+	if (cam->y - y < CAMERA_VCLEAR) {
+		cam->y = y + CAMERA_VCLEAR;
+		moved = true;
+	}
+
+	y = cam->y + 100000;
+	cdFindCeilingRoomYColourFlagsAtPos(cam, camrooms, &y, NULL, NULL);
+
+	if (y - cam->y < CAMERA_VCLEAR) {
+		cam->y = y - CAMERA_VCLEAR;
+		moved = true;
+	}
+
+	if (moved && cdExamLos08(eye, player->prop->rooms, cam,
+				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT
+				| GEOFLAG_FLOOR1 | GEOFLAG_FLOOR2 | GEOFLAG_LIFTFLOOR) == CDRESULT_COLLISION) {
+		cdGetPos(&hit, __LINE__, "player.c");
+
+		dist = sqrtf((cam->x - eye->x) * (cam->x - eye->x)
+				+ (cam->y - eye->y) * (cam->y - eye->y)
+				+ (cam->z - eye->z) * (cam->z - eye->z));
+
+		d = sqrtf((hit.x - eye->x) * (hit.x - eye->x)
+				+ (hit.y - eye->y) * (hit.y - eye->y)
+				+ (hit.z - eye->z) * (hit.z - eye->z)) - g_ThirdPersonCamClearance;
+
+		if (d < g_ThirdPersonCamMinDist || dist < 1) {
+			return false;
+		}
+
+		cam->x = eye->x + (cam->x - eye->x) * (d / dist);
+		cam->y = eye->y + (cam->y - eye->y) * (d / dist);
+		cam->z = eye->z + (cam->z - eye->z) * (d / dist);
+	}
+
+	for (pass = 0; pass < CAMERA_SHORTEN_PASSES; pass++) {
+		func0f065dfc(eye, player->prop->rooms, cam, camrooms, crossed, 20);
+
+		if (cdTestVolume(cam, radius * 0.5f, camrooms, CDTYPE_BG | CDTYPE_CLOSEDDOORS,
+					CHECKVERTICAL_YES, CAMERA_VCLEAR, -CAMERA_VCLEAR)) {
+			return true;
+		}
+
+		dist = sqrtf((cam->x - eye->x) * (cam->x - eye->x)
+				+ (cam->y - eye->y) * (cam->y - eye->y)
+				+ (cam->z - eye->z) * (cam->z - eye->z));
+
+		d = dist - radius * 0.5f;
+
+		if (d < g_ThirdPersonCamMinDist || dist < 1) {
+			return false;
+		}
+
+		cam->x = eye->x + (cam->x - eye->x) * (d / dist);
+		cam->y = eye->y + (cam->y - eye->y) * (d / dist);
+		cam->z = eye->z + (cam->z - eye->z) * (d / dist);
+	}
+
+	return true;
+}
+
 static void playerPullBackCamera(struct coord *campos)
 {
+	struct player *player = g_Vars.currentplayer;
+	struct coord offset;
 	struct coord back;
 	struct coord hit;
-	f32 dist = g_ThirdPersonCamDist;
+	f32 prevdist = player->thirdpersondist;
+	f32 dist;
+	f32 len;
 
-	g_Vars.currentplayer->thirdpersondist = 0;
+	player->thirdpersondist = 0;
 
-	if (!playerIsThirdPerson(g_Vars.currentplayer)) {
-		g_Vars.currentplayer->bodyfadefrac = 0;
+	if (!playerIsThirdPerson(player)) {
+		player->bodyfadefrac = 0;
 		return;
 	}
 
-	back.x = campos->x - g_Vars.currentplayer->bond2.look.x * dist;
-	back.y = campos->y - g_Vars.currentplayer->bond2.look.y * dist;
-	back.z = campos->z - g_Vars.currentplayer->bond2.look.z * dist;
+	offset.x = -player->bond2.look.x * g_ThirdPersonCamDist;
+	offset.y = -player->bond2.look.y * g_ThirdPersonCamDist;
+	offset.z = -player->bond2.look.z * g_ThirdPersonCamDist;
 
-	if (cdExamLos08(campos, g_Vars.currentplayer->prop->rooms, &back,
+	// Sideways is along look cross up, the same right hand playerTiltCamera()
+	// rolls into, so a positive setting puts the camera over the player's right
+	// shoulder. bond2's own vectors and not the tilted copies the camera is
+	// built from: the tilt is a lean of the picture, and the camera walking
+	// sideways with every step is not what was asked for.
+	if (g_ThirdPersonCamSide != 0) {
+		struct coord *look = &player->bond2.look;
+		struct coord *up = &player->bond2.up;
+
+		offset.x += (look->y * up->z - look->z * up->y) * g_ThirdPersonCamSide;
+		offset.y += (look->z * up->x - look->x * up->z) * g_ThirdPersonCamSide;
+		offset.z += (look->x * up->y - look->y * up->x) * g_ThirdPersonCamSide;
+	}
+
+	// Forward and back is along the direction the player faces with the pitch
+	// taken out of it, which is the axis the pull-back above is not: that one
+	// rides the look vector, so looking up walks the camera down towards the
+	// floor and looking down lifts it. This one holds its height whatever the
+	// view is doing, and negative brings the camera round in front of the
+	// player rather than behind them.
+	//
+	// The facing comes back out of the same right vector the sideways offset
+	// uses rather than out of the look vector, because the right vector is
+	// horizontal at every pitch - (right.z, -right.x) is it turned a quarter
+	// turn - and flattening the look vector has nothing left to normalise with
+	// the view straight up or straight down.
+	if (g_ThirdPersonCamForward != 0) {
+		struct coord *look = &player->bond2.look;
+		struct coord *up = &player->bond2.up;
+		f32 rightx = look->y * up->z - look->z * up->y;
+		f32 rightz = look->x * up->y - look->y * up->x;
+		f32 rightlen = sqrtf(rightx * rightx + rightz * rightz);
+
+		if (rightlen > 0.0001f) {
+			offset.x -= rightz / rightlen * g_ThirdPersonCamForward;
+			offset.z += rightx / rightlen * g_ThirdPersonCamForward;
+		}
+	}
+
+	// Height is straight up in the world and not along the camera's own up
+	// vector, for the same reason forward and back is level: the two of them
+	// place the camera relative to the player, and a placement that swings
+	// about as the view pitches is the thing the pull-back already does.
+	offset.y += g_ThirdPersonCamHeight;
+
+	len = sqrtf(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+
+	// Nowhere to go, and nothing to divide by below.
+	if (len < 1) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	back.x = campos->x + offset.x;
+	back.y = campos->y + offset.y;
+	back.z = campos->z + offset.z;
+
+	dist = len;
+
+	if (cdExamLos08(campos, player->prop->rooms, &back,
 				CDTYPE_BG | CDTYPE_CLOSEDDOORS,
-				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT) == CDRESULT_COLLISION) {
+				GEOFLAG_WALL | GEOFLAG_BLOCK_SIGHT
+				| GEOFLAG_FLOOR1 | GEOFLAG_FLOOR2 | GEOFLAG_LIFTFLOOR) == CDRESULT_COLLISION) {
 		cdGetPos(&hit, __LINE__, "player.c");
 
 		dist = sqrtf((hit.x - campos->x) * (hit.x - campos->x)
 				+ (hit.y - campos->y) * (hit.y - campos->y)
 				+ (hit.z - campos->z) * (hit.z - campos->z)) - g_ThirdPersonCamClearance;
 
-		// Nothing between here and THIRDPERSON_CAMMINDIST is a view: leave the
-		// camera on the eye. The body is not put away with it - it is drawn
-		// wherever the camera ends up - so this is the frame it has to be
-		// possible to see through, and the fade below has already run most of
-		// its length getting here.
+		// Nothing between here and the minimum distance is a view: leave the
+		// camera on the eye, inside a body that is faded as far as it goes.
 		if (dist < g_ThirdPersonCamMinDist) {
-			g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+			player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
 			return;
 		}
 	}
 
-	// The body goes translucent as the camera closes on it rather than at the
-	// moment it ends up inside. The trace shortens smoothly as she backs into
-	// a corner, so the fade is smooth all the way to the clamp above, and the
-	// cut to the eye happens with the body already almost gone.
+	// The fraction of the offset that fits, so both axes come in together.
+	back.x = campos->x + offset.x * (dist / len);
+	back.y = campos->y + offset.y * (dist / len);
+	back.z = campos->z + offset.z * (dist / len);
+
+	// Off the walls, the floor and the ceiling: a volume where the line
+	// above was a line. This may move the camera off the line, so the
+	// distance is read back from wherever it ends up.
+	if (!playerClearCamera(player, campos, &back)) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	offset.x = back.x - campos->x;
+	offset.y = back.y - campos->y;
+	offset.z = back.z - campos->z;
+
+	len = sqrtf(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+
+	if (len < g_ThirdPersonCamMinDist || len < 1) {
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX;
+		return;
+	}
+
+	dist = len;
+
+	// Further out than last frame, and last frame was a view of its own rather
+	// than the eye: give the room back over a few frames instead of all at once.
+	if (prevdist > 0 && dist > prevdist) {
+		f32 rate = THIRDPERSON_EASE_RATE * g_Vars.lvupdate60freal;
+
+		if (rate > 1) {
+			rate = 1;
+		}
+
+		dist = prevdist + (dist - prevdist) * rate;
+	}
+
+	// Translucent as the camera closes on her rather than at the moment it ends
+	// up inside. The distance shortens smoothly as she backs into a corner, so
+	// the fade is smooth all the way to the cut above.
 	if (dist >= g_BodyFadeStart) {
-		g_Vars.currentplayer->bodyfadefrac = 0;
+		player->bodyfadefrac = 0;
 	} else {
-		g_Vars.currentplayer->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
+		player->bodyfadefrac = THIRDPERSON_BODYFADE_MAX
 			* (g_BodyFadeStart - dist)
 			/ (g_BodyFadeStart - g_ThirdPersonCamMinDist);
 	}
 
-	g_Vars.currentplayer->thirdpersondist = dist;
+	player->thirdpersondist = dist;
 
-	campos->x -= g_Vars.currentplayer->bond2.look.x * dist;
-	campos->y -= g_Vars.currentplayer->bond2.look.y * dist;
-	campos->z -= g_Vars.currentplayer->bond2.look.z * dist;
+	campos->x += offset.x * (dist / len);
+	campos->y += offset.y * (dist / len);
+	campos->z += offset.z * (dist / len);
 
 	// Kept for the death camera, which stops here rather than working out
 	// somewhere of its own to stand.
-	g_Vars.currentplayer->thirdpersoncampos = *campos;
+	player->thirdpersoncampos = *campos;
 }
+
+/**
+ * How far in front of the camera the player's own shots should start.
+ *
+ * The player's shot is not fired from the eye. bgunCalculatePlayerShotSpread()
+ * builds it at the camera's own origin, through the pixel the crosshair is
+ * drawn on, and everything downstream - the bullet, the melee swing's reach,
+ * the laser stream, the rocket's spawn point - is measured from there. Stock
+ * never had to think about it because the camera was the eye.
+ *
+ * Third person moves the camera and leaves that assumption behind, and the
+ * cases divide by what they do with the origin. A bullet only wants the line,
+ * and the line is the same one whichever point on it the shot starts from, so
+ * hitscan was correct from the first day. Everything that measures a distance
+ * from the origin or puts an object at it was not: a melee swing spent its
+ * range on the ground behind Joanna and never reached what she was standing
+ * against, the laser stream's three hundred units ended before they got to her,
+ * and a rocket spawned at the camera and flew past her from behind.
+ *
+ * So the origin walks up its own ray by as far as the camera was backed off.
+ * The ray is untouched, so the crosshair still marks what will be hit and no
+ * bullet changes; the origin lands at the player, which is what the rest of it
+ * was asking for. With a sideways offset it lands beside them rather than on
+ * them, on the ray the crosshair is aimed down, which is the same trade the
+ * offset makes everywhere else.
+ *
+ * Zero for every camera that is on the eye, and for every mode that is not this
+ * fork's third person: thirdpersondist is only written by the normal tick, so a
+ * cutscene or an eyespy entered from third person would otherwise carry the
+ * last value it had.
+ */
+f32 playerGetShotOriginPullback(void)
+{
+#ifdef PLATFORM_N64
+	return 0;
+#else
+	struct player *player = g_Vars.currentplayer;
+
+	if (player->cameramode != CAMERAMODE_DEFAULT || !playerIsThirdPerson(player)) {
+		return 0;
+	}
+
+	// The forward offset can bring the camera round in front of the eye, and
+	// then the origin belongs back down the ray rather than up it. The distance
+	// itself carries no sign - it is the length of an offset that may point
+	// anywhere - so which side of the eye the camera came to rest on is read
+	// off the look vector, and every consumer of this takes the negative the
+	// same way it takes the positive.
+	if ((player->bond2.eyepos.x - player->thirdpersoncampos.x) * player->bond2.look.x
+			+ (player->bond2.eyepos.y - player->thirdpersoncampos.y) * player->bond2.look.y
+			+ (player->bond2.eyepos.z - player->thirdpersoncampos.z) * player->bond2.look.z < 0) {
+		return -player->thirdpersondist;
+	}
+
+	return player->thirdpersondist;
+#endif
+}
+
+#ifndef PLATFORM_N64
+/**
+ * The vector from the third person camera to the eye, for a thing built in the
+ * camera's own space that should have been built at the player.
+ *
+ * The muzzle is the one that matters. bgun0f0a5550() reads it off the view
+ * model's muzzle node and multiplies by the camera matrix, so it comes out
+ * wherever the gun would be if it were being drawn - which in third person is a
+ * couple of metres behind the player, next to the camera, and is where the
+ * rockets and the beams were coming from. This puts it back at the hands.
+ *
+ * The exact eye rather than the pullback above, because a muzzle is a point and
+ * not a ray: with a sideways offset the beam should leave the player's gun, not
+ * the air beside them.
+ *
+ * False when there is nothing to correct, so the caller adds nothing.
+ */
+bool playerGetCameraToEyeOffset(struct coord *offset)
+{
+	struct player *player = g_Vars.currentplayer;
+
+	// The distance and not the pullback above: that one is signed by which side
+	// of the eye the camera is on, and a muzzle in front of the player wants
+	// putting back at the hands just as much as one behind them does.
+	if (player->cameramode != CAMERAMODE_DEFAULT
+			|| !playerIsThirdPerson(player)
+			|| player->thirdpersondist <= 0) {
+		return false;
+	}
+
+	offset->x = player->bond2.eyepos.x - player->thirdpersoncampos.x;
+	offset->y = player->bond2.eyepos.y - player->thirdpersoncampos.y;
+	offset->z = player->bond2.eyepos.z - player->thirdpersoncampos.z;
+
+	return true;
+}
+#endif
 
 /**
  * Watch the body fall, from wherever the camera was standing when it did.

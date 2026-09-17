@@ -37,10 +37,16 @@ extern f32 g_MeleeBodyReach;
 extern f32 g_MeleeConeCos;
 
 // The third person camera: how far back it wants to be, how far short of a wall
-// it stops, and the distance under which it gives up and sits on the eye.
+// it stops, and the distance under which it gives up and sits on the eye. Then
+// the shoulder: units right of the eye (negative for left), along her level
+// facing (negative puts it in front of her), and straight up. The four offsets
+// are one vector and one trace clears it; see playerPullBackCamera().
 extern f32 g_ThirdPersonCamDist;
 extern f32 g_ThirdPersonCamClearance;
 extern f32 g_ThirdPersonCamMinDist;
+extern f32 g_ThirdPersonCamSide;
+extern f32 g_ThirdPersonCamForward;
+extern f32 g_ThirdPersonCamHeight;
 
 // The body fade: the distance the fade starts at, and how much of her alpha it
 // takes at its deepest. A floor of 1 would make her vanish outright.

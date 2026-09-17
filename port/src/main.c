@@ -264,6 +264,9 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterFloat("Stance.CamDist", &g_ThirdPersonCamDist, 0.f, 1000.f);
 	configRegisterFloat("Stance.CamClearance", &g_ThirdPersonCamClearance, 0.f, 200.f);
 	configRegisterFloat("Stance.CamMinDist", &g_ThirdPersonCamMinDist, 0.f, 500.f);
+	configRegisterFloat("Stance.CamSide", &g_ThirdPersonCamSide, -150.f, 150.f);
+	configRegisterFloat("Stance.CamForward", &g_ThirdPersonCamForward, -150.f, 150.f);
+	configRegisterFloat("Stance.CamHeight", &g_ThirdPersonCamHeight, -150.f, 150.f);
 	configRegisterFloat("Stance.FadeStart", &g_BodyFadeStart, 0.f, 1000.f);
 	configRegisterFloat("Stance.FadeFloor", &g_BodyFadeFloor, 0.f, 1.f);
 	configRegisterInt("Stance.LowerBodyMask", &g_AnimSplitLowerMask, 0, 0x7fff);

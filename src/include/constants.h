@@ -398,18 +398,25 @@
 #define CAMERAMODE_EYESPY      2
 
 /**
- * How far behind the eye the playable third person camera sits, and how much
+ * Where the playable third person camera sits relative to the eye, and how much
  * clearance it keeps from whatever it backs into.
  *
- * The offset is along the view axis and nothing else. Screen centre then lies
- * on the same ray the eye was already looking down, so the crosshair still
- * marks where the gun points and none of the aiming code needs to know the
- * camera moved at all. A sideways or vertical offset would break that and cost
- * a reprojection pass.
+ * The offset is a distance back along the view axis plus, if asked for, a
+ * distance to one side, one along her level facing and one straight up. None
+ * of them costs the aiming code anything, because the shot is not fired from
+ * the eye: bgunCalculatePlayerShotSpread() builds it at the camera's own
+ * origin, through the pixel the crosshair is drawn on, so the crosshair marks
+ * what will be hit from any offset. What an offset does change is where the
+ * shot starts, which playerGetShotOriginPullback() walks back up the ray to
+ * her - and a camera leaned past a corner still shoots past the corner, the
+ * trade every over-the-shoulder view makes. That is why the three extra
+ * offsets default to zero.
  *
  * 200 units is a little over Joanna's standing height - vv_eyeheight comes out
  * of g_HeadsAndBodies at around 160 - which is far enough back to see her
- * without the camera spending every corridor pinned against a wall.
+ * without the camera spending every corridor pinned against a wall. 150 is as
+ * far as the knobs take the other three, which is about where she leaves the
+ * middle of the screen entirely.
  *
  * The clearance is held back from a wall the camera would otherwise sit inside.
  * The near plane is close enough that geometry does not visibly clip, but a
@@ -417,16 +424,20 @@
  */
 #define THIRDPERSON_CAMDIST      200.0f
 #define THIRDPERSON_CAMCLEARANCE 30.0f
+#define THIRDPERSON_CAMSIDE      0.0f // right of the eye, negative for the left
+#define THIRDPERSON_CAMFWD       0.0f // along her level facing, negative puts it in front
+#define THIRDPERSON_CAMHEIGHT    0.0f // straight up in the world
 
 /**
  * The shortest pull-back worth having.
  *
  * A corridor or a corner can clamp the camera down to nothing, and a camera
  * sitting inside Joanna's head is neither view: it looks like first person with
- * the gun missing, because the view model is dropped whenever the camera is off
- * the eye. Below this the camera stays on the eye and the gun comes back, so a
- * tight spot gives first person for as long as it lasts rather than a broken
- * third one.
+ * the gun missing. Below this the camera stays on the eye, inside a body that
+ * the fade below has already taken as far as it goes, so a tight spot looks out
+ * through her for as long as it lasts rather than giving a broken third person
+ * view. (The view model stays away in third person whatever the distance -
+ * playerIsThirdPerson() gates it, not this.)
  *
  * 60 is roughly where she stops filling the screen - a third of the standing
  * height, which is about 180 units.

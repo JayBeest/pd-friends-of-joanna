@@ -21,6 +21,9 @@ f32 g_MeleeConeCos = MELEE_CONE_COS;
 f32 g_ThirdPersonCamDist = THIRDPERSON_CAMDIST;
 f32 g_ThirdPersonCamClearance = THIRDPERSON_CAMCLEARANCE;
 f32 g_ThirdPersonCamMinDist = THIRDPERSON_CAMMINDIST;
+f32 g_ThirdPersonCamSide = THIRDPERSON_CAMSIDE;
+f32 g_ThirdPersonCamForward = THIRDPERSON_CAMFWD;
+f32 g_ThirdPersonCamHeight = THIRDPERSON_CAMHEIGHT;
 
 f32 g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 f32 g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
@@ -76,6 +79,9 @@ void stanceTuningReset(void)
 	g_ThirdPersonCamDist = THIRDPERSON_CAMDIST;
 	g_ThirdPersonCamClearance = THIRDPERSON_CAMCLEARANCE;
 	g_ThirdPersonCamMinDist = THIRDPERSON_CAMMINDIST;
+	g_ThirdPersonCamSide = THIRDPERSON_CAMSIDE;
+	g_ThirdPersonCamForward = THIRDPERSON_CAMFWD;
+	g_ThirdPersonCamHeight = THIRDPERSON_CAMHEIGHT;
 
 	g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 	g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;

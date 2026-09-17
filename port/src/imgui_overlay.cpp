@@ -223,6 +223,9 @@ extern "C" f32 g_MeleeConeCos;
 extern "C" f32 g_ThirdPersonCamDist;
 extern "C" f32 g_ThirdPersonCamClearance;
 extern "C" f32 g_ThirdPersonCamMinDist;
+extern "C" f32 g_ThirdPersonCamSide;
+extern "C" f32 g_ThirdPersonCamForward;
+extern "C" f32 g_ThirdPersonCamHeight;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
 extern "C" s32 g_AnimSplitLowerMask;
@@ -3268,6 +3271,15 @@ static void imguiOverlayDrawStancePanel(void)
 		imguiOverlayStanceKnob("Give up under", &g_ThirdPersonCamMinDist, 0.0f, 500.0f, "%.0f",
 				"Below this the camera sits on the eye instead.\n"
 				"The body is still drawn, which is what the fade is for.");
+		imguiOverlayStanceKnob("Shoulder (right +)", &g_ThirdPersonCamSide, -150.0f, 150.0f, "%.0f",
+				"Units to her right of the eye; negative for the left shoulder.\n"
+				"The crosshair stays honest, but the shot starts beside her,\n"
+				"so a camera leaned past a corner shoots past it.");
+		imguiOverlayStanceKnob("Forward (front -)", &g_ThirdPersonCamForward, -150.0f, 150.0f, "%.0f",
+				"Units along her level facing, holding height whatever the pitch.\n"
+				"Negative brings the camera round in front of her.");
+		imguiOverlayStanceKnob("Height", &g_ThirdPersonCamHeight, -150.0f, 150.0f, "%.0f",
+				"Units straight up in the world, not along the camera's up.");
 	}
 
 	if (ImGui::CollapsingHeader("Body fade", ImGuiTreeNodeFlags_DefaultOpen)) {

@@ -53,9 +53,11 @@ char g_DefaultReality[64] = "";
 
 s32 g_FileAutoSelect = -1;
 
-// Game.LuaAi: 0 = off, 1 = on, 2 = auto, on exactly when a Lua script is
-// detected. Kept apart from g_LuaAiEnabled, which --lua-ai / --no-lua-ai
-// force for one run and which must not be written back to pd.ini.
+// Game.LuaAiMode: 0 = off, 1 = on, 2 = auto, on exactly when a Lua script
+// is detected. Not Game.LuaAi: builds that had that key wrote LuaAi=0 as
+// their default, which would now read as forced off. Kept apart from
+// g_LuaAiEnabled, which --lua-ai / --no-lua-ai force for one run and which
+// must not be written back to pd.ini.
 #define LUA_AI_CONFIG_OFF  0
 #define LUA_AI_CONFIG_ON   1
 #define LUA_AI_CONFIG_AUTO 2
@@ -212,10 +214,10 @@ int main(int argc, const char **argv)
 			why = "lua ai forced on: --lua-ai";
 		} else if (g_LuaAiConfig == LUA_AI_CONFIG_OFF) {
 			g_LuaAiEnabled = 0;
-			why = "lua ai forced off: Game.LuaAi=0";
+			why = "lua ai forced off: Game.LuaAiMode=0";
 		} else if (g_LuaAiConfig == LUA_AI_CONFIG_ON) {
 			g_LuaAiEnabled = 1;
-			why = "lua ai forced on: Game.LuaAi=1";
+			why = "lua ai forced on: Game.LuaAiMode=1";
 		} else if (luaaiScriptDetected()) {
 			g_LuaAiEnabled = 1;
 			why = "lua ai on: script detected";
@@ -269,7 +271,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
-	configRegisterInt("Game.LuaAi", &g_LuaAiConfig, LUA_AI_CONFIG_OFF, LUA_AI_CONFIG_AUTO);
+	configRegisterInt("Game.LuaAiMode", &g_LuaAiConfig, LUA_AI_CONFIG_OFF, LUA_AI_CONFIG_AUTO);
 
 	// The audio pool sizes Rare picked for a 1999 cartridge. Every default is 0
 	// or the original number, so leaving these alone changes nothing. They are

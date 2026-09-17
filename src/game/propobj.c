@@ -5,6 +5,7 @@
 #include "constants.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
 #include "game/chrai.h"
@@ -1641,6 +1642,20 @@ void propCalculateShadeColour(struct prop *prop, u8 *nextcol, u16 floorcol)
 		alphafrac = 1.0f - shade * (1.0f / 2550.0f);
 
 		scenarioHighlightRoom(prop->rooms[0], &roomr, &roomg, &roomb);
+
+#ifndef PLATFORM_N64
+		// Chaos room tint (pd.room_tint): props/chrs/the gun are shaded from
+		// their stan-tile floor colour x room shade — a path the dlights.c
+		// room reshade tint never touched, so Paint the Town Red painted the
+		// world while everything standing on it stayed vanilla. Same multiply
+		// as the room reshade, applied where the scenario highlight already
+		// composes.
+		if (g_ChaosRoomTintOn) {
+			roomr = (s32)(roomr * g_ChaosRoomTintFrac[0]);
+			roomg = (s32)(roomg * g_ChaosRoomTintFrac[1]);
+			roomb = (s32)(roomb * g_ChaosRoomTintFrac[2]);
+		}
+#endif
 
 		nextcol[0] = (nextcol[0] * roomr) >> 8;
 		nextcol[1] = (nextcol[1] * roomg) >> 8;
@@ -6262,6 +6277,29 @@ s32 projectileLaunch(struct defaultobj *obj, struct projectile *projectile, stru
 	return cdresult;
 }
 
+#ifndef PLATFORM_N64
+/**
+ * Chaos "Rubber Objects" (pd.rubber_objects), from the Kai fork.
+ *
+ * Objects stamped with PROJECTILEFLAG_CHAOSRUBBER at their drop keep hopping
+ * instead of settling after the vanilla 6 bounces. Read in the bounce handler
+ * below and written in objSetDropped; g_ChaosRubberObjects is cleared on
+ * stage load (chaosStateResetPerStage).
+ *
+ * Gating on the live global as well as the per-object mark means switching the
+ * effect off settles everything on its next contact, so no mark sweep is
+ * needed.
+ */
+// Restitution (projectile->unk08c) forced on a marked drop — a dropped weapon
+// is 0.05, a bouncy grenade is 1.0.
+#define CHAOS_RUBBER_RESTITUTION 0.7f
+// Bounces before a marked object is allowed to settle (vanilla is 6).
+#define CHAOS_RUBBER_MAXBOUNCES  40
+// Vertical speed of the first re-kick, decaying to 0 by MAXBOUNCES. The vanilla
+// settle threshold is 2.2222223, so hops below that stop mattering anyway.
+#define CHAOS_RUBBER_HOP         9.0f
+#endif
+
 s32 projectileTick(struct defaultobj *obj, bool *embedded)
 {
 	struct projectile *projectile = obj->projectile;
@@ -7347,6 +7385,26 @@ s32 projectileTick(struct defaultobj *obj, bool *embedded)
 						}
 
 						if (sp350) {
+#ifndef PLATFORM_N64
+							// Chaos "Rubber Objects": a marked object never
+							// reaches projectileFall until it has used up its
+							// bounce budget — instead the vertical speed is
+							// re-kicked above the settle threshold, decaying
+							// with bouncecount so it still comes to rest.
+							// Sticky projectiles (mines) are excluded so they
+							// keep sticking.
+							if (g_ChaosRubberObjects
+									&& (projectile->flags & PROJECTILEFLAG_CHAOSRUBBER)
+									&& (projectile->flags & PROJECTILEFLAG_STICKY) == 0
+									&& projectile->bouncecount < CHAOS_RUBBER_MAXBOUNCES) {
+								f32 hop = CHAOS_RUBBER_HOP
+									* (1.0f - projectile->bouncecount / (f32)CHAOS_RUBBER_MAXBOUNCES);
+
+								if (projectile->speed.y < hop) {
+									projectile->speed.y = hop;
+								}
+							} else
+#endif
 							if ((projectile->flags & PROJECTILEFLAG_STICKY) == 0 && projectile->bouncecount >= 6) {
 								if (sp354) {
 									projectileFall(obj, realrot);
@@ -14339,6 +14397,33 @@ void objSetDropped(struct prop *prop, u32 droptype)
 				&& obj->modelnum != MODEL_CHRDATATHIEF) {
 			obj->flags3 |= OBJFLAG3_CANHARDFREE;
 		}
+
+#ifndef PLATFORM_N64
+		// Chaos "Rubber Objects": mark items ENTERING the world here, at the one
+		// chokepoint every drop path goes through (corpse drops, disarms,
+		// surrenders, the player's own drop, thrown grenades), so props already
+		// lying on the floor are never marked and the map is left alone. The
+		// mark is read by projectileTick's bounce handler above.
+		if (g_ChaosRubberObjects) {
+			struct projectile *rubber = NULL;
+
+			if ((obj->hidden & OBJHFLAG_EMBEDDED) && obj->embedment->projectile) {
+				rubber = obj->embedment->projectile;
+			} else if (obj->hidden & OBJHFLAG_PROJECTILE) {
+				rubber = obj->projectile;
+			}
+
+			if (rubber) {
+				rubber->flags |= PROJECTILEFLAG_CHAOSRUBBER;
+
+				// Only raise it — a caller that already wanted a bouncier
+				// projectile (thrown grenade = 1.0) keeps its own value.
+				if (rubber->unk08c < CHAOS_RUBBER_RESTITUTION) {
+					rubber->unk08c = CHAOS_RUBBER_RESTITUTION;
+				}
+			}
+		}
+#endif
 	}
 }
 
@@ -14888,6 +14973,14 @@ void objCheckDestroyed(struct defaultobj *obj, struct coord *pos, s32 playernum)
 			exptype = EXPLOSIONTYPE_24;
 		}
 
+#ifndef PLATFORM_N64
+		// Chaos "Nitroglycerin" (pd.nitro): every destroyed object goes up
+		// like the Crash Site ship, whatever its stock explosion type was.
+		if (g_ChaosNitro) {
+			exptype = EXPLOSIONTYPE_HUGE25;
+		}
+#endif
+
 		while (rootprop->parent) {
 			rootprop = rootprop->parent;
 		}
@@ -14986,6 +15079,62 @@ void objCheckDestroyed(struct defaultobj *obj, struct coord *pos, s32 playernum)
 		}
 	}
 }
+
+#ifndef PLATFORM_N64
+// Chaos "Item swap" (pd.items_shuffle), from the Kai fork: every weapon pickup
+// lying loose on the ground trades places with another. Held weapons (prop has
+// a parent), planted/embedded ones and airborne projectiles are skipped, as are
+// non-weapon objective props (moving those risks breaking mission scripting).
+// Uses the engine's own move idiom: write pos, deregister rooms, copy rooms.
+s32 chaosItemsShuffle(void)
+{
+	struct prop *list[64];
+	s32 n = 0;
+	s32 i;
+
+	if (g_Vars.props == NULL) {
+		return 0;
+	}
+
+	for (i = 0; i < g_Vars.maxprops && n < 64; i++) {
+		struct prop *prop = &g_Vars.props[i];
+
+		if (prop->type == PROPTYPE_WEAPON && prop->parent == NULL && prop->obj) {
+			struct defaultobj *obj = prop->obj;
+
+			if ((obj->hidden & (OBJHFLAG_EMBEDDED | OBJHFLAG_PROJECTILE | OBJHFLAG_DELETING)) == 0) {
+				list[n++] = prop;
+			}
+		}
+	}
+
+	if (n < 2) {
+		return 0;
+	}
+
+	// Fisher-Yates over the collected pickups, swapping pos + rooms
+	for (i = n - 1; i > 0; i--) {
+		s32 j = rngRandom() % (i + 1);
+
+		if (j != i) {
+			struct coord tmppos = list[i]->pos;
+			RoomNum tmprooms[8];
+
+			roomsCopy(list[i]->rooms, tmprooms);
+
+			list[i]->pos = list[j]->pos;
+			propDeregisterRooms(list[i]);
+			roomsCopy(list[j]->rooms, list[i]->rooms);
+
+			list[j]->pos = tmppos;
+			propDeregisterRooms(list[j]);
+			roomsCopy(tmprooms, list[j]->rooms);
+		}
+	}
+
+	return n;
+}
+#endif
 
 bool func0f084594(struct model *model, struct modelnode *node, struct coord *arg2, struct coord *arg3, struct hitthing *hitthing, s32 *mtxindexptr, struct modelnode **nodeptr)
 {
@@ -19936,6 +20085,17 @@ void doorSetMode(struct doorobj *door, s32 newmode)
 	if (newmode == DOORMODE_OPENING) {
 		if (door->mode == DOORMODE_IDLE || door->mode == DOORMODE_WAITING) {
 			doorStartOpen(door);
+#ifndef PLATFORM_N64
+			// Chaos "Booby-trapped doors" (pd.door_traps): a door that STARTS
+			// opening detonates. The open counter always counts (task sensor
+			// for pd.door_opens()). Edge-triggered: only the idle->opening
+			// transition counts, so a door can't chain-detonate while it swings.
+			g_ChaosDoorOpenCount++;
+			if (g_ChaosDoorTraps && door->base.prop != NULL) {
+				explosionCreateSimple(NULL, &door->base.prop->pos,
+						door->base.prop->rooms, EXPLOSIONTYPE_9, g_Vars.bondplayernum);
+			}
+#endif
 		}
 
 		door->mode = newmode;
@@ -20957,6 +21117,104 @@ void gasStopAudio(void)
 	}
 }
 
+#ifndef PLATFORM_N64
+// Chaos "Wolf Gas" (pd.gas), from the Kai fork: run the Investigation nerve
+// gas anywhere. Vanilla gas ramps for 30s before damage starts, so the chaos
+// start pre-loads the timer past both the cough (600) and damage (1800)
+// thresholds. The green screen wash is an env TRANSITION — vanilla's target is
+// "the next g_FogEnvironments row", which is only meaningful on the stages
+// authored for gas — so we synthesize a green variant of the CURRENT stage's
+// fog env instead. Stages with no fog env at all (g_EnvOrigFogEnvironment
+// NULL) skip the env wash entirely (gasTick's guard below).
+//
+// g_ChaosGasOn lives in chaosstate.c and is cleared on stage load: it gates a
+// RENDER path, so an effect still running at a stage change would otherwise
+// leave the un-gate latched for the rest of the process.
+static struct fogenvironment g_ChaosGasEnvTo;
+static s32 g_ChaosGasEnvValid = false;
+extern struct fogenvironment *g_EnvOrigFogEnvironment;
+extern struct fogenvironment *g_EnvTransitionFrom;
+extern struct fogenvironment *g_EnvTransitionTo;
+
+// Is the chaos gas running? Read by gasRender (nbomb.c) and playerRenderHud's
+// two gasRender call sites, both of which are otherwise hard-gated to
+// STAGE_ESCAPE.
+s32 gasChaosIsActive(void)
+{
+	return g_ChaosGasOn;
+}
+
+// Overlay thickness for gasRender: 0 when off, else a 0->1 ramp over the first
+// ~3s (180 frames) of the release so the screen fogs IN rather than popping to
+// full opacity on frame one. Derived from the same g_GasReleaseTimer240 the env
+// wash and the damage thresholds read, so it can't drift out of step with them.
+f32 gasChaosOverlayFrac(void)
+{
+	f32 frac;
+
+	if (!g_ChaosGasOn) {
+		return 0.0f;
+	}
+
+	frac = (g_GasReleaseTimer240 - 1800.0f) / 180.0f;
+
+	if (frac < 0.0f) {
+		frac = 0.0f;
+	}
+	if (frac > 1.0f) {
+		frac = 1.0f;
+	}
+
+	return frac;
+}
+
+void gasChaosSet(s32 on)
+{
+	if (on) {
+		if (!g_Vars.currentplayer || !g_Vars.currentplayer->prop) {
+			return;
+		}
+		gasReleaseFromPos(&g_Vars.currentplayer->prop->pos);
+		g_GasEnableDamage = true;
+		g_GasReleaseTimerMax240 = 3600;
+		g_ChaosGasOn = true;
+
+		if (g_GasReleaseTimer240 < 1800) {
+			g_GasReleaseTimer240 = 1800; // cough + damage from the first tick
+		}
+
+		// gasStopAudio() stops the hiss but leaves g_GasAudioHandle non-NULL,
+		// and gasTick only starts one when the handle IS NULL — so without this
+		// a re-trigger in the same stage would run the gas in total silence.
+		g_GasAudioHandle = NULL;
+
+		if (g_EnvOrigFogEnvironment) {
+			g_ChaosGasEnvTo = *g_EnvOrigFogEnvironment;
+			g_ChaosGasEnvTo.sky_r = 0x30;
+			g_ChaosGasEnvTo.sky_g = 0x98;
+			g_ChaosGasEnvTo.sky_b = 0x38;
+			g_EnvTransitionFrom = g_EnvOrigFogEnvironment;
+			g_EnvTransitionTo = &g_ChaosGasEnvTo;
+			g_ChaosGasEnvValid = true;
+		} else {
+			g_ChaosGasEnvValid = false;
+		}
+	} else {
+		g_GasReleasing = false;
+		g_GasReleaseTimer240 = 0;
+		g_GasSoundTimer240 = 0;
+		g_ChaosGasOn = false;
+		gasStopAudio();
+		g_GasAudioHandle = NULL; // see the note above
+
+		if (g_ChaosGasEnvValid && g_EnvOrigFogEnvironment) {
+			envApplyFogEnvironment(g_EnvOrigFogEnvironment); // restore the stage env
+		}
+		g_ChaosGasEnvValid = false;
+	}
+}
+#endif
+
 bool gasIsActive(void)
 {
 	return g_GasReleaseTimer240 > 0;
@@ -20975,7 +21233,39 @@ void gasTick(void)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Chaos gas: keep the HISS going for as long as the effect runs, and keep it
+	// audible. Three things the vanilla audio block gets wrong for a whole-level
+	// gassing, all fixed here rather than by editing the block itself:
+	//
+	//   1. it pans against g_GasPos, the one point the gas was released from, so
+	//      walking >3000u away silences a gas that is supposedly everywhere —
+	//      pin the release point to the player so the hiss travels with them;
+	//   2. the loop is armed only while g_GasSoundTimer240 < max, i.e. 3600
+	//      frames from the release, so a long effect would go quiet part-way —
+	//      hold the timer down so it never expires;
+	//   3. the sound is started once, when the handle is NULL, and nothing
+	//      re-arms it when the sample ends — so clear the handle once it reads
+	//      AL_STOPPED and let the block below start the next one.
+	if (g_ChaosGasOn && g_Vars.currentplayer && g_Vars.currentplayer->prop) {
+		g_GasPos.x = g_Vars.currentplayer->prop->pos.x;
+		g_GasPos.y = g_Vars.currentplayer->prop->pos.y;
+		g_GasPos.z = g_Vars.currentplayer->prop->pos.z;
+		g_GasSoundTimer240 = 0;
+
+		if (g_GasAudioHandle && sndGetState(g_GasAudioHandle) == AL_STOPPED) {
+			g_GasAudioHandle = NULL;
+		}
+	}
+#endif
+
 	if (g_GasReleaseTimer240 > 0 && !g_PlayerInvincible) {
+#ifndef PLATFORM_N64
+		// Chaos gas can run on stages that never set the env transition
+		// pointers (no fog env) — envApplyTransitionFrac would deref NULL.
+		// Vanilla gas stages always have them set, so this is a no-op there.
+		if (g_EnvTransitionFrom && g_EnvTransitionTo)
+#endif
 		envApplyTransitionFrac(g_GasReleaseTimer240 / g_GasReleaseTimerMax240);
 
 		if (g_GasEnableDamage) {
@@ -20983,10 +21273,32 @@ void gasTick(void)
 				g_GasLastCough60 = g_Vars.lvframe60;
 
 				if (g_GasReleaseTimer240 >= 600) {
+#ifndef PLATFORM_N64
+					// Chaos gas COUGHS instead of yelping. chrChoke with
+					// CHOKETYPE_COUGH picks the sex-appropriate cough set and
+					// routes it through the player's chokehandle — which also
+					// silences the pain noise, since chrDamage's player branch
+					// only starts one while chokehandle is NULL.
+					if (g_ChaosGasOn
+							&& g_Vars.currentplayer->prop
+							&& g_Vars.currentplayer->prop->chr) {
+						chrChoke(g_Vars.currentplayer->prop->chr, CHOKETYPE_COUGH);
+					} else
+#endif
 					sndStart(var80095200, SFX_0037, 0, -1, -1, -1, -1, -1);
 				}
 
-				if (g_GasReleaseTimer240 >= 1800) {
+				if (g_GasReleaseTimer240 >= 1800
+#ifndef PLATFORM_N64
+						// Chaos gas is NEVER lethal: it wears you down and then
+						// stops short of finishing you. One gas tick costs
+						// damage * 0.125 / healthscale, so a floor of 15% can't
+						// be jumped over in a single hit at any scale. Shield is
+						// not counted: chrDamageByMisc passes
+						// damageshield=false.
+						&& !(g_ChaosGasOn && playerGetHealthFrac() <= 0.15f)
+#endif
+						) {
 					struct coord dir = {0, 0, 0};
 
 					chrDamageByMisc(g_Vars.currentplayer->prop->chr, 0.125f, &dir, NULL, NULL);

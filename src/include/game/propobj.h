@@ -342,6 +342,12 @@ void gasReleaseFromPos(struct coord *pos);
 void gasStopAudio(void);
 bool gasIsActive(void);
 void gasTick(void);
+#ifndef PLATFORM_N64
+void gasChaosSet(s32 on); /* pd.gas: nerve gas on any stage, pre-ramped past the damage threshold */
+s32 gasChaosIsActive(void); /* chaos gas running? un-gates gasRender off STAGE_ESCAPE */
+f32 gasChaosOverlayFrac(void); /* chaos gas screen-overlay thickness, 0..1 (0 = off) */
+s32 chaosItemsShuffle(void); /* pd.items_shuffle: swap loose weapon pickups, returns how many */
+#endif
 Gfx *countdownTimerRender(Gfx *gdl);
 void projectilesDebug(void);
 void alarmTick(void);

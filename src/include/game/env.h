@@ -23,5 +23,8 @@ Gfx *envStopFog(Gfx *gdl);
 bool envIsPosInFogMaxDistance(struct coord *pos, f32 tolerance);
 struct distfadesettings *envGetDistFadeSettings(void);
 s32 envGetObjShadeMode(struct prop *prop, f32 arg1[4]);
+#ifndef PLATFORM_N64
+void envChaosFog(s32 stagenum, s32 fogmin, s32 fogmax, u8 r, u8 g, u8 b); /* pd.fog */
+#endif
 
 #endif

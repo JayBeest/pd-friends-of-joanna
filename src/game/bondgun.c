@@ -1997,6 +1997,14 @@ void bgun0f09a6f8(struct handweaponinfo *info, s32 handnum, struct hand *hand, s
 
 			if (gsetGetSingleShootSound(&hand->gset)) {
 				struct sndstate *handle = NULL;
+#ifndef PLATFORM_N64
+				{
+					/* declared in game/luaai.h; local extern keeps this TU
+					 * self-sufficient regardless of include ordering */
+					extern void luaEmitWeaponFire(s32 weaponnum, s32 playernum);
+					luaEmitWeaponFire((s32)hand->gset.weaponnum, g_Vars.currentplayernum);
+				}
+#endif
 
 				if (hand->audiohandle2 == NULL) {
 					handle = sndStart(var80095200, gsetGetSingleShootSound(&hand->gset), &hand->audiohandle2, -1, -1, -1, -1, -1);
@@ -2435,6 +2443,16 @@ bool bgunTickIncAttackingMelee(s32 handnum, struct hand *hand)
 		if (hand->statecycles == 0) {
 			hand->firing = true;
 			hand->attacktype = HANDATTACKTYPE_MELEENOUNCLOAK;
+
+#ifndef PLATFORM_N64
+			{
+				/* melee swings never reach the shoot-sound weaponfire emit,
+				 * so report them as their own "punch" event (fists and knife
+				 * alike — listeners filter by weaponnum) */
+				extern void luaEmitPunch(s32 weaponnum, s32 playernum);
+				luaEmitPunch((s32)hand->gset.weaponnum, g_Vars.currentplayernum);
+			}
+#endif
 
 			if (func->fire_animation) {
 				bgunStartAnimation(func->fire_animation, handnum, hand);

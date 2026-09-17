@@ -691,6 +691,19 @@ struct audiorussmapping g_AudioRussMappings[] = {
 	/*0x01bc*/ { 0x0000, AUDIOCONFIG_00 },
 };
 
+#ifndef PLATFORM_N64
+/* The packed sound a config id maps to, or -1 when confignum is outside the
+ * table (pd.sound takes script ids; sndStart indexes the table unchecked). */
+s32 sndGetRussMappingSound(s32 confignum)
+{
+	if (confignum < 0 || confignum >= ARRAYCOUNT(g_AudioRussMappings)) {
+		return -1;
+	}
+
+	return (u16)g_AudioRussMappings[confignum].soundnum;
+}
+#endif
+
 struct audioconfig g_AudioConfigs[] = {
 	{ /* 0*/  200, 1000, 1200, -1, 100, -1,   0, 0 },
 	{ /* 1*/  400, 2500, 3000, -1, 100, 48,   0, AUDIOCONFIGFLAG_20 },

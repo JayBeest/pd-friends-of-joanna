@@ -18,6 +18,7 @@
 #include "game/chaosstate.h"
 #include "game/chraction.h"
 #include "game/env.h"
+#include "game/file.h"
 #include "game/music.h"
 #include "game/mplayer/mplayer.h"
 #include "game/dlights.h"
@@ -33,9 +34,44 @@
 #include <math.h>
 
 // pd.sound(sfxnum): play a one-shot sound locally (announcer stingers etc).
+// sfxnum is a packed sound number, 0..0xffff (0x8000 set = audio config id).
+// sndStart trusts its argument, so a script id is checked first: a config id
+// must be inside g_AudioRussMappings, and an MP3 must name a real file. A
+// config that maps to an MP3 is started by file number, because sndStartMp3
+// would read the mapped value's high bits as another config id.
 s32 chraiLuaPlaySound(s32 sfxnum)
 {
-	sndStart(var80095200, (s16)sfxnum, NULL, -1, -1, -1, -1, -1);
+	union soundnumhack req;
+
+	if (sfxnum < 0 || sfxnum > 0xffff) {
+		return 0;
+	}
+
+	req.packed = (s16)(u16)sfxnum;
+
+	if (req.hasconfig) {
+		union soundnumhack mapped;
+		s32 sound = sndGetRussMappingSound(req.confignum);
+
+		if (sound < 0) {
+			return 0;
+		}
+
+		mapped.packed = (s16)(u16)sound;
+
+		if (sndIsMp3(mapped.packed)) {
+			if (fileGetRomSize(mapped.id) <= 0) {
+				return 0;
+			}
+
+			sndStartMp3ByFilenum(mapped.id);
+			return 1;
+		}
+	} else if (sndIsMp3(req.packed) && fileGetRomSize(req.id) <= 0) {
+		return 0;
+	}
+
+	sndStart(var80095200, req.packed, NULL, -1, -1, -1, -1, -1);
 	return 1;
 }
 

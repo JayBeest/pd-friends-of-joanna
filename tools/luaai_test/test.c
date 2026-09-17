@@ -370,16 +370,6 @@ static void test_fojo_table(void)
 		unsigned int op = fojo_ops[i].op;
 		unsigned int len = op < NUM_CMDLENGTHS ? g_CommandLengths[op] : 0;
 
-		if (op == 0x0194 && len == 1) {
-			/* Known: the table still carries the vanilla placeholder for this
-			 * slot. The walk steps one byte into the opcode, reads 0x94xx
-			 * (out of table, length 1) and lands back on the next command,
-			 * so the only effect is one dead dispatch entry. See case 3. */
-			printf("  0x%04x %-22s table %u, handler %u  KNOWN MISMATCH (benign, see below)\n",
-					op, fojo_ops[i].handler, len, fojo_ops[i].advance);
-			continue;
-		}
-
 		printf("  0x%04x %-22s table %u, handler %u\n", op, fojo_ops[i].handler, len, fojo_ops[i].advance);
 		CHECK(len == fojo_ops[i].advance, "0x%04x: table length %u, handler advances %u",
 				op, len, fojo_ops[i].advance);
@@ -411,14 +401,9 @@ static void test_detect_aio(void)
 		CHECK(has_block(src, 2, 0x01e1), "0x0194: walk did not resync on 0x01e1 at 2");
 		CHECK(has_block(src, 5, 0x0003), "0x0194: no block for yield at 5");
 
-		if (g_CommandLengths[0x0194] == 1) {
-			/* 0, 1 (dead 0x9401), 2, 5 */
-			CHECK(n == 4 && has_block(src, 1, 0x9401),
-					"0x0194: expected exactly one dead entry at 1, got %u entries", n);
-			printf("  dead entry at offset 1 (0x9401) from g_CommandLengths[0x0194] == 1\n");
-		} else {
-			CHECK(n == 3, "0x0194: %u dispatch entries, want 3", n);
-		}
+		/* 0, 2, 5: no dead entry inside the opcode. */
+		CHECK(n == 3, "0x0194: %u dispatch entries, want 3", n);
+		CHECK(!has_block(src, 1, 0x9401), "0x0194: walk stepped into the opcode at 1");
 
 		free(src);
 	}

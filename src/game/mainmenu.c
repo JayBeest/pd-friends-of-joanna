@@ -3,6 +3,7 @@
 #include "constants.h"
 #include "data.h"
 #include "game/bondgun.h"
+#include "game/chaosstate.h"
 #include "game/bossfile.h"
 #include "game/challenge.h"
 #include "game/cheats.h"
@@ -5194,6 +5195,18 @@ void func0f105948(s32 weaponnum) {
   u32 stack;
   s32 wantindex;
 
+#ifndef PLATFORM_N64
+  // Chaos pd.weapon_rename: a renamed weapon also hides its pause-menu
+  // inventory model — the real gun spinning under the fake name broke the
+  // bit. From Kai (be46717).
+  if (g_ChaosRenamedWeapon >= 0 && weaponnum == g_ChaosRenamedWeapon) {
+    g_Menus[g_MpPlayerNum].menumodel.bodymodeldef = NULL;
+    g_Menus[g_MpPlayerNum].menumodel.curparams = 0;
+    g_Menus[g_MpPlayerNum].menumodel.newparams = 0;
+    return;
+  }
+#endif
+
   useindex = weaponnum - 2;
   wantindex = useindex;
 
@@ -5527,6 +5540,13 @@ struct menuitem g_FrWeaponsAvailableMenuItems[] = {
     {MENUITEMTYPE_END},
 };
 
+// Chaos weapon locks hide the pause-menu Inventory (Kai be46717).
+#ifndef PLATFORM_N64
+#define WEAPONLOCK_HIDDEN_FLAG MENUDIALOGFLAG_WEAPONLOCK_HIDDEN
+#else
+#define WEAPONLOCK_HIDDEN_FLAG 0
+#endif
+
 struct menudialogdef g_SoloMissionInventoryMenuDialog = {
     MENUDIALOGTYPE_DEFAULT,
     L_OPTIONS_178, // "Inventory"
@@ -5534,9 +5554,10 @@ struct menudialogdef g_SoloMissionInventoryMenuDialog = {
     inventoryMenuDialog,
 #if VERSION >= VERSION_JPN_FINAL
     MENUDIALOGFLAG_0002 | MENUDIALOGFLAG_DISABLERESIZE | MENUDIALOGFLAG_0400 |
-        MENUDIALOGFLAG_1000,
+        MENUDIALOGFLAG_1000 | WEAPONLOCK_HIDDEN_FLAG,
 #else
-    MENUDIALOGFLAG_0002 | MENUDIALOGFLAG_DISABLERESIZE | MENUDIALOGFLAG_0400,
+    MENUDIALOGFLAG_0002 | MENUDIALOGFLAG_DISABLERESIZE | MENUDIALOGFLAG_0400 |
+        WEAPONLOCK_HIDDEN_FLAG,
 #endif
     &g_SoloMissionOptionsMenuDialog,
 };
@@ -5604,6 +5625,14 @@ MenuItemHandlerResult menuhandlerInventoryList(s32 operation,
   case MENUOP_GETOPTIONTEXT:
     return (uintptr_t)invGetNameByIndex(data->list.value);
   case MENUOP_SET: {
+#ifndef PLATFORM_N64
+    // Chaos weapon locks: refuse the equip if the lock engaged while this
+    // screen was already open (a freshly-opened pause menu hides the screen
+    // entirely — MENUDIALOGFLAG_WEAPONLOCK_HIDDEN). From Kai (be46717).
+    if (g_ChaosGunLock || g_ChaosKnifeLock) {
+      break;
+    }
+#endif
     s32 weaponnum = invGetWeaponNumByIndex(data->list.value);
     bool equippable = true;
 

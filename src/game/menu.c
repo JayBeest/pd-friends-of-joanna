@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "../lib/naudio/n_sndp.h"
 #include "game/cheats.h"
 #include "game/camdraw.h"
@@ -1616,6 +1617,19 @@ void menuPushDialog(struct menudialogdef *dialogdef)
 			sibling = dialogdef->nextsibling;
 
 			while (sibling && layer->numsiblings < 5) {
+#ifndef PLATFORM_N64
+				// Chaos weapon locks (pd.gun_lock / pd.knife_lock, Kai
+				// be46717): the pause-menu Inventory is a weapon-switch avenue
+				// (its Equip calls bgunEquipWeapon2 directly), so flagged
+				// dialogs vanish from the carousel while a lock is active. A
+				// menu already open when the lock engages is covered by the
+				// equip refusal in menuhandlerInventoryList.
+				if ((g_ChaosGunLock || g_ChaosKnifeLock)
+						&& (sibling->flags & MENUDIALOGFLAG_WEAPONLOCK_HIDDEN)) {
+					sibling = sibling->nextsibling;
+					continue;
+				}
+#endif
 				// @bug:
 				// If this limit were to be reached, the game would soft lock
 				// because sibling is incremented inside the if-statement block.

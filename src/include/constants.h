@@ -1780,6 +1780,10 @@
 #define MENUDIALOGFLAG_1000              0x1000
 #ifndef PLATFORM_N64
 #define MENUDIALOGFLAG_LITERAL_TEXT      0x2000
+// Dialog is skipped from the pause-menu carousel while a chaos weapon lock
+// (g_ChaosGunLock / g_ChaosKnifeLock) is active — the pause-menu Inventory's
+// Equip is a weapon-switch avenue the locks must close. From Kai (be46717).
+#define MENUDIALOGFLAG_WEAPONLOCK_HIDDEN 0x8000
 #endif
 
 #define MENUDIALOGSTATE_PREOPEN    0

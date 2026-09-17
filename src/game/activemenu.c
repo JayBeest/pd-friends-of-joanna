@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/chraction.h"
 #include "game/game_006900.h"
 #include "game/bondgun.h"
@@ -732,6 +733,14 @@ void amAssignWeaponSlots(void)
 
 void amOpen(void)
 {
+#ifndef PLATFORM_N64
+	// Chaos "Cyclone Frenzy" gun-lock / "Knife fight" knife-lock (Kai
+	// be46717): block the weapon/device menu (a weapon-switch avenue) while
+	// either lock is active.
+	if (g_ChaosGunLock || g_ChaosKnifeLock) {
+		return;
+	}
+#endif
 	if (g_Vars.currentplayer->gunctrl.passivemode == false) {
 		g_AmIndex = g_Vars.currentplayernum;
 		g_Vars.currentplayer->activemenumode = AMMODE_VIEW;

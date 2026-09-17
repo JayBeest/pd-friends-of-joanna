@@ -1252,6 +1252,7 @@ s32 g_ModelSwapMisses = 0;
 struct texture *g_ModelSwapTexList = NULL;
 s32 g_ModelSwapTexCount = 0;
 u8 *g_ModelSwapTexData = NULL;
+u32 g_ModelSwapTexDataSize = 0;
 s32 g_ModelSwapTexActive = 0; // set only while a swapped model's textures load
 
 struct modelromfile {
@@ -1632,6 +1633,7 @@ static void romdataOverlayLocateTextures(void)
 	g_ModelSwapTexList = list;
 	g_ModelSwapTexCount = (s32)bestCount;
 	g_ModelSwapTexData = modelRomFile + dataOfs;
+	g_ModelSwapTexDataSize = modelRomFileSize - dataOfs;
 	sysLogPrintf(LOG_NOTE, "model-swap: overlay texture table ready (%u entries, data at 0x%x)", bestCount, dataOfs);
 }
 

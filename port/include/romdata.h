@@ -35,6 +35,7 @@ struct texture;
 extern struct texture *g_ModelSwapTexList;
 extern s32 g_ModelSwapTexCount;
 extern u8 *g_ModelSwapTexData;
+extern u32 g_ModelSwapTexDataSize; // bytes from g_ModelSwapTexData to the end of the file
 extern s32 g_ModelSwapTexActive;
 #define ROMDATA_MODELSWAP_MAX_FILES 8192 // size of g_ModelSwapFiles (ROMDATA_MAX_FILES)
 s32 romdataModelRomFileGetNumForName(const char *name);

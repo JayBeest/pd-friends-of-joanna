@@ -2299,7 +2299,7 @@ void texLoad(texnum_t *updateword, struct texpool *pool, bool unusedarg)
 			// ROM's table + data (a private pool keeps it from aliasing the
 			// base game's cache). Falls back to the base texture if the overlay
 			// lacks this number.
-			const bool texoverlay = g_ModelSwapTexActive && g_ModelSwapTexList != NULL
+			bool texoverlay = g_ModelSwapTexActive && g_ModelSwapTexList != NULL
 					&& g_ModelSwapTexData != NULL
 					&& (s32)(g_TexNumToLoad + 1) < g_ModelSwapTexCount;
 			struct texture *textbl = texoverlay ? g_ModelSwapTexList : g_Textures;
@@ -2309,6 +2309,21 @@ void texLoad(texnum_t *updateword, struct texpool *pool, bool unusedarg)
 
 			thisoffset = textbl[g_TexNumToLoad].dataoffset;
 			nextoffset = textbl[g_TexNumToLoad + 1].dataoffset;
+
+#ifndef PLATFORM_N64
+			// The overlay's offsets come from a user ROM (found by a heuristic
+			// search), so nothing guarantees they fit compbuffer (4 KB, the cap
+			// modTextureLoad gets too) or the overlay's data. Use the base
+			// texture for anything that doesn't.
+			if (texoverlay && (nextoffset < thisoffset
+					|| nextoffset - thisoffset > 4 * 1024
+					|| (u32)(thisoffset & 0xfffffff8) + (u32)((nextoffset - thisoffset + 0x1f) >> 4 << 4) > g_ModelSwapTexDataSize)) {
+				texoverlay = false;
+				textbl = g_Textures;
+				thisoffset = textbl[g_TexNumToLoad].dataoffset;
+				nextoffset = textbl[g_TexNumToLoad + 1].dataoffset;
+			}
+#endif
 
 			if (thisoffset == nextoffset) {
 				// The texture has no data

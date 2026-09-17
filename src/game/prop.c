@@ -356,9 +356,42 @@ Gfx *propRender(Gfx *gdl, struct prop *prop, bool xlupass)
 	case PROPTYPE_OBJ:
 	case PROPTYPE_DOOR:
 	case PROPTYPE_WEAPON:
+#ifndef PLATFORM_N64
+		// pd.ipod_ad "iPod Ad": objects/doors/weapons render pure white.
+		if (g_ChaosIpodAd) {
+			gDPFlatFillEXT(gdl++, 255, 255, 255);
+			gdl = objRender(prop, gdl, xlupass);
+			gDPFlatFillResetEXT(gdl++);
+			break;
+		}
+#endif
 		gdl = objRender(prop, gdl, xlupass);
 		break;
 	case PROPTYPE_CHR:
+#ifndef PLATFORM_N64
+		// pd.ipod_ad "iPod Ad": characters render pure black (silhouettes).
+		// Takes precedence over wireframe-enemies.
+		if (g_ChaosIpodAd) {
+			gDPFlatFillEXT(gdl++, 0, 0, 0);
+			gdl = chrRender(prop, gdl, xlupass);
+			gDPFlatFillResetEXT(gdl++);
+			break;
+		}
+		// pd.chr_wireframe "wireframe enemies": bracket hostile chr models
+		// (their held weapons render as children inside chrRender, so they
+		// wireframe too) in the scoped-wireframe marker. Friendly and
+		// non-combat chrs stay solid.
+		if (g_ChaosWireframeChrs && prop->chr != NULL
+				&& g_Vars.currentplayer != NULL
+				&& g_Vars.currentplayer->prop != NULL
+				&& g_Vars.currentplayer->prop->chr != NULL
+				&& chrCompareTeams(g_Vars.currentplayer->prop->chr, prop->chr, COMPARE_ENEMIES)) {
+			gDPChrWireframeEXT(gdl++, 1);
+			gdl = chrRender(prop, gdl, xlupass);
+			gDPChrWireframeEXT(gdl++, 0);
+			break;
+		}
+#endif
 		gdl = chrRender(prop, gdl, xlupass);
 		break;
 	case PROPTYPE_PLAYER:

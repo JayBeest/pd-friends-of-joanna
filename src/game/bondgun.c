@@ -3,6 +3,7 @@
 #include "../lib/naudio/n_sndp.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
 #include "game/inv.h"
@@ -16,7 +17,6 @@
 #include "game/quaternion.h"
 #include "game/game_097aa0.h"
 #include "game/bondgun.h"
-#include "game/chaosstate.h"
 #include "mod.h"
 #include "game/gunfx.h"
 #include "game/game_0b0fd0.h"
@@ -11778,7 +11778,20 @@ void bgunRender(Gfx **gdlptr)
 				modelUpdateRelations(&hand->handmodel);
 
 				renderdata.envcolour = colour;
+#ifndef PLATFORM_N64
+				// pd.ipod_ad "iPod Ad": the first-person ARMS/HANDS are black
+				// (body part), while the weapon stays white (the outer bracket
+				// in player.c). Restore white after for anything downstream.
+				if (g_ChaosIpodAd) {
+					gDPFlatFillEXT(renderdata.gdl++, 0, 0, 0);
+					modelRender(&renderdata, &hand->handmodel);
+					gDPFlatFillEXT(renderdata.gdl++, 255, 255, 255);
+				} else {
+					modelRender(&renderdata, &hand->handmodel);
+				}
+#else
 				modelRender(&renderdata, &hand->handmodel);
+#endif
 				renderdata.envcolour = prevcolour;
 			}
 

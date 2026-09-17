@@ -24,6 +24,15 @@ s32 extTexModelGetTextureInfo(s16 fileNum, s32 index, s32 *texNum, s8 *ownerMod,
 const u8 *extTexModelLoadPixels(s16 fileNum, s32 texNum, u32 *width, u32 *height);
 u8 extTexFontID(struct font *font);
 
+// Lua API image loading (pd.load_image / pd.tex_override / pd.list_images).
+// name is a plain file name looked up in scripts/chaos/images/ under each mod
+// dir, the base dir, then the working directory. The buffer is RGBA8888 and
+// is freed with extImageFree.
+u8 *extImageLoad(const char *name, u32 *width, u32 *height);
+void extImageFree(u8 *data);
+// PNG basenames (no extension) across those dirs; returns the count written.
+s32 extImageList(char out[][64], s32 maxout);
+
 #ifdef __cplusplus
 }
 #endif

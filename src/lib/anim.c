@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/prop.h"
 #include "game/game_1531a0.h"
 #include "game/bg.h"
@@ -634,6 +635,15 @@ void animGetRotTranslateScale(s32 part, bool flip, struct skeleton *skel, s16 an
 		} else {
 			scale->x = scale->y = scale->z = 1.0f;
 		}
+
+#ifndef PLATFORM_N64
+		// pd.t_pose "Assert Authority": bind pose = no joint rotation. (The
+		// no-data fallthrough below already returns zero rotations.)
+		// Translations/scales are left alone, so root motion still applies.
+		if (g_ChaosTPose) {
+			rot->x = rot->y = rot->z = 0.0f;
+		}
+#endif
 
 		return;
 	}

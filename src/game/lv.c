@@ -403,6 +403,15 @@ void lvReset(s32 stagenum)
 	modelmgrSetLvResetting(true);
 	surfaceReset();
 	texReset();
+#ifndef PLATFORM_N64
+	// pd.* fx: renderer, video and HUD effect state that lives outside
+	// chaosStateResetPerStage (fast3d globals, the fps cap, the tex_override
+	// image, hudvd). Must not carry into the next stage.
+	{
+		extern void luaFxResetPerStage(void);
+		luaFxResetPerStage();
+	}
+#endif
 	textReset();
 	hudmsgsReset();
 
@@ -1430,7 +1439,14 @@ Gfx *lvRender(Gfx *gdl)
 					g_Vars.currentplayer->lookingatprop.prop = NULL;
 				}
 
-				if (gsetHasFunctionFlags(&g_Vars.currentplayer->hands[0].gset, FUNCFLAG_THREATDETECTOR)) {
+				// pd.terminator forces the threat detector on for ANY weapon;
+				// otherwise only a gun whose current function carries
+				// FUNCFLAG_THREATDETECTOR (the CMP150 secondary) tracks targets.
+				if (gsetHasFunctionFlags(&g_Vars.currentplayer->hands[0].gset, FUNCFLAG_THREATDETECTOR)
+#ifndef PLATFORM_N64
+						|| g_ChaosTerminator
+#endif
+						) {
 					lvFindThreats();
 				} else if (weaponHasFlag(bgunGetWeaponNum(HAND_RIGHT), WEAPONFLAG_AIMTRACK)) {
 					s32 j;
@@ -1841,7 +1857,22 @@ Gfx *lvRender(Gfx *gdl)
 				}
 
 				gdl = skyRenderOverexposure(gdl);
+#ifndef PLATFORM_N64
+				// HUDVD: the active (weapon/gadget select) menu bounces too.
+				// pd.hud_off hides it with the rest of the HUD elements.
+				{
+					extern Gfx *hudvdEmit(Gfx *gdl, s32 slot);
+					extern Gfx *hudvdReset(Gfx *gdl);
+
+					if (!g_ChaosHudOff) {
+						gdl = hudvdEmit(gdl, 6);
+						gdl = amRender(gdl);
+						gdl = hudvdReset(gdl);
+					}
+				}
+#else
 				gdl = amRender(gdl);
+#endif
 				mtx00016748(1);
 
 				if (g_Vars.currentplayer->menuisactive) {
@@ -2373,6 +2404,28 @@ void lvTick(void)
 			}
 		}
 	}
+
+#ifndef PLATFORM_N64
+	// pd.fake_crash: a HARD time freeze - the whole sim stops dead for a
+	// real-time span while the frame keeps redrawing the same instant.
+	// The countdown consumes diffframe240 (REAL frame time), never
+	// lvupdate240 - a sim-time countdown could not advance while the sim is
+	// frozen. For the same reason the release can NOT come from a Lua effect's
+	// own timer; this counter is the only thing that ends it. Like Kai, it
+	// only counts while the game is running (not paused, not in a cutscene).
+	if (g_ChaosFakeCrash240 > 0 && !g_Vars.in_cutscene && !lvIsPaused() && !mpIsPaused()) {
+		extern void luaFxFakeCrashRelease(void);
+
+		g_ChaosFakeCrash240 -= g_Vars.diffframe240;
+
+		if (g_ChaosFakeCrash240 <= 0) {
+			g_ChaosFakeCrash240 = 0;
+			luaFxFakeCrashRelease();
+		} else {
+			g_Vars.lvupdate240 = 0;
+		}
+	}
+#endif
 
 	g_Vars.lvupdate60 = g_Vars.lvupdate240 + g_Vars.lvupdate240rem;
 	g_Vars.lvupdate240rem = g_Vars.lvupdate60 & 3;

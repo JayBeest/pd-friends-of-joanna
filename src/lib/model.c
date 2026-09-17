@@ -2,6 +2,7 @@
 #include "constants.h"
 #include "platform.h"
 #include "system.h"
+#include "game/chaosstate.h"
 #include "game/game_096700.h"
 #include "game/acosfasinf.h"
 #include "game/quaternion.h"
@@ -1690,6 +1691,10 @@ void modelSetMatrices(struct modelrenderdata *renderdata, struct model *model)
 	renderdata->unk10 += model->definition->nummatrices;
 
 #ifndef PLATFORM_N64
+	// pd.t_pose: the fast matrix builder (modelasm00018680) reads anim
+	// rotations directly, bypassing animGetRotTranslateScale where the T-pose
+	// zeroing lives. Force the reference path while it's active.
+	//
 	// The chr GROUND-anchored sizing in modelUpdateChrNodeMtx (pd.chr_yscale,
 	// and the pd.chr_scale foot-snap) lives on the C path only, so the asm
 	// builder skips it and the chr renders un-grounded (full height / sunken /
@@ -1698,8 +1703,9 @@ void modelSetMatrices(struct modelrenderdata *renderdata, struct model *model)
 	// — base-scaled bodies keep the fast asm path and their vanilla grounding.
 	// unk01 == 1 marks a chr model (chr.c sets it, objs set 0), so the
 	// model->chr union is safe to read. (Kai be46717.)
-	if (model->unk01 == 1 && model->chr != NULL
-			&& (model->chr->yscale != 1.0f || model->chr->groundmult != 1.0f)) {
+	if (g_ChaosTPose
+			|| (model->unk01 == 1 && model->chr != NULL
+				&& (model->chr->yscale != 1.0f || model->chr->groundmult != 1.0f))) {
 		modelUpdateMatrices(renderdata, model);
 		return;
 	}

@@ -61,6 +61,7 @@ void videoSetExternalTextures(s32 external);
 void videoSetDisplayMode(const s32 index);
 void videoSetVsync(const s32 vsync);
 void videoSetFramerateLimit(const s32 limit);
+void videoSetFpsOverride(s32 fps);
 void videoSetDisplayFPS(const s32 displayfps);
 void videoSetMSAA(const s32 msaa);
 

@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/chraction.h"
 #include "game/bondgun.h"
 #include "game/chr.h"
@@ -12,6 +13,7 @@
 #include "game/file.h"
 #include "game/gfxmemory.h"
 #include "game/lang.h"
+#include "game/lv.h"
 #include "game/options.h"
 #include "game/propobj.h"
 #include "bss.h"
@@ -1613,6 +1615,49 @@ bool sightHasTargetWhileAiming(s32 sight)
 /**
  * sighton is true if the player is using the aimer (ie. holding R).
  */
+#ifndef PLATFORM_N64
+// pd.terminator "Terminator Vision": draw the CMP150 threat box around EVERY
+// live chr, whatever gun is held. Reuses the real threat-detector pieces:
+// lvUpdateTrackedProp(&scratch, -1) projects the prop to screen bounds and
+// returns false for anything not worth boxing (index -1 = not a tracked slot,
+// so no targetset bookkeeping), and sightDrawTargetBox draws it with a
+// settled fly-in age.
+static Gfx *sightDrawChaosAllChrBoxes(Gfx *gdl)
+{
+	struct trackedprop scratch;
+	s32 numslots;
+	s32 i;
+
+	if (!g_ChaosTerminator) {
+		return gdl;
+	}
+
+	numslots = chrsGetNumSlots();
+
+	for (i = 0; i < numslots; i++) {
+		struct chrdata *chr = &g_ChrSlots[i];
+
+		if (chr->chrnum < 0 || chr->prop == NULL || chr->model == NULL) {
+			continue;
+		}
+		if (chr->prop->type != PROPTYPE_CHR) {
+			continue; // players get boxed by the vanilla paths if at all
+		}
+		if (chrIsDead(chr)) {
+			continue;
+		}
+
+		scratch.prop = chr->prop;
+
+		if (lvUpdateTrackedProp(&scratch, -1)) {
+			gdl = sightDrawTargetBox(gdl, &scratch, 0, TICKS(80));
+		}
+	}
+
+	return gdl;
+}
+#endif
+
 Gfx *sightDraw(Gfx *gdl, bool sighton, s32 sight)
 {
 	if (sight);
@@ -1696,6 +1741,13 @@ Gfx *sightDraw(Gfx *gdl, bool sighton, s32 sight)
 			gdl = sightDrawTarget(gdl, crossx, crossy);
 		}
 	}
+
+#ifndef PLATFORM_N64
+	// After the crosshair-style switch so the boxes appear whatever sight the
+	// player uses, but BEFORE g_ScaleX is reset - sightDrawTargetBox divides
+	// x1 by it.
+	gdl = sightDrawChaosAllChrBoxes(gdl);
+#endif
 
 	g_ScaleX = 1;
 

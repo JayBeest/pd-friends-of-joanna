@@ -42,7 +42,6 @@
 #include "lib/anim.h"
 #include "data.h"
 #include "types.h"
-#include "game/chaosstate.h"
 #ifndef PLATFORM_N64
 #include <math.h>
 #include "input.h"

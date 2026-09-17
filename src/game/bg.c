@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include "constants.h"
 #include "system.h"
+#include "game/chaosstate.h"
 #include "game/debug.h"
 #include "game/dlights.h"
 #include "game/game_006900.h"
@@ -6013,6 +6014,20 @@ void bgTickPortals(void)
 	box.ymin = player->screenyminf;
 	box.xmax = player->screenxmaxf;
 	box.ymax = player->screenymaxf;
+
+#ifndef PLATFORM_N64
+	// pd.ipod_ad "iPod Ad": sync the silhouette enable + bright wall colour to
+	// the renderer (the per-prop black/white fills are display-list opcodes).
+	{
+		extern s32 gfx_silhouette;
+		extern f32 gfx_silhouette_wall_color[3];
+
+		gfx_silhouette = g_ChaosIpodAd ? 1 : 0;
+		gfx_silhouette_wall_color[0] = g_ChaosIpodWall[0] / 255.0f;
+		gfx_silhouette_wall_color[1] = g_ChaosIpodWall[1] / 255.0f;
+		gfx_silhouette_wall_color[2] = g_ChaosIpodWall[2] / 255.0f;
+	}
+#endif
 
 	viGetZRange(&g_BgSnake.zrange);
 	g_BgSnake.zrange.far = g_BgSnake.zrange.far / g_Vars.currentplayerstats->scale_bg2gfx;

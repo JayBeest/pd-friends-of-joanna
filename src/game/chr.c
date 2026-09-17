@@ -3494,7 +3494,21 @@ void chrRenderAttachedObject(struct prop *prop, struct modelrenderdata *renderda
 		struct model *model = obj->model;
 		struct prop *child;
 
+#ifndef PLATFORM_N64
+		// pd.ipod_ad "iPod Ad": a chr's held weapon (and attached objects)
+		// render pure white - the chr body is inside the black scope from
+		// propRender, so paint white here, then restore black for the rest of
+		// the chr.
+		if (g_ChaosIpodAd) {
+			gDPFlatFillEXT(renderdata->gdl++, 255, 255, 255);
+			modelRender(renderdata, model);
+			gDPFlatFillEXT(renderdata->gdl++, 0, 0, 0);
+		} else {
+			modelRender(renderdata, model);
+		}
+#else
 		modelRender(renderdata, model);
+#endif
 
 		// Note: OBJH2FLAG_HASOPA << 1 is OBJH2FLAG_HASXLU
 		// so this is just checking if the appropriate flag is enabled
@@ -3803,6 +3817,21 @@ Gfx *chrRender(struct prop *prop, Gfx *gdl, bool xlupass)
 			colour[2] = var8009caef;
 			colour[3] = var8009caf0;
 		}
+
+#ifndef PLATFORM_N64
+		// pd.terminator "Terminator Vision": flat bright-red silhouettes for
+		// every chr. Deliberately the NIGHT-VISION style of highlight (set
+		// after objMergeColourFracs, so nothing washes it out). The colour is a
+		// HOT red, not pure red: the retro filter's Virtual Boy palette maps
+		// the frame to four red shades by luminance, and pure red would land
+		// mid-palette; lifting green/blue lands it on the top shade.
+		if (g_ChaosTerminator) {
+			colour[0] = 0xff;
+			colour[1] = 0x8c;
+			colour[2] = 0x8c;
+			colour[3] = 0xff;
+		}
+#endif
 
 		// Configure colours for xray if in use
 		if (g_Vars.currentplayer->visionmode == VISIONMODE_XRAY) {

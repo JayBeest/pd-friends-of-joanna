@@ -52,6 +52,9 @@ struct GfxRenderingAPI {
     void (*delete_texture)(uint32_t texID);
     void (*set_texture_filter)(enum FilteringMode mode);
     enum FilteringMode (*get_texture_filter)(void);
+    // pd.* fx post filter (pixelate / colour modes / CRT / lens / rotate):
+    // filter the finished frame in place. Runs from gfx_run's tail. Nullable.
+    void (*retro_filter)(int pixw, int pixh, int cmode, int clevels, int fx, float warp);
 };
 
 #endif

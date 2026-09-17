@@ -100,6 +100,19 @@ local function phase1()
 	setter("zoom_scale", 2.5)
 	setter("gun_sound", W.DY357)
 	setter("weapon_rename", W.CMP150, "Nokia \226\128\148 3315\195") -- non-ASCII, scrubbed
+	-- Hostile: 60- and 200-character renames. langGet returns this string
+	-- wherever the weapon's name is drawn, and amGetSlotDetails copies a name
+	-- into its caller's char[32]. The bridge caps what it stores; switch to
+	-- the renamed gun so the HUD name path actually renders it.
+	check("weapon_rename long", function()
+		local ok60 = pd.weapon_rename(W.CMP150, string.rep("R", 60)) == true
+		local ok200 = pd.weapon_rename(W.DY357, string.rep("Q", 200)) == true
+		pd.give_weapon(W.CMP150)
+		pd.switch_weapon(W.CMP150)
+		pd.hud_message(string.rep("R", 60))
+		pd.weapon_rename(W.DY357)
+		return ok60 and ok200
+	end)
 	setter("weapon_rename", W.CMP150, "Nokia 3315")
 	check("float and int bounds", function()
 		return pd.spread(0 / 0) == true and pd.ammo_cost(0x7fffffff) == true

@@ -103,6 +103,10 @@ extern s32 g_ChaosGunSfxOverride;
 extern s32 g_ChaosLangOverrideId;
 extern s32 g_ChaosLangOverrideId2; // the weapon's SHORT name id (weapon wheel, scenario lines)
 extern s32 g_ChaosRenamedWeapon; // weaponnum being renamed — mainmenu hides its inventory model
+// Longest pd.weapon_rename string. The buffer is 64 but every display path
+// that renders a weapon name copies through a char[32] (amGetSlotDetails),
+// so a rename that fits those is a rename that renders whole.
+#define CHAOS_LANG_OVERRIDE_MAX 31
 extern char g_ChaosLangOverrideStr[64];
 extern s32 g_ChaosLangCensorIds[8];
 extern s32 g_ChaosUwuMode; // 0 off, 1 uwu, 2 pig latin, 3 buttsbot, 4 scramble

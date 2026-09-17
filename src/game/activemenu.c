@@ -402,6 +402,22 @@ void amApply(s32 slot)
 	}
 }
 
+/*
+ * amGetSlotDetails writes into its caller's `label`, and all three callers
+ * pass a char[32] (amCalculateSlotWidth, the slot draw loop, the cramped
+ * halfwidth measure). Every source it copies from is a langGet result, and
+ * langGet can now return g_ChaosLangOverrideStr — 63 bytes of whatever
+ * pd.weapon_rename was handed. Copy bounded on the port; AMLABELCPY
+ * preprocesses to the original strcpy on N64.
+ */
+#define AM_SLOT_LABEL_LEN 32
+
+#ifndef PLATFORM_N64
+#define AMLABELCPY(dst, src) snprintf((dst), AM_SLOT_LABEL_LEN, "%s", (src))
+#else
+#define AMLABELCPY(dst, src) strcpy((dst), (src))
+#endif
+
 void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 {
 	u32 weaponnum;
@@ -414,7 +430,7 @@ void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 	switch (g_AmMenus[g_AmIndex].screenindex) {
 	case 0: // Weapon screen
 		if (slot == 4) {
-			strcpy(label, langGet(L_MISC_170)); // "Weapon"
+			AMLABELCPY(label, langGet(L_MISC_170)); // "Weapon"
 			return;
 		}
 
@@ -427,16 +443,16 @@ void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 		}
 
 		if (g_AmMenus[g_AmIndex].invindexes[slot] >= invGetCount()) {
-			strcpy(label, "");
+			AMLABELCPY(label, "");
 		} else {
 			if (invGetWeaponNumByIndex(g_AmMenus[g_AmIndex].invindexes[slot]) == WEAPON_CLOAKINGDEVICE) {
 				// Special case: "Cloak %d"
 				qty = bgunGetReservedAmmoCount(AMMOTYPE_CLOAK);
 				secs = qty / TICKS(60);
 				modulo = (qty - (secs * TICKS(60))) * 100 / TICKS(60);
-				sprintf(label, langGet(L_OPTIONS_491), secs + (modulo > 0 ? 1 : 0)); // "cloak %d"
+				snprintf(label, AM_SLOT_LABEL_LEN, langGet(L_OPTIONS_491), secs + (modulo > 0 ? 1 : 0)); // "cloak %d"
 			} else {
-				strcpy(label, invGetShortNameByIndex(g_AmMenus[g_AmIndex].invindexes[slot]));
+				AMLABELCPY(label, invGetShortNameByIndex(g_AmMenus[g_AmIndex].invindexes[slot]));
 			}
 		}
 
@@ -453,10 +469,10 @@ void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 		}
 		break;
 	case 1: // Function screen
-		strcpy(label, "");
+		AMLABELCPY(label, "");
 
 		if (slot == 4) {
-			strcpy(label, langGet(L_MISC_171)); // "Function"
+			AMLABELCPY(label, langGet(L_MISC_171)); // "Function"
 		} else if (slot == 1 || slot == 7) {
 			prifunc = weaponGetFunction(&g_Vars.currentplayer->hands[HAND_RIGHT].gset, FUNC_PRIMARY);
 			secfunc = weaponGetFunction(&g_Vars.currentplayer->hands[HAND_RIGHT].gset, FUNC_SECONDARY);
@@ -467,7 +483,7 @@ void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 				}
 
 				if (prifunc) {
-					strcpy(label, langGet(prifunc->name));
+					AMLABELCPY(label, langGet(prifunc->name));
 				}
 			} else {
 				if (!prifunc || FUNCISSEC()) {
@@ -475,31 +491,31 @@ void amGetSlotDetails(s32 slot, u32 *flags, char *label)
 				}
 
 				if (secfunc) {
-					strcpy(label, langGet(secfunc->name));
+					AMLABELCPY(label, langGet(secfunc->name));
 				}
 			}
 		}
 		break;
 	default: // Orders screen
-		strcpy(label, "");
+		AMLABELCPY(label, "");
 
 		if (g_MissionConfig.iscoop) {
 			if (slot == 4) {
-				strcpy(label, langGet(L_MISC_474)); // "Perfect Buddies"
+				AMLABELCPY(label, langGet(L_MISC_474)); // "Perfect Buddies"
 			} else if (slot == 1) {
-				strcpy(label, langGet(L_MISC_472)); // "Aggressive"
+				AMLABELCPY(label, langGet(L_MISC_472)); // "Aggressive"
 			} else if (slot == 7) {
-				strcpy(label, langGet(L_MISC_473)); // "Passive"
+				AMLABELCPY(label, langGet(L_MISC_473)); // "Passive"
 #if VERSION >= VERSION_NTSC_1_0
 			} else if (slot == 3) {
-				strcpy(label, langGet(L_MISC_475)); // "Stealth"
+				AMLABELCPY(label, langGet(L_MISC_475)); // "Stealth"
 #endif
 			}
 		} else {
 			if (slot == 4) {
-				strcpy(label, langGet(L_MISC_172)); // "Orders"
+				AMLABELCPY(label, langGet(L_MISC_172)); // "Orders"
 			} else {
-				strcpy(label, botGetCommandName(g_AmBotCommands[slot]));
+				AMLABELCPY(label, botGetCommandName(g_AmBotCommands[slot]));
 			}
 		}
 		break;

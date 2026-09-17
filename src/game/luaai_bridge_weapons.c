@@ -843,8 +843,13 @@ s32 chraiLuaWeaponRename(s32 weaponnum, const char *name)
 	g_ChaosLangOverrideId2 = (s32)bgunGetShortNameId(weaponnum);
 	g_ChaosRenamedWeapon = weaponnum;
 	{
+		// 31, not sizeof(g_ChaosLangOverrideStr) - 1: langGet hands this
+		// string to display code that copies it into fixed char[32] label
+		// buffers (amGetSlotDetails and its three char[32] callers). Those
+		// copies are bounded now, but keeping the rename short means the
+		// weapon wheel shows the whole name instead of a cut one.
 		s32 i;
-		for (i = 0; i < (s32)sizeof(g_ChaosLangOverrideStr) - 1 && name[i]; i++) {
+		for (i = 0; i < CHAOS_LANG_OVERRIDE_MAX && name[i]; i++) {
 			g_ChaosLangOverrideStr[i] = name[i];
 		}
 		g_ChaosLangOverrideStr[i] = '\0';

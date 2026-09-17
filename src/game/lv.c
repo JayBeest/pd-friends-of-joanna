@@ -15,6 +15,7 @@
 #include "game/cheats.h"
 #include "game/chr.h"
 #include "game/chraction.h"
+#include "game/chraicmdlen.h"
 #include "game/credits.h"
 #include "game/debug.h"
 #include "game/dlights.h"
@@ -382,6 +383,7 @@ void lvReset(s32 stagenum)
 	// list pointers, so drop them here; a same-stage restart would not change
 	// the stage number luaaiExecute also watches.
 	luaaiReset();
+	chraiResetModCommandLengthWarnings();
 #endif
 	setupLoadFiles(stagenum);
 	scenarioReset();

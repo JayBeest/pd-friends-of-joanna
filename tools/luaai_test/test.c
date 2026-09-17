@@ -57,6 +57,7 @@ unsigned int chraiGetCommandLength(unsigned char *ailist, unsigned int aioffset)
 #define MOD_AICMD_PORT_BASE  0x0800
 int chraiSetModCommandLength(int op, unsigned int len);
 void chraiClearModLocalCommandLengths(void);
+void chraiResetModCommandLengthWarnings(void);
 
 /* constants.h */
 #define CMD_GOTONEXT  0x0000
@@ -693,6 +694,13 @@ static void test_mod_opcodes(void)
 	fojo_cmdlen(mod_prog, 0);
 	fojo_cmdlen(mod_prog, 0);
 	CHECK(g_logcount == logs, "0x0401 warned again (%d new lines)", g_logcount - logs);
+
+	/* Until the stage-load reset, which lets the next stage report it. */
+	chraiResetModCommandLengthWarnings();
+	logs = g_logcount;
+	fojo_cmdlen(mod_prog, 0);
+	fojo_cmdlen(mod_prog, 0);
+	CHECK(g_logcount == logs + 1, "0x0401 after warning reset: %d new lines, want 1", g_logcount - logs);
 
 	/* Registration rules. */
 	CHECK(chraiSetModCommandLength(0x0401, 5) == 1, "0x0401 len 5 refused");

@@ -60,6 +60,17 @@ void chraiClearModLocalCommandLengths(void)
 	}
 }
 
+void chraiResetModCommandLengthWarnings(void)
+{
+	s32 i;
+
+	for (i = 0; i < (s32)sizeof(g_ModCommandLengthWarned); i++) {
+		g_ModCommandLengthWarned[i] = 0;
+	}
+
+	g_ModCommandLengthWarnCount = 0;
+}
+
 u32 chraiGetModCommandLength(s32 op)
 {
 	u16 *slot = chraiModCommandLengthSlot(op);

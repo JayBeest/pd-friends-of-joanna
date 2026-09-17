@@ -22,4 +22,11 @@ void langReload(void);
 void langSetEuropean(u32 arg0);
 void langSetJpnEnabled(bool enable);
 
+#ifndef PLATFORM_N64
+/* Kai (be46717): the chaos text gags (g_ChaosUwuMode) for text that does not
+ * flow through langGet at render time (hudmsgs, Lua overlays). Returns src
+ * unchanged when the mode is off. */
+char *langChaosTransform(char *src);
+#endif
+
 #endif

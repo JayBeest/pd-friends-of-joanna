@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/lang.h"
 #include "constants.h"
 #include "game/propsnd.h"
 #include "game/game_0b0fd0.h"
@@ -1167,6 +1168,13 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 			xmarginaextra = 0;
 			msg = &g_HudMessages[index];
 			wrapwidth = hudmsg0f0ddb1c(&xmarginaextra, conf16);
+#ifndef PLATFORM_N64
+			// Chaos text gags (Kai be46717): HUD text is COPIED into the slot
+			// here, so the langGet-side transform never reaches messages
+			// created from non-langGet strings (Lua text) or pre-formatted
+			// buffers. Transform at the choke instead (no-op when off).
+			text = langChaosTransform(text);
+#endif
 			textMeasure(&textheight, &textwidth, text, *conf04, *conf08, 0);
 
 #if VERSION >= VERSION_JPN_FINAL

@@ -35,8 +35,9 @@
 #include "lualib.h"
 
 /* Off by default: nothing routes an ailist through Lua unless this is set.
- * Kai defaults it to 1. The layer clears it only when no Lua state can be
- * created, or when the quarantine table overflows. */
+ * Kai defaults it to 1. The layer never clears it: when no Lua state can be
+ * created, or the quarantine table overflows, it suspends itself until the
+ * next luaaiReset instead, and every list runs as bytecode meanwhile. */
 s32 g_LuaAiEnabled = 0;
 
 /* Status codes returned by luaai_run_list(). */
@@ -56,6 +57,8 @@ s32 g_LuaAiEnabled = 0;
 static lua_State *g_LuaState = NULL;
 static s32 g_LuaCurStage = -0x7fffffff;
 static s32 g_LuaInitFailed = 0;
+/* Set when too many lists failed this stage; cleared by luaaiReset. */
+static s32 g_LuaSuspended = 0;
 /* Number of registered ailist overrides. When zero, the per-list override
  * lookup (and its ailist id scan) is skipped entirely on the hot path. */
 static s32 g_LuaOverrideCount = 0;
@@ -240,9 +243,9 @@ static void luaai_quarantine(void *list)
 
 	if (g_LuaQuarantineCount >= LUAAI_QUARANTINE_MAX) {
 		sysLogPrintf(LOG_ERROR, "luaai: %s in list %d: %s", g_LuaErrWhat, id, g_LuaErrMsg);
-		sysLogPrintf(LOG_ERROR, "luaai: %d lists quarantined this stage; disabling Lua AI",
+		sysLogPrintf(LOG_ERROR, "luaai: %d lists quarantined this stage; Lua AI suspended until the next stage",
 				LUAAI_QUARANTINE_MAX);
-		g_LuaAiEnabled = 0;
+		g_LuaSuspended = 1;
 		return;
 	}
 
@@ -622,9 +625,10 @@ static int luaai_ensure_state(void)
 	}
 
 	if (!L) {
+		/* luaaiExecute runs bytecode while this is set; luaaiReset
+		 * clears it, so the next stage tries again. */
 		g_LuaInitFailed = 1;
-		g_LuaAiEnabled = 0;
-		sysLogPrintf(LOG_ERROR, "luaai: failed to create Lua state; disabling Lua AI");
+		sysLogPrintf(LOG_ERROR, "luaai: failed to create Lua state; Lua AI suspended until the next stage");
 		return 0;
 	}
 
@@ -641,6 +645,7 @@ void luaaiReset(void)
 		g_LuaState = NULL;
 	}
 	g_LuaInitFailed = 0;
+	g_LuaSuspended = 0;
 	g_LuaOverrideCount = 0;
 	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
 	g_LuaSwitchWarnings = 0;
@@ -893,8 +898,9 @@ void luaaiExecute(void *entity, s32 proptype)
 			chraiLuaGetOffset(),
 			chraiLuaGetAlertness(), 1);
 
-	if (!luaai_ensure_state()) {
-		/* No Lua available: run the bytecode loop from the prepared state. */
+	if (g_LuaSuspended || !luaai_ensure_state()) {
+		/* No Lua this stage (no state, or suspended): run the bytecode
+		 * loop from the prepared state. */
 		chraiRunLoop();
 		return;
 	}

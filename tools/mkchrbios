@@ -328,11 +328,85 @@ def selftest(doc_path, src_path):
 
 # ── commands ─────────────────────────────────────────────────────────
 
+RAW = argparse.RawDescriptionHelpFormatter
+
+TOP_EPILOG = """\
+where the text lives
+  %s   the source of truth, edited by hand
+  %s   the generated region, between the sentinel comments
+
+Two kinds of bio:
+  literal   the string is authored in the markdown and emitted as a C literal
+  lang      the string lives in the ROM's language bank; only the four L_*
+            symbol names are emitted, and no ROM text is duplicated
+
+`build` never parses C. It finds the two sentinels and splices between them,
+so nothing outside that region can move, whatever the markdown says. `extract`
+does parse C, with line-anchored regexes, and refuses rather than guessing.
+
+  mkchrbios build          # after editing the markdown
+  mkchrbios check          # exit 1 if the C is behind the markdown
+""" % (DOC, SRC)
+
+def add_paths(p):
+    p.add_argument("--doc", default=DOC, metavar="MD",
+                   help="the markdown bios (default: %(default)s)")
+    p.add_argument("--src", default=SRC, metavar="C",
+                   help="the C file holding the generated region (default: %(default)s)")
+    return p
+
 def main():
-    ap = argparse.ArgumentParser(prog="mkchrbios")
-    ap.add_argument("command", choices=["extract", "build", "check", "selftest"])
-    ap.add_argument("--doc", default=DOC)
-    ap.add_argument("--src", default=SRC)
+    ap = argparse.ArgumentParser(
+        prog="mkchrbios", formatter_class=RAW,
+        description="Character bios live in markdown; this compiles them into the C.",
+        epilog=TOP_EPILOG)
+    sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    add_paths(sub.add_parser(
+        "build", formatter_class=RAW,
+        help="markdown -> C",
+        description="Compile the markdown bios into the generated region of the C file.",
+        epilog="""\
+Writes through a temp file and renames over, so an interrupted run cannot leave
+a half-written C file. A run that changes nothing writes nothing.
+
+Refuses, leaving the C untouched, if the markdown has a bio with no index, an
+index out of sequence, a field it does not recognise, or a `lang` bio missing
+one of its four L_* symbols. Prose between bios is carried through as-is.
+"""))
+
+    add_paths(sub.add_parser(
+        "check", formatter_class=RAW,
+        help="exit 1 if the C is behind the markdown",
+        description="Compare what the markdown would generate against what is in the "
+                    "C file. Writes nothing.",
+        epilog="""\
+Exit 0 means they agree, exit 1 means `build` has not been run since the
+markdown changed. For a pre-commit hook or a build step.
+"""))
+
+    add_paths(sub.add_parser(
+        "extract", formatter_class=RAW,
+        help="C -> markdown",
+        description="Read the generated region back out of the C file and write it as "
+                    "markdown.",
+        epilog="""\
+For bootstrapping the markdown from C that was hand-written, or for recovering
+it if it is lost. It OVERWRITES --doc, so on an established tree this is the
+wrong direction: `build` is.
+"""))
+
+    add_paths(sub.add_parser(
+        "selftest", formatter_class=RAW,
+        help="run the failure matrix against a copy",
+        description="Run every way the compiler is meant to refuse, against copies in "
+                    "a temp directory.",
+        epilog="""\
+Touches nothing in the tree: the real --doc and --src are copied out first and
+every case runs against the copies. Nine cases; prints a line each and a total.
+Run it after changing this tool.
+"""))
+
     a = ap.parse_args()
 
     if a.command == "selftest":

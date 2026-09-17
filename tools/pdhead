@@ -663,45 +663,195 @@ def cmd_build(a):
              " ".join(hex(t) for t in info["texids"])))
     return 0
 
+RAW = argparse.RawDescriptionHelpFormatter
+
+TOP_EPILOG = """\
+the three inputs are interchangeable
+  a GE-editor template (*Template.bin)   a metadata prefix, then a whole model
+  a raw model                            the model on its own, uncompressed
+  a Rare-compressed *Z                   1173 + 3-byte length + raw deflate
+Every command finds the model by its own signature rather than at a fixed
+offset, so none of them need to be told which of the three they were given.
+
+what a command will refuse
+  a texconfig that holds a segment-5 pointer instead of a texture id
+  a node type that keeps its display list somewhere other than rodata+0
+  a display list with no ENDDL where one is due
+  a node tree that is cyclic, too deep, or points past the end of the file
+`info` never refuses: run it first, and it names what the others will turn
+down on that file.
+
+  pdhead info CheadJohnZTemplate.bin
+  pdhead install CheadJohnZTemplate.bin --mod ../pd-fojo-basedir/data/mods/mod_fojo --name CheadAceZ
+"""
+
 def main():
-    ap = argparse.ArgumentParser(prog="pdhead")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    ap = argparse.ArgumentParser(
+        prog="pdhead", formatter_class=RAW,
+        description="Read, author, reindex and install Perfect Dark model files.",
+        epilog=TOP_EPILOG)
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
-    p = sub.add_parser("info"); p.add_argument("file"); p.set_defaults(fn=cmd_info)
+    # ── info ─────────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "info", formatter_class=RAW,
+        help="what the file is, and what is in it",
+        description="Print what the file is, its modeldef, texconfig table, hit box, "
+                    "display-list stats and node tree.",
+        epilog="""\
+Read-only, and the one command that never refuses: where another command would
+stop, this prints a `note:` saying so. Reach for it first on anything
+unfamiliar, and again on the output of `build`, `reindex` or `install`.
 
-    p = sub.add_parser("reindex")
-    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
-    p.add_argument("--base", help="first new texture id, e.g. 0x0dbd")
+  pdhead info ../pd-fojo-basedir/data/mods/mod_fojo/files/CheadAceZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.set_defaults(fn=cmd_info)
+
+    # ── reindex ──────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "reindex", formatter_class=RAW,
+        help="move a model's texture ids out of the way",
+        description="Renumber a model's textures, rewriting the texconfig table and "
+                    "every display-list bind together.",
+        epilog="""\
+The ids live in two places: a u32 per texconfig, and the low bits of the
+repurposed G_NOOP (0xC0) binds inside each display list. Rewriting one and not
+the other ships a model whose table and geometry disagree, so this does both or
+neither, across DL and GUNDL nodes alike.
+
+The check that matters is that reindexing forward and back returns the original
+bytes.
+
+  pdhead reindex CheadJohnZTemplate.bin -o CheadAceZ --base 0x0dbd
+  pdhead reindex CheadAceZ -o out.Z --map 0x0dbd=0x0e00,0x0dbe=0x0e01
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the reindexed model, Rare-compressed")
+    p.add_argument("--base", metavar="ID",
+                   help="first new id; the rest follow it in table order. "
+                        "Default: the next id free in --mods")
     p.add_argument("--mods", dest="mods", default="pd-fojo-basedir/data/mods/mod_fojo",
-                   help="mod directory whose ext_tex/ sets the next free id")
-    p.add_argument("--map", help="explicit remap: 0xdaf=0xdbd,0xdb0=0xdbe")
+                   metavar="DIR",
+                   help="mod whose ext_tex/ decides the next free id "
+                        "(default: %(default)s)")
+    p.add_argument("--map", metavar="OLD=NEW,...",
+                   help="say the mapping outright instead of numbering from --base, "
+                        "e.g. 0x0daf=0x0dbd,0x0db0=0x0dbe. Two ids may not share a "
+                        "destination")
     p.set_defaults(fn=cmd_reindex)
 
-    p = sub.add_parser("textures")
-    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
-    p.add_argument("--remap", help="rename outputs: 0xdaf=0xdbe,0xdb0=0xdbd")
+    # ── textures ─────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "textures", formatter_class=RAW,
+        help="write a model's embedded textures out as PNGs",
+        description="Decode the CI8-plus-palette texture payload a GE-editor template "
+                    "carries and write each image as an RGBA8 PNG.",
+        epilog="""\
+Names each file <texid>.png, which is the layout ext_tex/<Model>/ wants. Rows
+come out of the payload bottom-up and are flipped; the palette window is fitted
+per entry rather than decoded, and the shift chosen is printed. Look at the
+PNGs before shipping them: speckle in dark regions means the palette landed
+wrong, and an upside-down face means the flip did.
+
+  pdhead textures CheadJohnZTemplate.bin -o /tmp/tex
+  pdhead textures CheadJohnZTemplate.bin -o ext_tex/CheadAceZ --remap 0x0daf=0x0dbe
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="DIR",
+                   help="directory to write the PNGs into; created if missing")
+    p.add_argument("--remap", metavar="OLD=NEW,...",
+                   help="name the files after new ids, e.g. 0x0daf=0x0dbe. Use this "
+                        "when the model was reindexed separately; two textures may "
+                        "not end up sharing a file name")
     p.set_defaults(fn=cmd_textures)
 
-    p = sub.add_parser("install")
-    p.add_argument("file")
-    p.add_argument("--mod", required=True, help="mod directory, e.g. .../mods/mod_fojo")
-    p.add_argument("--name", required=True, help="head file name, e.g. CheadAceZ")
-    p.add_argument("--base", help="first new texture id; default is the mod's next free")
-    p.add_argument("--keep-texids", action="store_true", help="do not reindex")
+    # ── install ──────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "install", formatter_class=RAW,
+        help="reindex, install, and drop the PNGs into a mod",
+        description="The whole path in one command: pull the embedded textures, move "
+                    "the texture ids clear of everything the mod already uses, and "
+                    "write files/<name> and ext_tex/<name>/.",
+        epilog="""\
+Textures come out before the reindex, because the payload headers carry the
+original ids; anything that renumbers first finds nothing.
+
+Three steps are left for you, and are printed at the end: the mod's
+_filetable.json entry, regenerating filetable.dat, and the modconfig.txt
+HeadsAndBodies block. Nothing outside files/ and ext_tex/ is touched.
+
+  pdhead install CheadJohnZTemplate.bin \\
+      --mod ../pd-fojo-basedir/data/mods/mod_fojo --name CheadAceZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("--mod", required=True, metavar="DIR",
+                   help="the mod to install into, e.g. .../data/mods/mod_fojo")
+    p.add_argument("--name", required=True, metavar="NAME",
+                   help="what to call the model file, e.g. CheadAceZ. Also the "
+                        "ext_tex/ subdirectory, since PNG overrides are per model")
+    p.add_argument("--base", metavar="ID",
+                   help="first new texture id. Default: the next one free in this "
+                        "mod's ext_tex/, never below 0x0db7 (the first id free on "
+                        "every regional ROM)")
+    p.add_argument("--keep-texids", action="store_true",
+                   help="install the ids as they are. Only safe when you already know "
+                        "they clash with nothing in the mod")
     p.set_defaults(fn=cmd_install)
 
-    p = sub.add_parser("untemplate")
-    p.add_argument("file"); p.add_argument("-o", "--out", required=True)
+    # ── untemplate ───────────────────────────────────────────────────
+    p = sub.add_parser(
+        "untemplate", formatter_class=RAW,
+        help="strip an editor template's prefix and emit a *Z",
+        description="Drop the editor's metadata prefix and re-emit the model on its "
+                    "own, Rare-compressed.",
+        epilog="""\
+Nothing in the prefix is needed to use the model, and no other command here
+requires this one to have been run first. Reach for it when something outside
+this tool wants an ordinary *Z.
+
+  pdhead untemplate CheadJohnZTemplate.bin -o CheadJohnZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the model, Rare-compressed")
     p.set_defaults(fn=cmd_untemplate)
 
-    p = sub.add_parser("build")
-    p.add_argument("mesh")
-    p.add_argument("-o", "--out", required=True)
-    p.add_argument("--textures", required=True, help="head_texturePresets.txt")
-    p.add_argument("--from-template", dest="from_template",
-                   help="take hit box, scale and tree shape from this template / model / *Z")
-    p.add_argument("--texwidth", type=int, default=32)
-    p.add_argument("--texheight", type=int, default=64)
+    # ── build ────────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "build", formatter_class=RAW,
+        help="author a head from a mesh",
+        description="Turn a triangulated FBX into a Perfect Dark head model.",
+        epilog="""\
+This is the one head-shaped command: it emits SKEL_HEAD, a BBOX root with a DL
+child, and fits the mesh to a head-sized box. Every other command here is
+written against the generic model format.
+
+--textures takes the editor's head_texturePresets.txt, one `HEXID name.bmp` per
+line, matching each material in the mesh to the texture id it will be bound to.
+A slot the editor left as XXXX has to be given an id by hand first.
+
+  pdhead build "head new.fbx" -o CheadWillowZ --textures head_texturePresets.txt
+  pdhead build head.fbx -o CheadWillowZ --textures presets.txt \\
+      --from-template CheadJohnZTemplate.bin
+""")
+    p.add_argument("mesh", help="a triangulated mesh, FBX (binary) or OBJ")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the head, Rare-compressed")
+    p.add_argument("--textures", required=True, metavar="PRESETS",
+                   help="the editor's head_texturePresets.txt: one `HEXID name.bmp` "
+                        "per line, naming the id each material binds to")
+    p.add_argument("--from-template", dest="from_template", metavar="FILE",
+                   help="borrow the hit box, model scale and node-tree shape from "
+                        "this template / model / *Z instead of using the defaults "
+                        "taken from a shipped head")
+    p.add_argument("--texwidth", type=int, default=32, metavar="N",
+                   help="texture width the UVs are scaled against "
+                        "(default: %(default)s). One size for every texture, so a "
+                        "mesh mixing sizes needs them equal for now")
+    p.add_argument("--texheight", type=int, default=64, metavar="N",
+                   help="texture height the UVs are scaled against (default: %(default)s)")
     p.set_defaults(fn=cmd_build)
 
     a = ap.parse_args()

@@ -51,6 +51,7 @@
 #include "game/setuputils.h"
 #include "game/vtxstore.h"
 #include "lib/ailist.h"
+#include "lib/anim.h"
 #include "lib/collision.h"
 #include "lib/memp.h"
 #include "lib/model.h"
@@ -2322,6 +2323,10 @@ s32 chraiLuaChrAnim(s32 chrnum, s32 animnum, f32 speed)
 
 	chr = (chrnum < 0) ? NULL : chrFindByLiteralId(chrnum);
 	if (chr == NULL || chr->model == NULL) {
+		return 0;
+	}
+	// modelSetAnimation reads g_Anims[animnum] unchecked
+	if (animnum < 0 || animnum >= g_NumAnimations || !animHasFrames((s16)animnum)) {
 		return 0;
 	}
 	// flip 0, start frame 0, given speed, short merge for a smooth cut-in.

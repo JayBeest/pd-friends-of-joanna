@@ -1108,6 +1108,17 @@ s32 chraiLuaStep(u32 off)
 #endif
 }
 
+s32 chraiLuaGetOpcode(u32 off)
+{
+	u32 listlen = chraiLuaListLength();
+
+	if (!g_Vars.ailist || off >= listlen || listlen - off < 2) {
+		return -1;
+	}
+
+	return (g_Vars.ailist[off] << 8) + g_Vars.ailist[off + 1];
+}
+
 u32 chraiLuaGetOffset(void)
 {
 	return g_Vars.aioffset;

@@ -92,6 +92,9 @@ s32 chraiLuaStep(u32 off);
  */
 void chraiLuaInvalidateListLength(void);
 
+/** Opcode at off in the current list, or -1 if off is not inside it. */
+s32 chraiLuaGetOpcode(u32 off);
+
 /** Current program counter (g_Vars.aioffset). */
 u32 chraiLuaGetOffset(void);
 

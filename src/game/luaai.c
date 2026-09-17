@@ -619,10 +619,16 @@ s32 luaaiEnsureState(void)
  * Returns 1 on success, 0 on failure (nothing pushed).
  * ------------------------------------------------------------------------- */
 
+/* Whether the last chunk luaai_get_chunk handed out was a script override
+ * rather than a transpiled list. */
+static s32 g_LuaChunkIsOverride = 0;
+
 static int luaai_get_chunk(lua_State *L, void *list)
 {
 	char *src;
 	u32 listlen;
+
+	g_LuaChunkIsOverride = 0;
 
 	/* 1) Lua override by ailist id. Consulted only when overrides are actually
 	 * registered (g_LuaOverrideCount), and never on a net client: AI is
@@ -637,6 +643,7 @@ static int luaai_get_chunk(lua_State *L, void *list)
 			lua_gettable(L, -2);
 			if (lua_isfunction(L, -1)) {
 				lua_remove(L, -2); /* remove overrides table, keep function */
+				g_LuaChunkIsOverride = 1;
 				return 1;
 			}
 			lua_pop(L, 2); /* nil + overrides table */
@@ -744,6 +751,24 @@ static void luaai_run_entity(lua_State *L)
 			 * would run the same chunk again, up to the switch guard, every
 			 * frame; an override doing that is broken, so treat it as one. */
 			luaai_set_error("run error", "returned 2 (list changed) but the list did not change");
+			r = LUAAI_ERR;
+		}
+
+		if (r == LUAAI_TERMINAL && !g_LuaChunkIsOverride
+				&& chraiLuaGetOpcode(chraiLuaGetOffset()) != CMD_END) {
+			/* A transpiled chunk returns 0 only from its dispatch fallback,
+			 * reached when the pc is not a command it knows. At the end
+			 * marker that is how a list ends, as aiEndList does. Anywhere
+			 * else the chunk and the list disagree about where commands
+			 * start (stale chunk, a command length that changed), and they
+			 * will keep disagreeing, so quarantine the list: the quarantine
+			 * logs once per list per stage, and chraiRunLoop runs the frame
+			 * from the pc exactly as the bytecode interpreter would have. */
+			char msg[80];
+
+			snprintf(msg, sizeof(msg), "pc 0x%x is not a command start the chunk knows",
+					(unsigned int)chraiLuaGetOffset());
+			luaai_set_error("run error", msg);
 			r = LUAAI_ERR;
 		}
 

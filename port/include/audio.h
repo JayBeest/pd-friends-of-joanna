@@ -9,4 +9,32 @@ s32 audioGetSamplesBuffered(void);
 void audioSetNextBuffer(const s16 *buf, u32 len);
 void audioEndFrame(void);
 
+// Lua audio extras (from the Kai fork), all applied at the single push point
+// in audioEndFrame (chain: reverse -> pitch -> radio -> reverb -> crush; mute
+// wins over everything):
+// - audioSetMuted: master mute (pd.mute)
+// - audioPlayExternal: WAV/MP3 mixed into the stream (pd.play_file)
+// - audioSetCrush: sample-and-hold every `step`th frame at `bits` depth;
+//   1, 16 = off (pd.audio_crush)
+// - audioSetRadio: AM-radio bandpass + overdrive (pd.audio_radio)
+// - audioSetReverb: Freeverb-lite cathedral wash, wet 0..1, 0 = off
+//   (pd.audio_reverb)
+// - audioSetReverse: granular time reversal, ~0.74s chunks (pd.audio_reverse)
+// - audioSetPitch: granular pitch shift at constant tempo, rate 0.25..4,
+//   1 = off (pd.audio_pitch)
+void audioSetMuted(s32 on);
+s32 audioGetMuted(void);
+void audioSetHold(s32 on); /* Fake Crash: re-push the last buffer forever (held drone) */
+s32 audioPlayExternal(const char *path, s32 loop, s32 followMusic); /* returns a voice id, 0 = failed */
+void audioStopExternal(void);            /* stop ALL external voices */
+void audioStopExternalVoice(s32 id);     /* stop one voice by id; stale ids are a no-op */
+s32 audioExternalVoiceCount(void);       /* live external voices */
+void audioSetExtVolume(s32 pct); /* external-voice volume, % of the music slider (0..100) */
+s32 audioGetExtVolume(void);
+void audioSetCrush(s32 step, s32 bits);
+void audioSetRadio(s32 on);
+void audioSetReverb(f32 wet);
+void audioSetReverse(s32 on);
+void audioSetPitch(f32 rate);
+
 #endif

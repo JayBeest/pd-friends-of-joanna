@@ -1311,6 +1311,14 @@ void chrInit(struct prop *prop, u8 *ailist)
 	chr->hiddenelsemask = 0;
 	chr->coopplayernum = -1;
 	splatResetChr(chr);
+
+#ifndef PLATFORM_N64
+	{
+		/* declared in game/luaai.h */
+		extern void luaEmitSpawn(s32 chrnum);
+		luaEmitSpawn((s32)chr->chrnum);
+	}
+#endif
 }
 
 struct prop *chr0f020b14(struct prop *prop, struct model *model,

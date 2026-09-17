@@ -615,6 +615,20 @@ void hudmsgCreate(char *text, s32 type)
 			-1, 0);
 }
 
+#ifndef PLATFORM_N64
+// Lua-facing wrapper (pd.hud_message; from the Perfect Dark Kai fork,
+// be46717) so a script can pop a HUD message the same way the engine does.
+// hudmsgCreate dereferences g_Vars.currentplayer, so no-op when there's no
+// live local player (title / menus / between missions).
+void hudmsgCreateLua(char *text, s32 type)
+{
+	if (text && g_Vars.currentplayer && g_Vars.currentplayer->prop
+			&& type >= 0 && type < ARRAYCOUNT(g_HudmsgTypes)) {
+		hudmsgCreate(text, type);
+	}
+}
+#endif
+
 void hudmsgCreateWithFlags(char *text, s32 type, u32 flags)
 {
 	hudmsgCreateFromArgs(text, type,

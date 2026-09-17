@@ -1523,6 +1523,9 @@ Gfx *luaHudRender(Gfx *gdl)
 		g_LuaOverlayCount = w;
 	}
 
+	/* The overlay's frame-rate and vertex-pool readouts. */
+	gdl = luaMenusHudRender(gdl);
+
 	/* X-ray rows are consumed each frame; AI re-fills them next tick. */
 	g_LuaXrayCount = 0;
 #endif

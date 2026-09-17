@@ -51,6 +51,15 @@ Gfx *luaApiDrawImage(Gfx *gdl, s32 handle, s32 cx, s32 cy, s32 w, s32 h, f32 ang
  * through langChaosTransform so the text gags cover overlays too. */
 const char *luaApiOverlayText(const char *text);
 
+/* luaHudRender, after the overlays: the frame-rate and vertex-pool readouts
+ * (Kai's perf_overlay.lua, drawn from C), toggled by g_LuaShowFps and
+ * g_LuaShowMem. Defined in luaai_api_menus.c. */
+Gfx *luaMenusHudRender(Gfx *gdl);
+
+/* Run one line of Lua under the instruction budget for the overlay's Lua box;
+ * the result or error text lands in out. Defined in luaai_api_menus.c. */
+s32 luaMenusRunString(const char *src, char *out, u32 outlen);
+
 /* ------------------------------------------------------------------------- *
  * Logging. Both go to sysLogPrintf (pd.log and the terminal); Kai also wrote
  * them to its in-game console.

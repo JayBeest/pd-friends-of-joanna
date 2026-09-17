@@ -6,6 +6,9 @@
 
 char *mpGetCurrentPlayerName(struct menuitem *item);
 void mpSetArenaMode(bool useAIO);
+#ifndef PLATFORM_N64
+void mpArenasRebuild(void);
+#endif
 s16 mpChooseRandomStage(void);
 #ifndef PLATFORM_N64 // All Solos in Multi Mod
 s16 mpChooseRandomMultiStage(void);

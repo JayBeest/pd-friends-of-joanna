@@ -28,6 +28,7 @@
 #include "optionsmenu.h"
 #include "system.h"
 #include "types.h"
+#include <stdlib.h>
 #include <ultra64.h>
 
 struct menuitem g_MpCharacterMenuItems[];
@@ -156,6 +157,166 @@ s32 mpGetNumStages(void) {
   return g_NumMpArenas_AIO;
 }
 
+#ifndef PLATFORM_N64
+static s32 mpArenaVanillaRow(s32 stagenum) {
+  for (s32 i = 0; i < (s32)ARRAYCOUNT(g_MpArenas_Vanilla); i++) {
+    if (g_MpArenas_Vanilla[i].stagenum == stagenum) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+/*
+ * Rebuild the Combat Simulator arena list from the mod stage registry.
+ *
+ * The guarantee this is written around: with no mod-declared MP stage the
+ * function repoints nothing at all. It returns before touching g_MpArenas,
+ * leaving it == g_MpArenas_Vanilla and g_NumMpArenaGroups == 0, and those two
+ * are precisely the conditions every vanilla branch in this file tests -
+ * mpGetNumStages above, the Classic-group hiding at MENUOP_GETOPTGROUPCOUNT
+ * and MENUOP_GETOPTGROUPTEXT, and mpArenaMenuHandler's choice between
+ * groups_vanilla and the dynamic table. A player with no mods runs the same
+ * branches over the same 17 rows as before, so there is nothing to diverge.
+ *
+ * With mods the merged list is: the 16 vanilla arenas in vanilla order, then
+ * the mod arenas, then the vanilla "Random" row last. Both halves of that
+ * order are load-bearing. Indices 0..12 are the window mpChooseRandomMultiStage
+ * walks and 13..26 the window mpChooseRandomSoloStage walks, so leaving the
+ * vanilla rows where they were keeps those functions meaning what they meant.
+ * And the Random row is the one whose stagenum 1 MENUOP_SET writes into
+ * g_MpSetup.stagenum; the menu has always shown it last.
+ *
+ * A registry arena whose stagenum is already in the vanilla table is a rename,
+ * not a new arena: it writes customname into the merged copy of that row
+ * rather than appending, because appending would list the stage twice.
+ */
+void mpArenasRebuild(void) {
+  const s32 numvanilla = ARRAYCOUNT(g_MpArenas_Vanilla);
+  const s32 randomrow = numvanilla - 1;
+  struct mparena *merged;
+  struct mparenagroup *groups;
+  s32 nummp = 0;
+  s32 numnew = 0;
+  s32 n;
+  s32 i;
+
+  // Release the previous merge first: g_MpArenas may point into it, and the
+  // count helpers read g_NumMpArenas_AIO.
+  mpSetArenaMode(false);
+
+  if (g_MpArenas_AIO) {
+    free(g_MpArenas_AIO);
+    g_MpArenas_AIO = NULL;
+  }
+
+  g_NumMpArenas_AIO = 0;
+
+  if (g_MpArenaGroups) {
+    free(g_MpArenaGroups);
+    g_MpArenaGroups = NULL;
+  }
+
+  g_NumMpArenaGroups = 0;
+
+  for (i = 0; i < g_NumModStageReg; i++) {
+    if (g_ModStageReg[i].kind & MODSTAGE_KIND_MP) {
+      nummp++;
+
+      if (mpArenaVanillaRow(g_ModStageReg[i].stagenum) < 0) {
+        numnew++;
+      }
+    }
+  }
+
+  if (nummp == 0) {
+    return;
+  }
+
+  merged = malloc((numvanilla + numnew) * sizeof(struct mparena));
+
+  if (!merged) {
+    // Staying on the vanilla list is the safe failure: the menu is smaller
+    // than the mod asked for, rather than pointing at nothing.
+    return;
+  }
+
+  memcpy(merged, g_MpArenas_Vanilla, randomrow * sizeof(struct mparena));
+  n = randomrow;
+
+  for (i = 0; i < g_NumModStageReg; i++) {
+    struct modStageRegEntry *e = &g_ModStageReg[i];
+    s32 row;
+
+    if ((e->kind & MODSTAGE_KIND_MP) == 0) {
+      continue;
+    }
+
+    row = mpArenaVanillaRow(e->stagenum);
+
+    if (row >= 0) {
+      if (row < randomrow && e->name) {
+        merged[row].customname = e->name;
+      }
+      continue;
+    }
+
+    memset(&merged[n], 0, sizeof(merged[n]));
+    merged[n].stagenum = e->stagenum;
+    merged[n].requirefeature = e->requirefeature;
+    merged[n].name = e->langid;
+    // Lent, not owned: modStageRegReset frees these, so the merged rows must
+    // not be freed row by row. modResetMplayerArrays frees the array alone.
+    merged[n].customname = e->name;
+    n++;
+  }
+
+  merged[n] = g_MpArenas_Vanilla[randomrow];
+  n++;
+
+  g_MpArenas_AIO = merged;
+  g_NumMpArenas_AIO = n;
+  mpSetArenaMode(true);
+
+  // The group table mirrors groups_vanilla's offsets for the rows that did not
+  // move, then names the appended block and puts Random at the new end. The
+  // dynamic path carries no Classic-hiding rule; that rule exists to hide an
+  // unearned vanilla group, and a list a mod has extended is not that list.
+  groups = malloc(4 * sizeof(struct mparenagroup));
+
+  if (groups) {
+    static char customgroupname[] = "Custom";
+    s32 g = 0;
+
+    groups[g].name = NULL;
+    groups[g].langid = L_MPMENU_116; // "Dark"
+    groups[g].startindex = 0;
+    g++;
+
+    groups[g].name = NULL;
+    groups[g].langid = L_MPMENU_117; // "Classic"
+    groups[g].startindex = 13;
+    g++;
+
+    if (numnew > 0) {
+      groups[g].name = customgroupname;
+      groups[g].langid = 0;
+      groups[g].startindex = randomrow;
+      g++;
+    }
+
+    groups[g].name = NULL;
+    groups[g].langid = L_MPMENU_118; // "Random"
+    groups[g].startindex = n - 1;
+    g++;
+
+    g_MpArenaGroups = groups;
+    g_NumMpArenaGroups = g;
+  }
+}
+#endif
+
 s16 mpChooseRandomStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
@@ -164,9 +325,10 @@ s16 mpChooseRandomStage(void) {
   const s32 numarenas = 16;
 #else
   // The active list's own length. The bound here used to be a literal 71,
-  // written for the 71-entry All-Solos list - which nothing selects, because
-  // every mpSetArenaMode() call site is commented out, so g_MpArenas is the
-  // 17-row vanilla table and this walked 54 entries past its end.
+  // written for the 71-entry All-Solos list, which nothing ever selected; with
+  // g_MpArenas on the 17-row vanilla table this walked 54 entries past its end.
+  // mpArenasRebuild can now repoint g_MpArenas at a merged list, so the bound
+  // has to be the active list's length rather than any constant.
   const s32 numarenas = mpGetNumStages();
 #endif
 
@@ -201,10 +363,11 @@ s16 mpChooseRandomMultiStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
-  // Was a literal 32, an index into the 71-entry All-Solos list. The window
-  // below is positional in that same list, so both are only meaningful once
-  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
-  // read past its end. Clamped to the active list's own length.
+  // Was a literal 32, an index into the 71-entry All-Solos list, which nothing
+  // ever selected; against the 17-row vanilla table it read past its end.
+  // Clamped to the active list's own length. mpArenasRebuild keeps the vanilla
+  // rows at their vanilla indices, so the positional window below still picks
+  // out the same arenas once mod arenas are appended after them.
   const s32 numarenas = mpGetNumStages() < 32 ? mpGetNumStages() : 32;
 
   for (i = 0; i < numarenas; i++) {
@@ -238,10 +401,11 @@ s16 mpChooseRandomSoloStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
-  // Was a literal 27, an index into the 71-entry All-Solos list. The window
-  // below is positional in that same list, so both are only meaningful once
-  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
-  // read past its end. Clamped to the active list's own length.
+  // Was a literal 27, an index into the 71-entry All-Solos list, which nothing
+  // ever selected; against the 17-row vanilla table it read past its end.
+  // Clamped to the active list's own length. mpArenasRebuild keeps the vanilla
+  // rows at their vanilla indices, so the positional window below still picks
+  // out the same arenas once mod arenas are appended after them.
   const s32 numarenas = mpGetNumStages() < 27 ? mpGetNumStages() : 27;
 
   for (i = 0; i < numarenas; i++) {
@@ -275,10 +439,11 @@ s16 mpChooseRandomGexStage(void) {
   s32 i;
   s32 numchallengescomplete = 0;
   s32 index;
-  // Was a literal 61, an index into the 71-entry All-Solos list. The window
-  // below is positional in that same list, so both are only meaningful once
-  // mpSetArenaMode(true) selects it; against the 17-row vanilla table they
-  // read past its end. Clamped to the active list's own length.
+  // Was a literal 61, an index into the 71-entry All-Solos list, which nothing
+  // ever selected; against the 17-row vanilla table it read past its end.
+  // Clamped to the active list's own length. mpArenasRebuild keeps the vanilla
+  // rows at their vanilla indices, so the positional window below still picks
+  // out the same arenas once mod arenas are appended after them.
   const s32 numarenas = mpGetNumStages() < 61 ? mpGetNumStages() : 61;
 
   for (i = 0; i < numarenas; i++) {

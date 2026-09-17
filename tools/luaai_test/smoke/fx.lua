@@ -111,6 +111,25 @@ local steps = {
 			return true
 		end,
 		function() return true end },
+	-- Hostile: the text gags can make a string LONGER than the one the caller
+	-- handed down, and hudmsgCreateFromArgs copies it into a char[400] stack
+	-- buffer. 120 one-letter words come back from pig latin as ~600 bytes, so
+	-- before the fix the copy wrote past the end of that buffer.
+	{ "hud_message_transform_overflow", function()
+			if pd.piglatin(true) ~= true then return false, "piglatin" end
+			pd.hud_message(string.rep("a ", 120))
+			pd.hud_message(string.rep("strength ", 40), 1)
+			return true
+		end,
+		function()
+			pd.hud_message(string.rep("b ", 150))
+			local ok = pd.piglatin(false) == true
+			if pd.uwuify(true) == true then
+				pd.hud_message(string.rep("run ", 60))
+				pd.uwuify(false)
+			end
+			return ok
+		end },
 	-- Hostile: 8-bit and control bytes in a long word (the scrub turns these
 	-- into '?', which is a word character, so the run must still be broken).
 	{ "hud_message_hostile_bytes", function()

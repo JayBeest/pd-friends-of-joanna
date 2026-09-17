@@ -1197,6 +1197,44 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 			if (textwidth > wrapwidth)
 #endif
 			{
+#ifndef PLATFORM_N64
+				// stacktext is char[400] and the loop bound let writeindex
+				// REACH 400, so the '\n' and the '\0' below landed at [400]
+				// and [401]. Vanilla text never got close; langChaosTransform
+				// above can hand back a string LONGER than the caller's (up
+				// to UWU_BIGLEN), and Lua text arrives here unmeasured, so
+				// the cap is load-bearing now. Leave two bytes for them.
+				//
+				// textWrap's output is longer than its input (a newline, plus
+				// g_WrapIndentCount spaces, per wrapped word) and msg->text is
+				// only 400 bytes, so wrap into a scratch and copy in bounded.
+				// 1024 covers a 398-byte input at one extra byte per word;
+				// nothing in the build calls textSetWrapIndent, so the indent
+				// term is zero (see still-open note if that ever changes).
+				char wrapped[1024];
+
+				i = 0;
+				writeindex = 0;
+
+				while (i < (s32)sizeof(stacktext) - 2 && text[i] != '\0') {
+					if (text[i] != '\n') {
+						stacktext[writeindex++] = text[i];
+					}
+
+					i++;
+				}
+
+				stacktext[writeindex++] = '\n';
+				stacktext[writeindex] = '\0';
+
+				wrapped[0] = '\0';
+				textWrap(wrapwidth, stacktext, wrapped, *conf04, *conf08);
+				wrapped[sizeof(wrapped) - 1] = '\0';
+
+				strncpy(msg->text, wrapped, sizeof(msg->text) - 1);
+				msg->text[sizeof(msg->text) - 1] = '\0';
+				textMeasure(&textheight, &textwidth, msg->text, *conf04, *conf08, 0);
+#else
 				i = 0;
 				writeindex = 0;
 
@@ -1213,9 +1251,10 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 
 				textWrap(wrapwidth, stacktext, msg->text, *conf04, *conf08);
 				textMeasure(&textheight, &textwidth, msg->text, *conf04, *conf08, 0);
+#endif
 			} else {
-				strncpy(msg->text, text, 399);
-				msg->text[399] = '\0';
+				strncpy(msg->text, text, sizeof(msg->text) - 1);
+				msg->text[sizeof(msg->text) - 1] = '\0';
 			}
 
 			msg->flags = flags;

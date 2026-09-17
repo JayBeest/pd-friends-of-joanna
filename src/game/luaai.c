@@ -95,10 +95,12 @@ static s32 g_LuaQuarantineCount = 0;
 /* ------------------------------------------------------------------------- *
  * Instruction budget
  *
- * Every call into Lua goes through luaai_pcall_budget, which arms a count
- * hook. Once a call has run LUAAI_INSTRUCTION_BUDGET VM instructions the hook
- * raises a Lua error, so a runaway loop lands in the quarantine path instead
- * of hanging the frame.
+ * luaaiExecute arms one budget for the whole entity call, shared by every
+ * list it runs and every switch between them, so a script cannot reset it by
+ * returning and being called again. Calls into Lua made outside an entity
+ * call (init.lua) go through luaai_pcall_budget, which arms its own. Once
+ * the budget is spent the count hook raises a Lua error, so a runaway loop
+ * lands in the quarantine path instead of hanging the frame.
  *
  * Sizing: a transpiled list costs about 2 instructions per dispatch entry it
  * walks past plus about 10 per command, so the largest list in the game
@@ -119,6 +121,11 @@ static s32 g_LuaQuarantineCount = 0;
 /* The hook fires every this many instructions; the budget is exact to within
  * this. */
 #define LUAAI_HOOK_INTERVAL 1000
+
+/* Log lines per stage for lists that switch without end. */
+#define LUAAI_SWITCH_WARNINGS_MAX 8
+
+static s32 g_LuaSwitchWarnings = 0;
 
 static s32 g_LuaBudgetArmed = 0;
 static s32 g_LuaBudget = 0;
@@ -180,8 +187,23 @@ static void luaai_budget_hook(lua_State *L, lua_Debug *ar)
 	luaL_error(L, "instruction budget exceeded (%d)", (int)g_LuaBudget);
 }
 
-/* lua_pcall with the instruction budget armed. A nested call (Lua reached
- * again from inside a command handler) shares the outer call's budget. */
+static void luaai_budget_arm(lua_State *L, s32 budget)
+{
+	g_LuaBudget = budget;
+	g_LuaBudgetLeft = budget;
+	g_LuaBudgetArmed = 1;
+	lua_sethook(L, luaai_budget_hook, LUA_MASKCOUNT, LUAAI_HOOK_INTERVAL);
+}
+
+static void luaai_budget_disarm(lua_State *L)
+{
+	g_LuaBudgetArmed = 0;
+	lua_sethook(L, NULL, 0, 0);
+}
+
+/* lua_pcall with the instruction budget armed. Inside an armed call (an
+ * entity call, or Lua reached again from a command handler) it shares that
+ * budget. */
 static int luaai_pcall_budget(lua_State *L, int nargs, int nresults, s32 budget)
 {
 	int status;
@@ -190,15 +212,9 @@ static int luaai_pcall_budget(lua_State *L, int nargs, int nresults, s32 budget)
 		return lua_pcall(L, nargs, nresults, 0);
 	}
 
-	g_LuaBudget = budget;
-	g_LuaBudgetLeft = budget;
-	g_LuaBudgetArmed = 1;
-	lua_sethook(L, luaai_budget_hook, LUA_MASKCOUNT, LUAAI_HOOK_INTERVAL);
-
+	luaai_budget_arm(L, budget);
 	status = lua_pcall(L, nargs, nresults, 0);
-
-	g_LuaBudgetArmed = 0;
-	lua_sethook(L, NULL, 0, 0);
+	luaai_budget_disarm(L);
 
 	return status;
 }
@@ -581,6 +597,7 @@ void luaaiReset(void)
 	g_LuaInitFailed = 0;
 	g_LuaOverrideCount = 0;
 	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
+	g_LuaSwitchWarnings = 0;
 	luaApiResetFrame();
 }
 
@@ -704,10 +721,63 @@ static int luaai_run_list(lua_State *L, void *list)
  * Public entry point
  * ------------------------------------------------------------------------- */
 
+/* Drive the prepared entity's lists through Lua, with the budget armed. */
+static void luaai_run_entity(lua_State *L)
+{
+	int guard = 0;
+
+	while (chraiLuaGetList() != NULL) {
+		void *list = chraiLuaGetList();
+		int r;
+
+		if (g_LuaQuarantineCount > 0 && luaai_is_quarantined(list)) {
+			/* Bytecode for the rest of this frame, from the current offset. */
+			chraiRunLoop();
+			return;
+		}
+
+		r = luaai_run_list(L, list);
+
+		if (r == LUAAI_SWITCH && chraiLuaGetList() == list) {
+			/* 2 promises a new list. Returning it with the list unchanged
+			 * would run the same chunk again, up to the switch guard, every
+			 * frame; an override doing that is broken, so treat it as one. */
+			luaai_set_error("run error", "returned 2 (list changed) but the list did not change");
+			r = LUAAI_ERR;
+		}
+
+		if (r == LUAAI_ERR) {
+			/* Quarantine this list and let the bytecode interpreter carry
+			 * on from wherever the chunk stopped. Other lists are
+			 * unaffected. */
+			luaai_quarantine(list);
+			chraiRunLoop();
+			return;
+		}
+
+		if (r == LUAAI_SWITCH) {
+			if (++guard > 1024) {
+				/* Runaway list switching; bail to avoid hanging. */
+				if (g_LuaSwitchWarnings < LUAAI_SWITCH_WARNINGS_MAX) {
+					sysLogPrintf(LOG_WARNING, "luaai: chr %d switched lists 1024 times in one tick, stopping at list %d",
+							chraiLuaGetChrNum(), chraiLuaGetListId(chraiLuaGetList()));
+				} else if (g_LuaSwitchWarnings == LUAAI_SWITCH_WARNINGS_MAX) {
+					sysLogPrintf(LOG_WARNING, "luaai: further list switch runaways this stage not logged");
+				}
+				g_LuaSwitchWarnings++;
+				return;
+			}
+			continue;
+		}
+
+		/* LUAAI_YIELD or LUAAI_TERMINAL: done for this frame. */
+		return;
+	}
+}
+
 void luaaiExecute(void *entity, s32 proptype)
 {
 	lua_State *L;
-	int guard = 0;
 	s32 stage;
 
 	/* Reset cached state when the stage changes (ailist pointers are reused
@@ -738,36 +808,8 @@ void luaaiExecute(void *entity, s32 proptype)
 
 	L = g_LuaState;
 
-	while (chraiLuaGetList() != NULL) {
-		void *list = chraiLuaGetList();
-		int r;
-
-		if (g_LuaQuarantineCount > 0 && luaai_is_quarantined(list)) {
-			/* Bytecode for the rest of this frame, from the current offset. */
-			chraiRunLoop();
-			return;
-		}
-
-		r = luaai_run_list(L, list);
-
-		if (r == LUAAI_ERR) {
-			/* Quarantine this list and let the bytecode interpreter carry
-			 * on from wherever the chunk stopped. Other lists are
-			 * unaffected. */
-			luaai_quarantine(list);
-			chraiRunLoop();
-			return;
-		}
-
-		if (r == LUAAI_SWITCH) {
-			if (++guard > 1024) {
-				/* Runaway list switching; bail to avoid hanging. */
-				break;
-			}
-			continue;
-		}
-
-		/* LUAAI_YIELD or LUAAI_TERMINAL: done for this frame. */
-		break;
-	}
+	/* Armed after luaai_ensure_state, so init.lua keeps its own budget. */
+	luaai_budget_arm(L, LUAAI_INSTRUCTION_BUDGET);
+	luaai_run_entity(L);
+	luaai_budget_disarm(L);
 }

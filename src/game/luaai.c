@@ -92,6 +92,38 @@ struct luaaiquarantine {
 static struct luaaiquarantine g_LuaQuarantine[LUAAI_QUARANTINE_MAX];
 static s32 g_LuaQuarantineCount = 0;
 
+/* ------------------------------------------------------------------------- *
+ * Instruction budget
+ *
+ * Every call into Lua goes through luaai_pcall_budget, which arms a count
+ * hook. Once a call has run LUAAI_INSTRUCTION_BUDGET VM instructions the hook
+ * raises a Lua error, so a runaway loop lands in the quarantine path instead
+ * of hanging the frame.
+ *
+ * Sizing: a transpiled list costs about 2 instructions per dispatch entry it
+ * walks past plus about 10 per command, so the largest list in the game
+ * (~1400 commands) costs under 3000 instructions per command, and the budget
+ * still allows several thousand commands in one call. Lists yield long before
+ * that; one that does not is looping, and the bytecode loop's 100k-iteration
+ * cap would have stopped it anyway. 10M instructions is tens of milliseconds
+ * on current hardware, a one-off hitch before the list is quarantined.
+ *
+ * init.lua runs once per stage, on the stage's first AI tick, and may do real
+ * setup work, so it gets twice that. It is not larger because it runs inside
+ * a frame too.
+ * ------------------------------------------------------------------------- */
+
+#define LUAAI_INSTRUCTION_BUDGET      10000000
+#define LUAAI_INIT_INSTRUCTION_BUDGET 20000000
+
+/* The hook fires every this many instructions; the budget is exact to within
+ * this. */
+#define LUAAI_HOOK_INTERVAL 1000
+
+static s32 g_LuaBudgetArmed = 0;
+static s32 g_LuaBudget = 0;
+static s32 g_LuaBudgetLeft = 0;
+
 extern u32 chraiGetCommandLength(u8 *ailist, u32 aioffset);
 extern u32 chraiGetAilistLength(u8 *list);
 
@@ -112,6 +144,63 @@ static s32 luaai_is_quarantined(void *list)
 	}
 
 	return 0;
+}
+
+/* Coroutines copy the hook of the thread that created them and keep it, so
+ * this can also run outside an armed call, or on a thread left firing every
+ * instruction by an earlier exhausted call. Both cases are put back to the
+ * normal interval and otherwise ignored. */
+static void luaai_budget_hook(lua_State *L, lua_Debug *ar)
+{
+	s32 count = lua_gethookcount(L);
+
+	if (g_LuaBudgetArmed && g_LuaBudgetLeft > 0) {
+		g_LuaBudgetLeft -= count;
+	}
+
+	if (!g_LuaBudgetArmed || g_LuaBudgetLeft > 0) {
+		if (count != LUAAI_HOOK_INTERVAL) {
+			lua_sethook(L, luaai_budget_hook, LUA_MASKCOUNT, LUAAI_HOOK_INTERVAL);
+		}
+		return;
+	}
+
+	/* Exhausted. Fire on every instruction from now on, so a script that
+	 * catches the error with pcall is stopped again by its next instruction
+	 * and the error reaches luaai_pcall_budget. */
+	if (count != 1) {
+		lua_sethook(L, luaai_budget_hook, LUA_MASKCOUNT, 1);
+	}
+
+	if (lua_getinfo(L, "Sl", ar) && ar->currentline > 0) {
+		luaL_error(L, "%s:%d: instruction budget exceeded (%d)",
+				ar->short_src, ar->currentline, (int)g_LuaBudget);
+	}
+
+	luaL_error(L, "instruction budget exceeded (%d)", (int)g_LuaBudget);
+}
+
+/* lua_pcall with the instruction budget armed. A nested call (Lua reached
+ * again from inside a command handler) shares the outer call's budget. */
+static int luaai_pcall_budget(lua_State *L, int nargs, int nresults, s32 budget)
+{
+	int status;
+
+	if (g_LuaBudgetArmed) {
+		return lua_pcall(L, nargs, nresults, 0);
+	}
+
+	g_LuaBudget = budget;
+	g_LuaBudgetLeft = budget;
+	g_LuaBudgetArmed = 1;
+	lua_sethook(L, luaai_budget_hook, LUA_MASKCOUNT, LUAAI_HOOK_INTERVAL);
+
+	status = lua_pcall(L, nargs, nresults, 0);
+
+	g_LuaBudgetArmed = 0;
+	lua_sethook(L, NULL, 0, 0);
+
+	return status;
 }
 
 /* The single policy point for a failed list. Logs once per list per stage. */
@@ -244,7 +333,8 @@ static void luaai_load_external_scripts(lua_State *L)
 	}
 	fclose(f);
 
-	if (luaL_dofile(L, "scripts/init.lua") != LUA_OK) {
+	if (luaL_loadfile(L, "scripts/init.lua") != LUA_OK
+			|| luaai_pcall_budget(L, 0, 0, LUAAI_INIT_INSTRUCTION_BUDGET) != LUA_OK) {
 		sysLogPrintf(LOG_ERROR, "luaai: error loading scripts/init.lua: %s",
 				lua_tostring(L, -1));
 		lua_pop(L, 1);
@@ -440,7 +530,7 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	free(src);
 
 	/* run the chunk to obtain the function it returns */
-	if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+	if (luaai_pcall_budget(L, 0, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
 		luaai_set_error("transpile run error", lua_tostring(L, -1));
 		lua_pop(L, 2); /* error + chunks table */
 		return 0;
@@ -473,7 +563,7 @@ static int luaai_run_list(lua_State *L, void *list)
 	/* push ctx argument */
 	lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
 
-	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+	if (luaai_pcall_budget(L, 1, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
 		luaai_set_error("run error", lua_tostring(L, -1));
 		lua_pop(L, 1);
 		return LUAAI_ERR;

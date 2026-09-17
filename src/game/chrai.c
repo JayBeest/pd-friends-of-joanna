@@ -999,11 +999,24 @@ s32 chraiLuaStep(u32 off)
 	type = (cmd[0] << 8) + cmd[1];
 
 	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
+#ifndef PLATFORM_N64
+		// Same as chraiRunLoop: a NULL slot is not callable, so yield.
+		if (!g_CommandPointers[type]) {
+			chraiWarnNoHandler(type);
+			return 1;
+		}
+#endif
 		return g_CommandPointers[type]() ? 1 : 0;
 	}
 
+#ifndef PLATFORM_N64
+	// Same as chraiRunLoop: an opcode past the table cannot be stepped over.
+	chraiWarnNoHandler(type);
+	return 1;
+#else
 	g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
 	return 0;
+#endif
 }
 
 u32 chraiLuaGetOffset(void)
@@ -1179,6 +1192,16 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 	if (n > 60) {
 		n = 60;
 	}
+
+#ifndef PLATFORM_N64
+	// Same as chraiRunLoop and chraiLuaStep: an opcode with no handler, NULL
+	// slot or past the table, is reported and yields. Checked before buf is
+	// swapped in so the warning names the list the script is running.
+	if (type >= ARRAYCOUNT(g_CommandPointers) || !g_CommandPointers[type]) {
+		chraiWarnNoHandler(type);
+		return 1;
+	}
+#endif
 
 	buf[0] = (opcode >> 8) & 0xff;
 	buf[1] = opcode & 0xff;

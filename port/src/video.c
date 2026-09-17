@@ -41,6 +41,11 @@ static s32 vidAllowHiDpi = false;
 static s32 vidVsync = 1;
 static s32 vidMSAA = 1;
 static s32 vidFramerateLimit = 0;
+// pd.fps_cap (from the Perfect Dark Kai fork, be46717): a hard render-rate
+// override that never touches vidFramerateLimit, so the user's
+// Video.FramerateLimit is not clobbered. 0 = off. The sim's variable tick
+// absorbs the low rate like the N64 did.
+static s32 vidFpsOverride = 0;
 
 static s32 vidDisplayFPS = 0;
 static f32 vidDisplayFPSInterval = 1.f;
@@ -253,6 +258,10 @@ s32 videoGetVsync(void)
 
 s32 videoGetFramerateLimit(void)
 {
+	if (vidFpsOverride > 0) {
+		// the backend holds the override; report the user's own limit
+		return vidFramerateLimit;
+	}
 	vidFramerateLimit = wmAPI->get_target_fps();
 	return vidFramerateLimit;
 }
@@ -477,7 +486,30 @@ void videoSetVsync(const s32 vsync)
 void videoSetFramerateLimit(const s32 limit)
 {
 	vidFramerateLimit = (vidVsync == 0 && limit == 0) ? VIDEO_MAX_FPS : limit;
+	if (vidFpsOverride > 0) {
+		// pd.fps_cap wins; the new limit applies when it is lifted
+		return;
+	}
 	wmAPI->set_target_fps(vidFramerateLimit);
+}
+
+void videoSetFpsOverride(s32 fps)
+{
+	fps = (fps > 0) ? fps : 0;
+	if (fps == vidFpsOverride) {
+		// no change: leave the backend alone (lvReset clears this every stage)
+		return;
+	}
+	vidFpsOverride = fps;
+	if (!wmAPI) {
+		return;
+	}
+	if (vidFpsOverride > 0) {
+		wmAPI->set_target_fps(vidFpsOverride);
+	} else {
+		// restore the user's own pacing immediately
+		wmAPI->set_target_fps(vidFramerateLimit);
+	}
 }
 
 void videoSetDisplayFPS(const s32 displayfps)

@@ -394,6 +394,15 @@ void objectivesCheckAll(void)
 			if (g_ObjectiveStatuses[i] != status) {
 				g_ObjectiveStatuses[i] = status;
 
+#ifndef PLATFORM_N64
+				// Per-objective completion event. Edge-triggered on the
+				// transition to COMPLETE; stage + difficulty key it uniquely.
+				if (status == OBJECTIVE_COMPLETE) {
+					extern void luaEmitObjective(s32 stageindex, s32 difficulty, s32 objindex, s32 status);
+					luaEmitObjective(g_MissionConfig.stageindex, lvGetDifficulty(), i, status);
+				}
+#endif
+
 				if (objectiveGetDifficultyBits(i) & (1 << lvGetDifficulty())) {
 #if VERSION >= VERSION_JPN_FINAL
 					u8 jpnstr[] = {0, 0, 0};

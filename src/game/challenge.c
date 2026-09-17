@@ -896,6 +896,14 @@ void challengeConsiderMarkingComplete(void)
 		s32 i;
 
 		challengeSetCompletedByAnyPlayerWithNumPlayers(g_MpChallengeIndex, PLAYERCOUNT(), 1);
+#ifndef PLATFORM_N64
+		{
+			// A Combat Simulator challenge was just completed (cheats-off
+			// guarded above).
+			extern void luaEmitChallengeComplete(s32 challengeindex, s32 numplayers);
+			luaEmitChallengeComplete(g_MpChallengeIndex, PLAYERCOUNT());
+		}
+#endif
 		prevplayernum = g_Vars.currentplayernum;
 
 		for (i = 0; i < PLAYERCOUNT(); i++) {

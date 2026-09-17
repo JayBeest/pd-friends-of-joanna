@@ -27,6 +27,7 @@
 #include "game/chaosstate.h"
 #include "game/gfxmemory.h"
 #include "game/hudmsg.h"
+#include "game/lang.h"
 #include "game/luaai.h"
 #include "game/tex.h"
 #include "lib/vi.h"
@@ -738,7 +739,7 @@ Gfx *luaApiDrawImage(Gfx *gdl, s32 handle, s32 cx, s32 cy, s32 w, s32 h, f32 ang
  * the text gags; until it lands here the text is drawn as given. */
 const char *luaApiOverlayText(const char *text)
 {
-	return text;
+	return langChaosTransform((char *)text);
 }
 
 #else /* PLATFORM_N64 */

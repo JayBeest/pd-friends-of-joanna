@@ -12,6 +12,7 @@
  */
 
 #include <ultra64.h>
+#include "audio.h"
 #include "constants.h"
 #include "types.h"
 #include "bss.h"
@@ -412,9 +413,8 @@ s32 chraiLuaLens(f32 k)
 // permanent. Hence secs is clamped to something survivable even if a caller
 // passes nonsense.
 //
-// Kai also holds the audio output on its last buffer (audioSetHold in
-// port/src/audio.c). That audio hold belongs to the audio side of the API;
-// until it lands here the mix keeps playing through the freeze.
+// Like Kai, the audio output is held on its last buffer (audioSetHold in
+// port/src/audio.c) until the release.
 s32 chraiLuaFakeCrash(f32 secs)
 {
 	if (apLuaPlayerChr() == NULL) {
@@ -424,6 +424,7 @@ s32 chraiLuaFakeCrash(f32 secs)
 	if (secs > 10.0f) secs = 10.0f;
 
 	g_ChaosFakeCrash240 = (s32)(secs * 240.0f);
+	audioSetHold(1);
 	return 1;
 }
 
@@ -439,6 +440,7 @@ s32 chraiLuaTPose(s32 on)
 // (see chraiLuaFakeCrash); nothing else needs releasing.
 void luaFxFakeCrashRelease(void)
 {
+	audioSetHold(0);
 }
 
 // lvReset: the fx state that chaosStateResetPerStage can't reach — the
@@ -473,6 +475,7 @@ void luaFxResetPerStage(void)
 	gfx_retro_fx = 0;
 	gfx_retro_warp = 0.0f;
 	hudvdSetActive(false);
+	audioSetHold(0);
 }
 
 #endif /* PLATFORM_N64 */

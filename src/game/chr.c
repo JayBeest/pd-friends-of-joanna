@@ -1120,6 +1120,14 @@ void chrInit(struct prop *prop, u8 *ailist)
 
 	chr->shotbondsum = 0;
 	chr->damage = 0;
+#ifndef PLATFORM_N64
+	// Default the chaos vertical squash to 1.0 (no override) so a recycled
+	// chrslot never renders with a previous chr's pd.chr_yscale still applied.
+	chr->yscale = 1.0f;
+
+	// Same for the chaos uniform-scale groundmult (giants/ants foot-snap).
+	chr->groundmult = 1.0f;
+#endif
 	chr->sumground = 0;
 	chr->manground = 0;
 	chr->ground = 0;
@@ -1618,9 +1626,52 @@ f32 chrGetFlinchAmount(struct chrdata *chr)
  * - Body flinching when shot
  * - Chrs aiming up, down, left and right
  */
+#ifndef PLATFORM_N64
+/**
+ * Chaos "Yassify" (pd.yassify): non-uniform per-joint body shaping —
+ * cinched waist, broader shoulders, bigger head/cheekbones.
+ *
+ * Cosmetic ONLY. This runs in the render-time joint callback and touches no
+ * collision, hit box or AI state, so it can't desync anything.
+ *
+ * The multipliers are separate live-tunable globals rather than constants
+ * because scaling a joint matrix PROPAGATES TO THAT JOINT'S CHILDREN — cinching
+ * the waist also narrows everything above it, so the shoulder/neck values have
+ * to compensate, and the right numbers can only be found by looking at it.
+ *
+ * Post-multiply a non-uniform scale onto a joint matrix: XZ by one factor, Y by
+ * another. The engine only ships uniform scales (mtx00015f04 and friends).
+ *
+ * COLUMNS, not rows. mtx4TransformVec shows the row-vector convention — the
+ * output x/y/z come from columns 0/1/2 — so scaling columns applies the scale
+ * AFTER the joint transform, i.e. in world space. Scaling rows would scale
+ * along the joint's OWN axes, which for a rotated limb points somewhere
+ * unpredictable and would shear the model as it animates.
+ *
+ * World-space is safe here precisely because X and Z share one factor: that
+ * makes the scale invariant under the Y rotation a standing chr actually has.
+ *
+ * m[3][*] (translation) is deliberately untouched — the caller has zeroed it
+ * and restores it afterwards, so joint POSITIONS stay put and only the basis
+ * (and therefore the children hanging off it) is reshaped.
+ *
+ * (Kai be46717, chr.c.)
+ */
+static void chrChaosScaleXZY(Mtxf *mtx, f32 xz, f32 y)
+{
+	mtx->m[0][0] *= xz; mtx->m[1][0] *= xz; mtx->m[2][0] *= xz;
+	mtx->m[0][1] *= y;  mtx->m[1][1] *= y;  mtx->m[2][1] *= y;
+	mtx->m[0][2] *= xz; mtx->m[1][2] *= xz; mtx->m[2][2] *= xz;
+}
+#endif
+
 void chrHandleJointPositioned(s32 joint, Mtxf *mtx)
 {
 	f32 scale = 1.0f;
+#ifndef PLATFORM_N64
+	f32 yassxz = 1.0f;
+	f32 yassy = 1.0f;
+#endif
 	s32 lshoulderjoint;
 	s32 rshoulderjoint;
 	s32 waistjoint;
@@ -1762,6 +1813,24 @@ void chrHandleJointPositioned(s32 joint, Mtxf *mtx)
 		}
 #endif
 
+#ifndef PLATFORM_N64
+		// Chaos "Yassify". Human-only, like DK mode: the Skedar skeleton's
+		// joints sit differently and these multipliers are tuned for the human
+		// proportions, so applying them there just looks broken.
+		if (g_ChaosYassify && CHRRACE(g_CurModelChr) == RACE_HUMAN) {
+			if (joint == waistjoint) {
+				yassxz = g_ChaosYassifyWaist;
+			} else if (joint == lshoulderjoint || joint == rshoulderjoint) {
+				yassxz = g_ChaosYassifyShoulder;
+			} else if (joint == neckjoint) {
+				// Slightly wider than tall so the face reads as cheekbones
+				// rather than as a plain DK-mode balloon head.
+				yassxz = g_ChaosYassifyNeck * 1.12f;
+				yassy = g_ChaosYassifyNeck;
+			}
+		}
+#endif
+
 		if (joint == lshoulderjoint || joint == rshoulderjoint || joint == waistjoint || joint == neckjoint) {
 			xrot = 0.0f;
 			yrot = 0.0f;
@@ -1881,7 +1950,11 @@ void chrHandleJointPositioned(s32 joint, Mtxf *mtx)
 				}
 			}
 
-			if (xrot != 0.0f || yrot != 0.0f || zrot != 0.0f || scale != 1.0f) {
+			if (xrot != 0.0f || yrot != 0.0f || zrot != 0.0f || scale != 1.0f
+#ifndef PLATFORM_N64
+					|| yassxz != 1.0f || yassy != 1.0f
+#endif
+					) {
 				struct coord sp70;
 				f32 aimangle;
 				Mtxf tmpmtx;
@@ -1938,6 +2011,15 @@ void chrHandleJointPositioned(s32 joint, Mtxf *mtx)
 				if (scale != 1.0f) {
 					mtx00015f04(scale, mtx);
 				}
+
+#ifndef PLATFORM_N64
+				// Chaos "Yassify" — applied here, inside the world-space round
+				// trip with the translation zeroed, so it reshapes the joint
+				// basis without moving the joint itself.
+				if (yassxz != 1.0f || yassy != 1.0f) {
+					chrChaosScaleXZY(mtx, yassxz, yassy);
+				}
+#endif
 
 				mtx->m[3][0] = sp70.x;
 				mtx->m[3][1] = sp70.y;
@@ -1997,6 +2079,40 @@ void chr0f0220ac(struct chrdata *chr)
 void chr0f0220ec(struct chrdata *chr, s32 lvupdate240, bool arg2)
 {
 	struct model *model = chr->model;
+
+#ifndef PLATFORM_N64
+	// Chaos "Freeze!" (pd.chr_freeze): pause every non-player chr's animation
+	// playback. Only the anim ADVANCE is skipped — the model still renders at
+	// its current frame and the rest of chrTick (render prep, matrices) runs,
+	// so this is a statue effect, not a despawn. Movement stops with it (chr
+	// locomotion is anim-root-motion driven); firing is suppressed separately
+	// in chrTickShoot.
+	if (g_ChaosChrFreeze && chr->prop && chr->prop->type != PROPTYPE_PLAYER) {
+		return;
+	}
+
+	// Chaos "Weeping Skedar": statue exactly one chr while it's being watched.
+	if (g_ChaosFreezeChrnum >= 0 && chr->chrnum == g_ChaosFreezeChrnum
+			&& chr->prop && chr->prop->type != PROPTYPE_PLAYER) {
+		return;
+	}
+
+	// Chaos chr speed: stretch/shrink this tick's anim time for non-player
+	// chrs. Rounded so slow factors still advance (0.4 * 4 -> 2).
+	if (g_ChaosChrSpeedMult > 0.0f && g_ChaosChrSpeedMult != 1.0f
+			&& chr->prop && chr->prop->type != PROPTYPE_PLAYER) {
+		lvupdate240 = (s32)(lvupdate240 * g_ChaosChrSpeedMult + 0.5f);
+	}
+
+	// Chaos "Bayblade!": spin the model yaw. 0.41888 rad per 60Hz frame =
+	// 4 revolutions/second; lvframe60 % 150 wraps at exactly 20*pi so the
+	// angle stays small (f32 sin/cos precision) without a visible seam.
+	if (g_ChaosBeyblade && chr->prop && chr->prop->type != PROPTYPE_PLAYER
+			&& chr->model != NULL) {
+		chrSetLookAngle(chr, (f32)(g_Vars.lvframe60 % 150) * 0.41888f
+				+ (f32)chr->chrnum * 0.7f);
+	}
+#endif
 
 	if (g_Vars.tickmode == TICKMODE_CUTSCENE) {
 		if (chr->prop->type == PROPTYPE_PLAYER) {
@@ -3401,6 +3517,30 @@ void chrRenderAttachedObject(struct prop *prop, struct modelrenderdata *renderda
 
 void chrGetBloodColour(s16 bodynum, u8 *colour1, u32 *colour2)
 {
+#ifndef PLATFORM_N64
+	// Chaos "blood colour" (pd.blood_colour): 0xRRGGBB00|1 when set. Every body
+	// bleeds this colour — sparks, hit splats and floor drips all derive their
+	// palette from this function.
+	if (g_ChaosBloodColour) {
+		// Stock palettes sit around 1/4 brightness (human red is 0x40),
+		// with a brighter variant and a translucent third entry.
+		u8 r = (g_ChaosBloodColour >> 24) & 0xff;
+		u8 g = (g_ChaosBloodColour >> 16) & 0xff;
+		u8 b = (g_ChaosBloodColour >> 8) & 0xff;
+
+		if (colour1) {
+			colour1[0] = r >> 2;
+			colour1[1] = g >> 2;
+			colour1[2] = b >> 2;
+		}
+		if (colour2) {
+			colour2[0] = ((u32)(r >> 2) << 24) | ((u32)(g >> 2) << 16) | ((u32)(b >> 2) << 8) | 0xff;
+			colour2[1] = ((u32)(r >> 1) << 24) | ((u32)(g >> 1) << 16) | ((u32)(b >> 1) << 8) | 0xff;
+			colour2[2] = ((u32)(r >> 1) << 24) | ((u32)(g >> 1) << 16) | ((u32)(b >> 1) << 8) | 0xa0;
+		}
+		return;
+	}
+#endif
 	switch (bodynum) {
 	case BODY_ELVIS1:
 	case BODY_THEKING:
@@ -3862,6 +4002,14 @@ void chrEmitSparks(struct chrdata *chr, struct prop *prop, s32 hitpart, struct c
 #if VERSION < VERSION_JPN_FINAL
 	sparksCreate(chrprop->rooms[0], chrprop, coord, coord2, 0, SPARKTYPE_BLOOD);
 	sparksCreate(chrprop->rooms[0], chrprop, coord, coord2, 0, SPARKTYPE_FLESH);
+
+#ifndef PLATFORM_N64
+	// Chaos "Max blood" (pd.max_blood): triple the spray per hit.
+	if (g_ChaosMaxBlood) {
+		sparksCreate(chrprop->rooms[0], chrprop, coord, coord2, 0, SPARKTYPE_BLOOD);
+		sparksCreate(chrprop->rooms[0], chrprop, coord, coord2, 0, SPARKTYPE_BLOOD);
+	}
+#endif
 #endif
 }
 

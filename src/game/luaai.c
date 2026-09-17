@@ -358,7 +358,7 @@ static void luaai_load_external_scripts(lua_State *L)
 	}
 	fclose(f);
 
-	if (luaL_loadfile(L, "scripts/init.lua") != LUA_OK
+	if (luaL_loadfilex(L, "scripts/init.lua", "t") != LUA_OK
 			|| luaai_pcall_budget(L, 0, 0, LUAAI_INIT_INSTRUCTION_BUDGET) != LUA_OK) {
 		sysLogPrintf(LOG_ERROR, "luaai: error loading scripts/init.lua: %s",
 				lua_tostring(L, -1));
@@ -407,7 +407,8 @@ static void luaai_build_pd(lua_State *L)
 // the compute/data libraries, then nil out anything that can shell out or load
 // native code. dofile/loadfile/load are kept so the modding system can still
 // chain scripts; with os/io/package gone they can only run further sandboxed
-// Lua, not escape. (Kai's netplay code review, CR-7.)
+// Lua, not escape. (Kai's netplay code review, CR-7.) They are wrapped to load
+// source text only, and setmetatable to refuse finalizers; see above.
 /* setmetatable, minus finalizers. Lua runs __gc with debug hooks off
  * (lgc.c, GCTM), so a finalizer escapes the instruction budget: an object
  * whose __gc loops, or resurrects itself, stalls the game with nothing to stop
@@ -436,6 +437,66 @@ static int l_safe_setmetatable(lua_State *L)
 	return 1;
 }
 
+/* The loaders, text only. A binary chunk is bytecode the undump code trusts
+ * without verifying, and hand-made bytecode can corrupt the VM, so nothing
+ * here accepts one: the mode argument is forced to "t" whatever the script
+ * passed, and string.dump, the only producer, is gone. */
+
+/* load(chunk [, chunkname [, mode [, env]]]). env keeps its absent-or-nil
+ * distinction, which load cares about. */
+static int l_safe_load(lua_State *L)
+{
+	if (lua_gettop(L) < 3) {
+		lua_settop(L, 3);
+	}
+
+	lua_pushliteral(L, "t");
+	lua_replace(L, 3);
+
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+	return lua_gettop(L);
+}
+
+/* loadfile([filename [, mode [, env]]]) */
+static int l_safe_loadfile(lua_State *L)
+{
+	if (lua_gettop(L) < 2) {
+		lua_settop(L, 2);
+	}
+
+	lua_pushliteral(L, "t");
+	lua_replace(L, 2);
+
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+	return lua_gettop(L);
+}
+
+/* dofile([filename]), as lbaselib.c's but with a text-only load. */
+static int l_safe_dofile(lua_State *L)
+{
+	const char *fname = luaL_optstring(L, 1, NULL);
+
+	lua_settop(L, 1);
+
+	if (luaL_loadfilex(L, fname, "t") != LUA_OK) {
+		return lua_error(L);
+	}
+
+	lua_call(L, 0, LUA_MULTRET);
+	return lua_gettop(L) - 1;
+}
+
+static void luaai_wrap_global(lua_State *L, const char *name, lua_CFunction fn)
+{
+	lua_getglobal(L, name);
+	lua_pushcclosure(L, fn, 1);
+	lua_setglobal(L, name);
+}
+
 static void luaai_open_safe_libs(lua_State *L)
 {
 	static const luaL_Reg libs[] = {
@@ -462,9 +523,17 @@ static void luaai_open_safe_libs(lua_State *L)
 		lua_setglobal(L, *g);
 	}
 
-	lua_getglobal(L, "setmetatable");
-	lua_pushcclosure(L, l_safe_setmetatable, 1);
-	lua_setglobal(L, "setmetatable");
+	luaai_wrap_global(L, "setmetatable", l_safe_setmetatable);
+	luaai_wrap_global(L, "load", l_safe_load);
+	luaai_wrap_global(L, "loadfile", l_safe_loadfile);
+
+	lua_pushcfunction(L, l_safe_dofile);
+	lua_setglobal(L, "dofile");
+
+	lua_getglobal(L, "string");
+	lua_pushnil(L);
+	lua_setfield(L, -2, "dump");
+	lua_pop(L, 1);
 }
 
 static int luaai_ensure_state(void)

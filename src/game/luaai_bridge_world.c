@@ -339,6 +339,21 @@ s32 chraiLuaEnv(s32 stagenum)
 // wall starts closer). pd.fog() restores via envChooseAndApply.
 s32 chraiLuaFog(s32 fogmin, s32 fogmax, s32 r, s32 g, s32 b)
 {
+	// The env stores s16s and gSPFogPosition divides by (max - min) every
+	// frame, which traps on x86 when they are equal: keep max above min.
+	if (fogmin < -32768) {
+		fogmin = -32768;
+	}
+	if (fogmin > 32766) {
+		fogmin = 32766;
+	}
+	if (fogmax > 32767) {
+		fogmax = 32767;
+	}
+	if (fogmax <= fogmin) {
+		fogmax = fogmin + 1;
+	}
+
 	envChaosFog(chraiLuaGetStageNum(), fogmin, fogmax, (u8)r, (u8)g, (u8)b);
 	chraiLuaDirtyAllRooms();
 	return 1;

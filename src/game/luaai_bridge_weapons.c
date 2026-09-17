@@ -30,6 +30,19 @@
 #include "lib/mtx.h"
 #include "luaai_api_internal.h"
 
+// The Area 51 suitcase (chaos Bag bomb, Kai be46717) has no mapping in
+// playermgrGetModelOfWeapon: vanilla leaves it at -1 so nobody gets a hand
+// model for it. Kai added the mapping there for every caller; here it is
+// applied only to the Lua spawn/drop paths so Lua-off behaviour is unchanged.
+static s32 weaponsModelOfWeapon(s32 weaponnum)
+{
+	if (weaponnum == WEAPON_SUITCASE) {
+		return MODEL_SUITCASE;
+	}
+
+	return playermgrGetModelOfWeapon(weaponnum);
+}
+
 // Magazines the gun-giving effects hand out (pd.dual_wield).
 #define CHAOS_GUN_MAGS 2
 
@@ -69,7 +82,7 @@ s32 chraiLuaSpawnAtPos(s32 refchrnum, s32 weaponnum, f32 x, f32 y, f32 z)
 		return 0; // need a valid reference chr for creation + seed rooms
 	}
 
-	modelnum = playermgrGetModelOfWeapon(weaponnum);
+	modelnum = weaponsModelOfWeapon(weaponnum);
 	if (modelnum < 0) {
 		return 0;
 	}
@@ -507,10 +520,21 @@ s32 chraiLuaDropWeapon(s32 weaponnum)
 	}
 	// Not in Kai: a weapon with no pickup model (keycards, gadgets, ...)
 	// would be created around g_ModelStates[-1] and crash on its first tick.
-	if (playermgrGetModelOfWeapon(weaponnum) < 0) {
+	if (weaponsModelOfWeapon(weaponnum) < 0) {
 		return 0;
 	}
-	weaponCreateForPlayerDrop(weaponnum);
+	if (weaponnum == WEAPON_SUITCASE) {
+		// weaponCreateForPlayerDrop with the model passed in (see above)
+		struct prop *prop = weaponCreateForChr(g_Vars.currentplayer->prop->chr, MODEL_SUITCASE,
+				weaponnum, OBJFLAG_WEAPON_AICANNOTUSE, NULL, NULL);
+
+		if (prop) {
+			objSetDropped(prop, DROPTYPE_DEFAULT);
+			objDrop(prop, true);
+		}
+	} else {
+		weaponCreateForPlayerDrop(weaponnum);
+	}
 	invRemoveItemByNum(weaponnum);
 	if (bgunGetWeaponNum(HAND_RIGHT) == weaponnum) {
 		bgunCycleBack();

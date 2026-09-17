@@ -105,7 +105,9 @@ static s32 chrsSpawnAtPos(s32 refchrnum, s32 weaponnum, f32 x, f32 y, f32 z)
 		return 0; // need a valid reference chr for creation + seed rooms
 	}
 
-	modelnum = playermgrGetModelOfWeapon(weaponnum);
+	// the suitcase has no model in playermgrGetModelOfWeapon (Lua-only mapping,
+	// as in the weapons bridge)
+	modelnum = weaponnum == WEAPON_SUITCASE ? MODEL_SUITCASE : playermgrGetModelOfWeapon(weaponnum);
 	if (modelnum < 0) {
 		return 0;
 	}

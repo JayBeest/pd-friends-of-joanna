@@ -208,6 +208,27 @@ static int l_pd_menu_add_slider(lua_State *L)
 		return 1;
 	}
 
+	/* The Director's slider row carries the registry index in the u8 menu
+	 * item param (param3 holds the max), so a slider past 255 would drive
+	 * another entry. */
+	if (g_LuaMenuCount > 0xff) {
+		luaApiLog("menu_add_slider: sliders must be among the first 256 entries");
+		lua_pushinteger(L, -1);
+		return 1;
+	}
+
+	/* The menu slider runs 0..max and divides by max (menuitem.c), so max
+	 * must be at least 1, and min inside 0..max. */
+	if (smin < 0) {
+		smin = 0;
+	}
+	if (smax < 1) {
+		smax = 1;
+	}
+	if (smin > smax) {
+		smax = smin;
+	}
+
 	luaMenuStoreCommon(label, group, desc);
 	e = &g_LuaMenu[g_LuaMenuCount];
 	e->kind = 2;

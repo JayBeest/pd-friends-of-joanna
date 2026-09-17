@@ -305,7 +305,9 @@ void lvReset(s32 stagenum)
 		chraiLuaRoomHighlightReset();
 		chraiLuaDoorsHoldReset();
 		chraiLuaDoorsSpeedsReset();
-		sndChaosSetMusicRate(1.0f); // pd.music_rate
+		if (g_ChaosMusicRate != 1.0f) {
+			sndChaosSetMusicRate(1.0f); // pd.music_rate (only if moved: it rewrites every player's uspt)
+		}
 		g_MusicSuppressed = 0;      // never carry a pd.stage_music silence latch across stages
 	}
 #endif

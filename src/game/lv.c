@@ -12,6 +12,7 @@
 #include "game/bondview.h"
 #include "game/camdraw.h"
 #include "game/casing.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/chr.h"
 #include "game/chraction.h"
@@ -241,6 +242,12 @@ void lvUpdateMiscSfx(void)
 void lvReset(s32 stagenum)
 {
 	lvFadeReset();
+
+#ifndef PLATFORM_N64
+	// Lua effect state (pd.*) must not carry into the next stage: the Lua
+	// state is torn down below without running any effect's stop().
+	chaosStateResetPerStage();
+#endif
 
 	var80084014 = false;
 	var80084010 = 0;

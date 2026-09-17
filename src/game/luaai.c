@@ -9,13 +9,15 @@
  * directly (ctx:run), which is the foundation for scripted missions, custom
  * multiplayer maps and networking helpers.
  *
- * Safety: if Lua fails to initialise, or a chunk raises an error, execution
- * transparently falls back to the original bytecode interpreter so the game
- * keeps running.
+ * Safety: if Lua fails to initialise, execution falls back to the original
+ * bytecode interpreter for everything. If one list fails (transpile, load or
+ * run error), only that list is quarantined: it runs as bytecode until the
+ * next stage, and every other list keeps running through Lua.
  *
  * Taken from the Perfect Dark Kai fork (be46717). Differences: messages go
  * through sysLogPrintf (pd.log + stdout/stderr) because this tree has no
- * in-game console, and g_LuaAiEnabled defaults to 0.
+ * in-game console, g_LuaAiEnabled defaults to 0, and a list error quarantines
+ * that list instead of clearing g_LuaAiEnabled.
  */
 
 #include <ultra64.h>
@@ -33,7 +35,8 @@
 #include "lualib.h"
 
 /* Off by default: nothing routes an ailist through Lua unless this is set.
- * Kai defaults it to 1. The layer also clears it itself after a Lua error. */
+ * Kai defaults it to 1. The layer clears it only when no Lua state can be
+ * created, or when the quarantine table overflows. */
 s32 g_LuaAiEnabled = 0;
 
 /* Status codes returned by luaai_run_list(). */
@@ -59,8 +62,78 @@ static const char *const KEY_CHUNKS = "luaai.chunks";       /* lightuserdata(lis
 static const char *const KEY_OVERRIDES = "luaai.overrides"; /* id (int) -> function */
 static const char *const KEY_CTX = "luaai.ctx";             /* the shared ctx table */
 
+/* Last error message from luaai_get_chunk / luaai_run_list, copied out of the
+ * Lua stack so the caller can log it once after the stack has been cleaned. */
+static char g_LuaErrMsg[256];
+static const char *g_LuaErrWhat = "";
+
+/* ------------------------------------------------------------------------- *
+ * List quarantine
+ *
+ * A list whose chunk fails to build or raises an error is recorded here and
+ * runs through chraiRunLoop from then on. Keyed by list pointer: that is what
+ * luaaiExecute has on the hot path, with no id scan, and within one stage a
+ * pointer names exactly one list. The table is cleared by luaaiReset, because
+ * list pointers are reused across stages and the Lua state (with every
+ * script) is rebuilt there anyway, so a stale entry would quarantine an
+ * unrelated list and a fixed script deserves a fresh start.
+ *
+ * Phase 1 (per-mod _ENV) replaces the policy in luaai_quarantine and
+ * luaai_is_quarantined with "disable the owning mod"; callers stay as they are.
+ * ------------------------------------------------------------------------- */
+
+#define LUAAI_QUARANTINE_MAX 64
+
+struct luaaiquarantine {
+	void *list;
+	s32 id;
+};
+
+static struct luaaiquarantine g_LuaQuarantine[LUAAI_QUARANTINE_MAX];
+static s32 g_LuaQuarantineCount = 0;
+
 extern u32 chraiGetCommandLength(u8 *ailist, u32 aioffset);
 extern u32 chraiGetAilistLength(u8 *list);
+
+static void luaai_set_error(const char *what, const char *msg)
+{
+	g_LuaErrWhat = what;
+	snprintf(g_LuaErrMsg, sizeof(g_LuaErrMsg), "%s", msg ? msg : "(no message)");
+}
+
+static s32 luaai_is_quarantined(void *list)
+{
+	s32 i;
+
+	for (i = 0; i < g_LuaQuarantineCount; i++) {
+		if (g_LuaQuarantine[i].list == list) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+/* The single policy point for a failed list. Logs once per list per stage. */
+static void luaai_quarantine(void *list)
+{
+	s32 id = chraiLuaGetListId(list);
+
+	if (g_LuaQuarantineCount >= LUAAI_QUARANTINE_MAX) {
+		sysLogPrintf(LOG_ERROR, "luaai: %s in list %d: %s", g_LuaErrWhat, id, g_LuaErrMsg);
+		sysLogPrintf(LOG_ERROR, "luaai: %d lists quarantined this stage; disabling Lua AI",
+				LUAAI_QUARANTINE_MAX);
+		g_LuaAiEnabled = 0;
+		return;
+	}
+
+	g_LuaQuarantine[g_LuaQuarantineCount].list = list;
+	g_LuaQuarantine[g_LuaQuarantineCount].id = id;
+	g_LuaQuarantineCount++;
+
+	sysLogPrintf(LOG_ERROR, "luaai: %s in list %d (%p): %s", g_LuaErrWhat, id, list, g_LuaErrMsg);
+	sysLogPrintf(LOG_WARNING, "luaai: list %d runs as bytecode until the next stage", id);
+}
 
 /* ------------------------------------------------------------------------- *
  * ctx bridge (the C side of the Lua "ctx" object)
@@ -261,7 +334,8 @@ static int luaai_ensure_state(void)
 	L = luaL_newstate();
 	if (!L) {
 		g_LuaInitFailed = 1;
-		sysLogPrintf(LOG_ERROR, "luaai: failed to create Lua state; using bytecode");
+		g_LuaAiEnabled = 0;
+		sysLogPrintf(LOG_ERROR, "luaai: failed to create Lua state; disabling Lua AI");
 		return 0;
 	}
 
@@ -290,6 +364,7 @@ void luaaiReset(void)
 	}
 	g_LuaInitFailed = 0;
 	g_LuaOverrideCount = 0;
+	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
 	luaApiResetFrame();
 }
 
@@ -351,13 +426,13 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	listlen = chraiGetAilistLength((u8 *)list);
 	src = luaaiTranspile((const unsigned char *)list, listlen ? listlen : 0xffffu, luaai_cmdlen, CMD_END);
 	if (!src) {
+		luaai_set_error("transpile failure", "out of memory");
 		lua_pop(L, 1); /* chunks table */
 		return 0;
 	}
 
 	if (luaL_loadstring(L, src) != LUA_OK) {
-		sysLogPrintf(LOG_ERROR, "luaai: transpile load error (id %d): %s",
-				chraiLuaGetListId(list), lua_tostring(L, -1));
+		luaai_set_error("transpile load error", lua_tostring(L, -1));
 		free(src);
 		lua_pop(L, 2); /* error + chunks table */
 		return 0;
@@ -366,13 +441,13 @@ static int luaai_get_chunk(lua_State *L, void *list)
 
 	/* run the chunk to obtain the function it returns */
 	if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
-		sysLogPrintf(LOG_ERROR, "luaai: transpile run error (id %d): %s",
-				chraiLuaGetListId(list), lua_tostring(L, -1));
+		luaai_set_error("transpile run error", lua_tostring(L, -1));
 		lua_pop(L, 2); /* error + chunks table */
 		return 0;
 	}
 
 	if (!lua_isfunction(L, -1)) {
+		luaai_set_error("transpile run error", "chunk did not return a function");
 		lua_pop(L, 2); /* result + chunks table */
 		return 0;
 	}
@@ -399,8 +474,7 @@ static int luaai_run_list(lua_State *L, void *list)
 	lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
 
 	if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-		sysLogPrintf(LOG_ERROR, "luaai: run error (id %d): %s",
-				chraiLuaGetListId(list), lua_tostring(L, -1));
+		luaai_set_error("run error", lua_tostring(L, -1));
 		lua_pop(L, 1);
 		return LUAAI_ERR;
 	}
@@ -449,13 +523,22 @@ void luaaiExecute(void *entity, s32 proptype)
 	L = g_LuaState;
 
 	while (chraiLuaGetList() != NULL) {
-		int r = luaai_run_list(L, chraiLuaGetList());
+		void *list = chraiLuaGetList();
+		int r;
+
+		if (g_LuaQuarantineCount > 0 && luaai_is_quarantined(list)) {
+			/* Bytecode for the rest of this frame, from the current offset. */
+			chraiRunLoop();
+			return;
+		}
+
+		r = luaai_run_list(L, list);
 
 		if (r == LUAAI_ERR) {
-			/* Fall back to the bytecode interpreter for the remainder and
-			 * for all future frames. */
-			sysLogPrintf(LOG_WARNING, "luaai: disabling Lua AI after error");
-			g_LuaAiEnabled = 0;
+			/* Quarantine this list and let the bytecode interpreter carry
+			 * on from wherever the chunk stopped. Other lists are
+			 * unaffected. */
+			luaai_quarantine(list);
 			chraiRunLoop();
 			return;
 		}

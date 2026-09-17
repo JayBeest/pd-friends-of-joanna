@@ -1805,6 +1805,14 @@ void func0f069850(struct defaultobj *obj, struct coord *pos, f32 rot[3][3], stru
 		cyl->x = pos->x;
 		cyl->z = pos->z;
 		cyl->radius = 90.0f;
+#ifndef PLATFORM_N64
+		// The 90-unit radius above is hardcoded, so a scaled object (the
+		// chaos half-size hoverbike, extrascale 128) would still block
+		// walk/sight/shoot at full size while rendering small. Scale the
+		// radius by extrascale — stage objects carry 256 (= x1.0) and are
+		// byte-identical. (Kai be46717.)
+		cyl->radius = 90.0f * (obj->extrascale * (1.0f / 256.0f));
+#endif
 	} else {
 		if (rodata19 != NULL) {
 			objCalculateGeoBlockFromNode19Data(rodata19, bbox, &mtx, (struct geoblock *)cyl);
@@ -10252,6 +10260,17 @@ void chopperTickPatrol(struct prop *chopperprop)
  * This function is only directly responsible for the chopper's movement during
  * combat.
  */
+#ifndef PLATFORM_N64
+// Chaos interceptor stalking distances (see chopperTickCombat). Standoff is the
+// radius it holds around the player; altitude is how far above the player's
+// feet it flies. The steering powers off within 50 units of the goal, so the
+// ring is a station it settles onto rather than a target it overshoots.
+// (Kai be46717; chaosChopperKind lives in luaai_bridge_chrs.c.)
+extern s32 chaosChopperKind(struct chopperobj *chopper);
+#define CHOPPER_CHAOS_STANDOFF 700.0f
+#define CHOPPER_CHAOS_ALTITUDE 260.0f
+#endif
+
 void chopperTickCombat(struct prop *chopperprop)
 {
 	struct defaultobj *obj = chopperprop->obj;
@@ -10279,6 +10298,41 @@ void chopperTickCombat(struct prop *chopperprop)
 
 	chopper->timer60 += g_Vars.lvupdate60;
 
+#ifndef PLATFORM_N64
+	// Chaos "A51 interceptor" (pd.spawn_chopper kind 1): stalk the player
+	// instead of hovering where it spawned.
+	//
+	// A chaos chopper has no setup-file patrol path, so `chopper->path == NULL`
+	// makes the vanilla test below pick the stay-put branch every tick — that's
+	// the entire reason the effect looked static. goalpos is the only input the
+	// steering further down reads, so re-aiming it is the whole behaviour
+	// change; the flight model, banking, gunfire and LOS all still run as
+	// authored.
+	//
+	// The goal is a point on a ring of CHOPPER_CHAOS_STANDOFF units around the
+	// target, on the bearing the chopper ALREADY occupies. That makes it close
+	// in or back off to that radius rather than diving onto the player, and it
+	// drifts around the ring naturally as the player moves — a menacing tail
+	// rather than a pursuit. Only slot 1; the dD hovercopter keeps the original
+	// hold-position behaviour it was authored around.
+	if (chaosChopperKind(chopper) == 1) {
+		f32 dx = chopperprop->pos.x - targetprop->pos.x;
+		f32 dz = chopperprop->pos.z - targetprop->pos.z;
+		f32 flat = sqrtf(dx * dx + dz * dz);
+
+		if (flat < 1.0f) {
+			// Directly overhead — pick an arbitrary bearing so the normalise
+			// below can't divide by zero.
+			dx = 1.0f;
+			dz = 0.0f;
+			flat = 1.0f;
+		}
+
+		goalpos.x = targetprop->pos.x + dx / flat * CHOPPER_CHAOS_STANDOFF;
+		goalpos.z = targetprop->pos.z + dz / flat * CHOPPER_CHAOS_STANDOFF;
+		goalpos.y = targetprop->pos.y + CHOPPER_CHAOS_ALTITUDE;
+	} else
+#endif
 	if ((chopper->targetvisible && dist < 2000000.0f) || chopper->path == NULL) {
 		// Stay put
 		osSyncPrintf("HC: %x - visible\n", chopper);
@@ -11271,6 +11325,24 @@ s32 objTickPlayer(struct prop *prop)
 			struct chopperobj *chopper = (struct chopperobj *)obj;
 
 			if (!chopper->dead) {
+#ifndef PLATFORM_N64
+				// Chaos spawned choppers (pd.spawn_chopper) run GAILIST_IDLE,
+				// so the mission ailist's see-target -> attack loop never
+				// runs. Drive the same calls the scripts make: LOS refresh
+				// (aiIfLosToTarget's backend — FOV skipped so it spots the
+				// player all around) and re-assert combat if anything
+				// dropped it back to patrol.
+				{
+					extern s32 chaosChopperIsChaos(struct chopperobj *chopper);
+					if (!lvIsPaused() && chaosChopperIsChaos(chopper)) {
+						chopperCheckTargetInSight(chopper);
+						if (chopper->attackmode == CHOPPERMODE_PATROL) {
+							chopper->attackmode = CHOPPERMODE_COMBAT;
+							chopper->patroltimer60 = TICKS(240);
+						}
+					}
+				}
+#endif
 				if (!lvIsPaused()) {
 					if (chopper->attackmode == CHOPPERMODE_DEAD) {
 						// empty

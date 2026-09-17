@@ -1362,7 +1362,11 @@ done:
 	return context;
 }
 
-static void romdataResolvePath(char *dst, const char *src, size_t dstSize, const char *currentModName, const char *activeModName, bool requireExport)
+// ownerModName: the mod that OWNS the file being resolved (romdataFileLoad
+// takes it from the file id's tag, falling back to g_ModNum for an untagged
+// one). It used to be the active mod, which made the private-asset test below
+// ask the wrong question once file ids started carrying owners.
+static void romdataResolvePath(char *dst, const char *src, size_t dstSize, const char *currentModName, const char *ownerModName, bool requireExport)
 {
 	dst[0] = '\0';
 	if (!src) {
@@ -1458,8 +1462,9 @@ static void romdataResolvePath(char *dst, const char *src, size_t dstSize, const
 					score = -1; // Wrong mod (provider mismatch) and not exported
 				} else if (hasContext && !contextMatch) {
 					score = -1; // Wrong context
-				} else if (hasMod && !hasExport && activeModName && currentModName && strcmp(currentModName, activeModName) != 0) {
-					// Private asset (not exported), and we are not the owner
+				} else if (hasMod && !hasExport && ownerModName && currentModName && strcmp(currentModName, ownerModName) != 0) {
+					// Private asset (not exported), and this directory is not
+					// the owning mod's
 					score = -1;
 				} else {
 					// Matches constraints
@@ -1578,12 +1583,21 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 
 		u32 loadedSize = 0;
 
-		// Get active mod name
-		const char *activeModName = NULL;
-		if (g_ModNum >= 0 && g_ModNum < g_NumModDirs && modDirs[g_ModNum][0]) {
-			activeModName = strrchr(modDirs[g_ModNum], '/');
-			if (activeModName) activeModName++;
-			else activeModName = modDirs[g_ModNum];
+		// The name of the mod this file BELONGS to, not the one that happens to
+		// be active. romdataResolvePath uses it for exactly one decision: a
+		// path variant tagged `mod:X` and not `export` scores -1 when the
+		// directory being scanned is not this mod, which is how a private asset
+		// stays private. Built from g_ModNum, that test asked "is the active mod
+		// the owner", so a correctly-owned id - mod A's stage file loaded while
+		// mod B is active - had mod A's own private variant scored out and fell
+		// through to a default path or to another mod's copy. modNum is the
+		// owner resolved from the id above, and is identical to g_ModNum for an
+		// untagged id, so nothing vanilla moves.
+		const char *ownerModName = NULL;
+		if (modNum >= 0 && modNum < g_NumModDirs && modDirs[modNum][0]) {
+			ownerModName = strrchr(modDirs[modNum], '/');
+			if (ownerModName) ownerModName++;
+			else ownerModName = modDirs[modNum];
 		}
 
 		bool requireExport = !allowMod;
@@ -1600,7 +1614,7 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 				}
 
 					// Resolve path specifically for this mod
-				romdataResolvePath(resolvedName, fileSlots[modNum][fileNum].name, sizeof(resolvedName), modName, activeModName, requireExport);
+				romdataResolvePath(resolvedName, fileSlots[modNum][fileNum].name, sizeof(resolvedName), modName, ownerModName, requireExport);
 
 				if (resolvedName[0] == '\0') {
 					continue; // No match for this mod
@@ -1661,7 +1675,7 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 		// 2. Try Base Dir (if not found in mod or corrupted)
 		if (!out) {
 			// Resolve generic path (no mod constraint)
-			romdataResolvePath(resolvedName, fileSlots[modNum][fileNum].name, sizeof(resolvedName), NULL, activeModName, requireExport);
+			romdataResolvePath(resolvedName, fileSlots[modNum][fileNum].name, sizeof(resolvedName), NULL, ownerModName, requireExport);
 
 			if (resolvedName[0] != '\0') {
 				snprintf(tmp, sizeof(tmp), "$B/" ROMDATA_FILEDIR "/%s", resolvedName);

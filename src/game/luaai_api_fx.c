@@ -258,14 +258,8 @@ static int l_pd_hud_message(lua_State *L)
 	// renderer into the JPN multibyte glyph path, whose cache table is NULL in
 	// a non-JPN ROM -> null deref crash. Scripts feed arbitrary text here, so
 	// scrub high bytes to '?' before it reaches the hudmsg queue.
-	{
-		size_t i;
-		for (i = 0; i < n; i++) {
-			if ((u8)buf[i] >= 0x80) {
-				buf[i] = '?';
-			}
-		}
-	}
+	buf[n] = '\0';
+	luaApiTextScrub(buf);
 
 	if (n == 0 || buf[n - 1] != '\n') {
 		buf[n++] = '\n';

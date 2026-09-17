@@ -66,6 +66,7 @@ static void luaMenuCopy(char *dst, const char *src, u32 size)
 {
 	strncpy(dst, src, size - 1);
 	dst[size - 1] = '\0';
+	luaApiTextScrub(dst);
 }
 
 static void luaMenuClearAll(lua_State *L)

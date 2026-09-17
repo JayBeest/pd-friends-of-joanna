@@ -123,6 +123,19 @@ void luaApiLog2(const char *prefix, const char *s)
 	sysLogPrintf(LOG_NOTE, "luaai: %s%s", prefix ? prefix : "", s ? s : "");
 }
 
+void luaApiTextScrub(char *s)
+{
+	if (s == NULL) {
+		return;
+	}
+	for (; *s != '\0'; s++) {
+		u8 c = (u8)*s;
+		if (c >= 0x7f || (c < 0x20 && c != '\n')) {
+			*s = '?';
+		}
+	}
+}
+
 /* Few enough names that a linear list is fine. */
 #define LUA_UNAVAILABLE_MAX 16
 static const char *g_LuaUnavailableLogged[LUA_UNAVAILABLE_MAX];
@@ -171,6 +184,7 @@ void luaOverlayAdd(s32 kind, s32 x, s32 y, s32 w, s32 h, u32 color,
 	if (text) {
 		strncpy(o->text, text, LUA_TEXT_MAX - 1);
 		o->text[LUA_TEXT_MAX - 1] = '\0';
+		luaApiTextScrub(o->text);
 	} else {
 		o->text[0] = '\0';
 	}
@@ -668,6 +682,7 @@ static int l_pd_ap_list_header(lua_State *L)
 	if (!lua_isnoneornil(L, 1)) {
 		const char *s = luaL_checkstring(L, 1);
 		snprintf(g_ApListHeader, sizeof(g_ApListHeader), "%s", s);
+		luaApiTextScrub(g_ApListHeader);
 	} else if (lua_type(L, 1) == LUA_TNIL) {
 		g_ApListHeader[0] = '\0';
 	}
@@ -813,9 +828,16 @@ static int l_pd_stage(lua_State *L)
 static int l_pd_text_size(lua_State *L)
 {
 	const char *text = luaL_checkstring(L, 1);
+	char buf[256];
 	s32 h = 0, w = 0;
+
+	/* textMeasure has the renderer's high-byte and control-byte hazards */
+	strncpy(buf, text, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
+	luaApiTextScrub(buf);
+
 	if (g_CharsHandelGothicXs && g_FontHandelGothicXs) {
-		textMeasure(&h, &w, (char *)text, g_CharsHandelGothicXs, g_FontHandelGothicXs, 0);
+		textMeasure(&h, &w, buf, g_CharsHandelGothicXs, g_FontHandelGothicXs, 0);
 	}
 	lua_pushinteger(L, w);
 	lua_pushinteger(L, h);

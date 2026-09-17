@@ -846,6 +846,7 @@ s32 chraiLuaWeaponRename(s32 weaponnum, const char *name)
 			g_ChaosLangOverrideStr[i] = name[i];
 		}
 		g_ChaosLangOverrideStr[i] = '\0';
+		luaApiTextScrub(g_ChaosLangOverrideStr);
 	}
 	return 1;
 }

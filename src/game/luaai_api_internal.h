@@ -72,6 +72,18 @@ void luaApiLog2(const char *prefix, const char *s);
 void luaApiLogUnavailable(const char *name);
 
 /* ------------------------------------------------------------------------- *
+ * Script text that reaches the game's font renderer
+ * ------------------------------------------------------------------------- */
+
+/* Replace, in place, every byte the ASCII font cannot draw with '?': bytes
+ * >= 0x80 (the renderer takes them for JPN multibyte glyphs, whose cache is
+ * NULL outside a JPN ROM, and skips two bytes, past the terminator when the
+ * high byte is last), control bytes other than '\n' and DEL (both index the
+ * font table out of range). Every pd.* path that stores script text for
+ * textRender/textMeasure/langGet must scrub its copy with this. */
+void luaApiTextScrub(char *s);
+
+/* ------------------------------------------------------------------------- *
  * Calling back into Lua (luaai.c)
  * ------------------------------------------------------------------------- */
 

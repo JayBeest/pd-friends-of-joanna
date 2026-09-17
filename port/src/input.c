@@ -93,6 +93,10 @@ static f32 mouseSensX = 2.5f;
 static f32 mouseSensY = 2.5f;
 
 static s32 lastKey = 0;
+// Which physical device the player most recently used: 0 = keyboard/mouse,
+// 1 = gamepad. Updated in the event watcher; read by pd.input_source
+// (inputLastSourceWasPad). From Kai (be46717).
+static s32 lastSourceWasPad = 0;
 static char lastChar = 0;
 static s32 textInput = 0;
 
@@ -519,18 +523,25 @@ static int inputEventFilter(void *data, SDL_Event *event)
 			if (!lastKey && mouseWheel) {
 				lastKey = (mouseWheel < 0) + VK_MOUSE_WHEEL_UP;
 			}
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_MOUSEBUTTONDOWN:
 			if (!lastKey) {
 				lastKey = VK_MOUSE_BEGIN - 1 + event->button.button;
 			}
+			lastSourceWasPad = 0;
+			break;
+
+		case SDL_MOUSEMOTION:
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_KEYDOWN:
 			if (!lastKey) {
 				lastKey = VK_KEYBOARD_BEGIN + event->key.keysym.scancode;
 			}
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_CONTROLLERBUTTONDOWN:
@@ -542,6 +553,7 @@ static int inputEventFilter(void *data, SDL_Event *event)
 					lastKey += idx * INPUT_MAX_CONTROLLER_BUTTONS;
 				}
 			}
+			lastSourceWasPad = 1;
 			break;
 
 		case SDL_CONTROLLERAXISMOTION:
@@ -554,6 +566,11 @@ static int inputEventFilter(void *data, SDL_Event *event)
 						lastKey += idx * INPUT_MAX_CONTROLLER_BUTTONS;
 					}
 				}
+			}
+			// Only a real stick/trigger push flips the source (small idle jitter
+			// past a deadzone shouldn't claim the player picked up the pad).
+			if (event->caxis.value > 8000 || event->caxis.value < -8000) {
+				lastSourceWasPad = 1;
 			}
 			break;
 
@@ -1487,6 +1504,12 @@ void inputClearLastKey(void)
 s32 inputGetLastKey(void)
 {
 	return lastKey;
+}
+
+// 1 if the player's most recent input came from a gamepad (pd.input_source).
+s32 inputLastSourceWasPad(void)
+{
+	return lastSourceWasPad;
 }
 
 void inputStartTextInput(void)

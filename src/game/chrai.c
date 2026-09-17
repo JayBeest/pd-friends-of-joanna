@@ -512,7 +512,7 @@ bool (*g_CommandPointers[])(void) = {
 // ever grows the vanilla table into that range, mod opcodes would land on real
 // handlers instead of being remapped, silently and at load time. Fail the build
 // instead.
-_Static_assert(ARRAYCOUNT(g_CommandPointers) <= 0x0400,
+_Static_assert(ARRAYCOUNT(g_CommandPointers) <= MOD_AICMD_LOCAL_BASE,
 		"g_CommandPointers has grown into the mod-local aicmd window at 0x0400");
 #endif
 
@@ -646,6 +646,13 @@ u16 g_CommandLengths[] = {
 	/*0x01e4*/ 3,
 #endif
 };
+
+#ifndef PLATFORM_N64
+// chraiGetCommandLength() only asks the mod registry once this table misses,
+// so it must stay below the mod-local window too.
+_Static_assert(ARRAYCOUNT(g_CommandLengths) <= MOD_AICMD_LOCAL_BASE,
+		"g_CommandLengths has grown into the mod-local aicmd window at 0x0400");
+#endif
 
 s32 g_AIOPresent = 0;
 
@@ -953,7 +960,12 @@ u32 chraiGetCommandLength(u8 *ailist, u32 aioffset)
 		return g_CommandLengths[type];
 	}
 
+#ifndef PLATFORM_N64
+	// Mod opcodes; unknown ones still step 1 byte, but are logged.
+	return chraiGetModCommandLength(type);
+#else
 	return 1;
+#endif
 }
 
 // used by ext_setup

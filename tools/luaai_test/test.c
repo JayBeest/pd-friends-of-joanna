@@ -6,12 +6,14 @@
  *
  * The first case is the Kai fork's original synthetic test. The rest walk
  * lists with the game's real command length table (lifted from chrai.c by
- * build.sh into cmdlengths.inc) and cover the port-only opcodes 0x0194 and
- * 0x01e1-0x01e4, CMD_PRINT strings, label jumps, and malformed lists.
+ * build.sh into cmdlen.c) and cover the port-only opcodes 0x0194 and
+ * 0x01e1-0x01e4, mod opcodes, CMD_PRINT strings, label jumps, and malformed
+ * lists.
  *
  * Build and run: ./build.sh
  */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,16 +44,19 @@ static int g_failures;
  * The game's command lengths
  * ------------------------------------------------------------------------- */
 
-/* versions.h values; the PC port builds ntsc-final. */
-#define VERSION_NTSC_1_0   1
-#define VERSION_NTSC_FINAL 2
-#define VERSION            VERSION_NTSC_FINAL
+/* g_CommandLengths and chraiGetCommandLength() as the game builds them, from
+ * cmdlen.c (see build.sh). */
+extern unsigned short g_CommandLengths[];
+extern const unsigned int g_NumCommandLengths;
+unsigned int chraiGetCommandLength(unsigned char *ailist, unsigned int aioffset);
 
-static const unsigned short g_CommandLengths[] = {
-#include "cmdlengths.inc"
-};
+#define NUM_CMDLENGTHS g_NumCommandLengths
 
-#define NUM_CMDLENGTHS (sizeof(g_CommandLengths) / sizeof(g_CommandLengths[0]))
+/* src/game/chraicmdlen.c */
+#define MOD_AICMD_LOCAL_BASE 0x0400
+#define MOD_AICMD_PORT_BASE  0x0800
+int chraiSetModCommandLength(int op, unsigned int len);
+void chraiClearModLocalCommandLengths(void);
 
 /* constants.h */
 #define CMD_GOTONEXT  0x0000
@@ -61,28 +66,31 @@ static const unsigned short g_CommandLengths[] = {
 #define CMD_END       0x0004
 #define CMD_PRINT     0x00b5
 
-/* Mirrors chraiGetCommandLength() in src/game/chrai.c, including the bounded
- * CMD_PRINT terminator scan. This is what the game passes as cmdlen. */
+/* What the game passes as cmdlen (luaai_cmdlen in luaai.c). */
 static unsigned int fojo_cmdlen(const unsigned char *list, unsigned int off)
 {
-	unsigned int type = OPAT(list, off);
+	return chraiGetCommandLength((unsigned char *)list, off);
+}
 
-	if (type == CMD_PRINT) {
-		unsigned int prop = off + 2;
-		const unsigned int limit = prop + 256;
+/* system.h, for chraicmdlen.c: count the warnings and keep them all. */
+static int g_logcount;
+static char g_lastlog[256];
+static char g_alllog[8192];
 
-		while (prop < limit && list[prop] != 0) {
-			++prop;
-		}
+void sysLogPrintf(int level, const char *fmt, ...)
+{
+	va_list ap;
 
-		return (prop - off) + 1;
+	(void)level;
+	va_start(ap, fmt);
+	vsnprintf(g_lastlog, sizeof(g_lastlog), fmt, ap);
+	va_end(ap);
+	g_logcount++;
+	if (strlen(g_alllog) + strlen(g_lastlog) + 2 < sizeof(g_alllog)) {
+		strcat(g_alllog, g_lastlog);
+		strcat(g_alllog, "\n");
 	}
-
-	if (type < NUM_CMDLENGTHS) {
-		return g_CommandLengths[type];
-	}
-
-	return 1;
+	printf("  log: %s\n", g_lastlog);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -633,7 +641,108 @@ static void test_malformed(void)
 }
 
 /* ------------------------------------------------------------------------- *
- * 6. A long list still loads
+ * 6. Mod opcodes: registered lengths are stepped over, unknown ones are not
+ * ------------------------------------------------------------------------- */
+
+/*
+ *   @0  0x0401 a b c        ; mod-local, registered length 5
+ *   @5  yield
+ *   @7  0x0805 a b c d e    ; mod-port, registered length 7
+ *   @14 yield
+ *   @16 end
+ */
+static const unsigned char mod_prog[] = {
+	0x04, 0x01, 0x00, 0x03, 0x00,
+	0x00, 0x03,
+	0x08, 0x05, 0x00, 0x04, 0x00, 0x04, 0x00,
+	0x00, 0x03,
+	0x00, 0x04,
+};
+
+static void test_mod_opcodes(void)
+{
+	/* Unregistered, each mod command is walked a byte at a time and the walk
+	 * resyncs on operand bytes: 0x0100 at 1 (len 3), 0x0000 at 4 (len 3),
+	 * 0x0805 at 7, 0x0500 at 8, then 0x0004 at 9 ends it early. Neither
+	 * yield is found. */
+	static const unsigned int want_before[] = { 0, 1, 4, 7, 8 };
+	static const unsigned int want_after[] = { 0, 5, 7, 14 };
+	static const unsigned char unknown[] = { 0x04, 0x02, 0x00, 0x03, 0x00, 0x04 };
+	static const unsigned int want_unknown[] = { 0, 1, 2 };
+	lua_State *L = new_state();
+	char *src;
+	int logs;
+
+	printf("[mod opcodes]\n");
+
+	logs = g_logcount;
+	src = transpile_load(L, "mod unregistered", mod_prog, sizeof(mod_prog), fojo_cmdlen, 0);
+	if (src) {
+		expect_offsets("mod unregistered", src, want_before, 5);
+		free(src);
+	}
+	CHECK(g_logcount == logs + 3
+			&& strstr(g_alllog, "0x0401 has no known length (mod-local")
+			&& strstr(g_alllog, "0x0805 has no known length (mod-port")
+			&& strstr(g_alllog, "0x0500 has no known length (outside"),
+			"unregistered: want warnings for 0x0401, 0x0805, 0x0500, got %d", g_logcount - logs);
+	CHECK(fojo_cmdlen(mod_prog, 0) == 1, "unregistered 0x0401 length %u, want 1", fojo_cmdlen(mod_prog, 0));
+
+	/* Logged once per opcode. */
+	logs = g_logcount;
+	fojo_cmdlen(mod_prog, 0);
+	fojo_cmdlen(mod_prog, 0);
+	CHECK(g_logcount == logs, "0x0401 warned again (%d new lines)", g_logcount - logs);
+
+	/* Registration rules. */
+	CHECK(chraiSetModCommandLength(0x0401, 5) == 1, "0x0401 len 5 refused");
+	CHECK(chraiSetModCommandLength(0x0401, 5) == 1, "0x0401 same length again refused");
+	CHECK(chraiSetModCommandLength(0x0401, 6) == 0, "0x0401 conflicting length accepted");
+	CHECK(chraiSetModCommandLength(0x0805, 7) == 1, "0x0805 len 7 refused");
+	CHECK(chraiSetModCommandLength(0x0500, 4) == 0, "gap opcode 0x0500 accepted");
+	CHECK(chraiSetModCommandLength(0x01e5, 4) == 0, "port reserve opcode 0x01e5 accepted");
+	CHECK(chraiSetModCommandLength(0x0402, 1) == 0, "length 1 accepted");
+	CHECK(chraiSetModCommandLength(0x0402, 0x101) == 0, "length 0x101 accepted");
+
+	/* Vanilla lookups are untouched. */
+	CHECK(fojo_cmdlen(fojo_prog, 3) == 3, "0x01e1 length changed");
+	CHECK(fojo_cmdlen(mod_prog, 5) == 2, "yield length changed");
+
+	src = transpile_load(L, "mod registered", mod_prog, sizeof(mod_prog), fojo_cmdlen, 1);
+	if (src) {
+		expect_offsets("mod registered", src, want_after, 4);
+		CHECK(has_block(src, 0, 0x0401), "no 0x0401 block at 0");
+		CHECK(has_block(src, 7, 0x0805), "no 0x0805 block at 7");
+		free(src);
+	}
+
+	/* An unregistered mod-local opcode still steps one byte: 0x0402 at 0,
+	 * 0x0200 at 1 (also unknown), yield at 2, end at 4. */
+	logs = g_logcount;
+	src = transpile_load(L, "mod unknown", unknown, sizeof(unknown), fojo_cmdlen, 0);
+	if (src) {
+		expect_offsets("mod unknown", src, want_unknown, 3);
+		free(src);
+	}
+	CHECK(g_logcount == logs + 2
+			&& strstr(g_alllog, "0x0402 has no known length (mod-local")
+			&& strstr(g_alllog, "0x0200 has no known length (outside"),
+			"mod unknown: want warnings for 0x0402 and 0x0200, got %d", g_logcount - logs);
+
+	/* Clearing the local window forgets 0x0401 but keeps the port window. */
+	chraiClearModLocalCommandLengths();
+	CHECK(fojo_cmdlen(mod_prog, 0) == 1, "0x0401 survived clear");
+	CHECK(fojo_cmdlen(mod_prog, 7) == 7, "0x0805 lost on local clear");
+	CHECK(chraiSetModCommandLength(0x0401, 6) == 1, "0x0401 len 6 refused after clear");
+	CHECK(fojo_cmdlen(mod_prog, 0) == 6, "0x0401 length after re-register %u", fojo_cmdlen(mod_prog, 0));
+	chraiClearModLocalCommandLengths();
+
+	printf("  0x0401 len 5 and 0x0805 len 7 stepped over; unregistered ones step 1 byte\n");
+	lua_close(L);
+}
+
+/* ------------------------------------------------------------------------- *
+ * 7. A long list still loads
  * ------------------------------------------------------------------------- */
 
 static int yield_exec(unsigned int off)
@@ -728,6 +837,7 @@ int main(void)
 	test_detect_aio();
 	test_fojo_program();
 	test_malformed();
+	test_mod_opcodes();
 
 	printf("[long lists]\n");
 	test_long(1000);

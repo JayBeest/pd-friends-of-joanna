@@ -199,6 +199,11 @@ s32 chraiLuaGiveAmmo(s32 ammotype, s32 qty)
 	if (apLuaPlayerChr() == NULL) {
 		return 0;
 	}
+	// ammoHandlePickup indexes ammoheldarr/g_AmmoTypes unchecked (same range
+	// as pd.set_ammo)
+	if (ammotype < 1 || ammotype > AMMOTYPE_ECM_MINE) {
+		return 0;
+	}
 	ammoHandlePickup(ammotype, qty, true, true);
 	return 1;
 }
@@ -207,6 +212,10 @@ s32 chraiLuaGiveAmmo(s32 ammotype, s32 qty)
 s32 chraiLuaGiveWeaponToPlayer(s32 weaponnum)
 {
 	if (apLuaPlayerChr() == NULL) {
+		return 0;
+	}
+	// frSetWeaponFound and later g_Weapons reads take the number unchecked
+	if (weaponFindById(weaponnum) == NULL) {
 		return 0;
 	}
 	invGiveSingleWeapon(weaponnum);
@@ -241,6 +250,10 @@ s32 chraiLuaWeaponHeld(void)
 s32 chraiLuaSwitchWeapon(s32 weaponnum)
 {
 	if (apLuaPlayerChr() == NULL) {
+		return 0;
+	}
+	// bgunEquipWeapon2 only clamps the top end
+	if (weaponnum < WEAPON_UNARMED || weaponnum > WEAPON_SUICIDEPILL) {
 		return 0;
 	}
 	bgunEquipWeapon2(HAND_RIGHT, weaponnum);
@@ -795,6 +808,10 @@ s32 chraiLuaWeaponRename(s32 weaponnum, const char *name)
 		g_ChaosLangOverrideId2 = -1;
 		g_ChaosRenamedWeapon = -1;
 		return 1;
+	}
+	// bgunGetNameId/bgunGetShortNameId read g_Weapons[weaponnum] unchecked
+	if (weaponFindById(weaponnum) == NULL) {
+		return 0;
 	}
 	g_ChaosLangOverrideId = (s32)bgunGetNameId(weaponnum);
 	g_ChaosLangOverrideId2 = (s32)bgunGetShortNameId(weaponnum);

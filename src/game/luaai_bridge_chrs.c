@@ -1492,6 +1492,12 @@ void chraiLuaResetSentries(void)
 	// A stage unload recycles the prop/model pools, so the objects are already
 	// gone — just drop our count so the next stage can spawn a fresh batch.
 	g_ChaosSentryCount = 0;
+
+	// Same for the bike and choppers: their obj->prop points into the old
+	// stage's prop pool, so don't let the next spawn dereference it.
+	g_ChaosBikeSpawned = 0;
+	g_ChaosChopperSpawned[0] = 0;
+	g_ChaosChopperSpawned[1] = 0;
 }
 
 // pd.spawn_sentry(dx, dz) -> bool. Deploy a laptop sentry gun (MODEL_CHRAUTOGUN,

@@ -1162,7 +1162,14 @@ static void imguiOverlayDrawStagePanel(void)
 	ImGui::Text("Stage: 0x%02x, table index: 0x%02x",
 			(unsigned int)g_Vars.stagenum, (unsigned int)g_StageIndex);
 	if (g_StageIndex >= 0 && g_StageIndex < 87) {
-		const char *setupName = romdataFileGetName(g_Stages[g_StageIndex].setupfileid);
+		// romdataFileGetName reads fileSlots[g_ModNum] and rejects anything at
+		// or past ROMDATA_MAX_FILES, so a stage setup id now that it carries an
+		// owner tag (bit 24) failed its range check and the panel read
+		// "unregistered" for every modded stage. Ask the owner's row directly.
+		const s32 setupId = (s32)g_Stages[g_StageIndex].setupfileid;
+		const s32 setupOwner = MOD_FILEID_MOD(setupId);
+		const char *setupName = romdataFileGetSlotName(
+				setupOwner >= 0 ? setupOwner : g_ModNum, MOD_FILEID_RAW(setupId));
 		ImGui::Text("Setup: %s", setupName ? setupName : "unregistered");
 	}
 	ImGui::Text("Rooms: %d", g_Vars.roomcount);

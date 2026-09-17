@@ -147,26 +147,26 @@ static s32 g_NumImportedAssets = 0;
 /*
  * Store a resolved file id into one of stagetableentry's five file fields.
  *
- * The fields are u32 on both builds now, so the store no longer truncates and
- * an owner tag survives it. NOTE WHAT THAT DOES AND DOES NOT FIX: nothing
- * upstream puts an owner into the id in the first place.
- * `modConfigParseFileValue` stores whatever `romdataFileGetNumForNameInMod`
- * returns, and that is a RAW id - bounded `< ROMDATA_MAX_FILES`, never
- * stamped - so the report below cannot fire today. Widening made the storage
- * capable of carrying an owner; applying one is phase 1 of
- * multi-mod-stage-loading-plan.md and belongs at the parse, not here.
+ * The fields are u32, so the store does not truncate and an owner tag survives
+ * it; `modConfigParseFileValue` now stamps one on. Both halves are in place, so
+ * the report below fires for every field a mod declares - one LOG_NOTE per
+ * declared stage file per parse, which is the evidence that a stage's files
+ * carry their declaring mod rather than resolving against g_ModNum.
  *
- * Until then a stage file id reaches `romdataFileLoad` untagged and its
- * `modNum = g_ModNum` fallback resolves it against whichever mod is ACTIVE.
- * That fallback is unchanged by the owner tag: MOD_FILEID_MOD answers -1 for
- * an untagged id and the four fileSlots sites take the fallback on a negative,
- * so the stage path behaves exactly as it did before the tag landed.
+ * Per-field ownership needs no resolver: each of the five fields is stamped
+ * with the modNum that parsed THAT line, so a stage whose bgfile comes from one
+ * mod and whose setupfile comes from another resolves each against its own
+ * owner at `romdataFileLoad`. g_Stages still holds one row per stage and the
+ * last mod to parse a given field still wins that field - what changed is that
+ * the winner's identity now travels with the value instead of being inferred
+ * from whoever is active at load time.
  *
  * The test is >= 0, not != 0. It used to be != 0 because mod 0 read the same
  * as an untagged id and so could not be reported; now an untagged id reads as
  * -1 and every owner including mod 0 can be. LOG_NOTE rather than LOG_ERROR,
- * because with the field wide enough an owner arriving here is the thing
- * phase 1 is FOR, not a loss to shout about.
+ * because an owner arriving here is what this is FOR, not a loss to shout
+ * about. A vanilla field nobody declared keeps its raw ROM id, reads as -1, and
+ * is not reported.
  */
 #define SET_STAGE_FILEID(field, name, id) \
 	do { \
@@ -212,6 +212,42 @@ static inline char *modConfigParseStringValue(char *p, char *token, char *value)
 	sysLogPrintf(LOG_NOTE, "modconfigParseStringValue %s", value);
 	return p;
 }
+/*
+ * Resolve a modconfig file value to a file id TAGGED with its declaring mod.
+ *
+ * The name lookup was already scoped to modNum and the owner was then thrown
+ * away. Three of the four callers put it back by hand - heads (mod.c filenum),
+ * hands (handfilenum) and ModelStates (File) each wrap the result in
+ * MOD_FILEID_MAKE(modNum, ...) - and the five stage keys did not. So a stage
+ * file id arrived at romdataFileLoad untagged, took its `modNum = g_ModNum`
+ * fallback, and resolved against whichever mod happened to be ACTIVE rather
+ * than the one that declared it.
+ *
+ * Stamping here makes the stage keys agree with the three that were already
+ * right, and is a no-op for those three: MOD_FILEID_MAKE masks rawId to
+ * 0xffff, so re-stamping an already-stamped id with the same modNum reproduces
+ * it bit for bit. Both of those callers pass the same modNum they passed here,
+ * so there is no mis-tag either.
+ *
+ * modNum is >= 0 at every live call site: modConfigLoad takes it from g_ModNum,
+ * and all four callers of modConfigLoad set g_ModNum to a loop index over
+ * [0, g_NumModDirs) or to 0 first (modCacheAllConfigs, pdmain.c:310/313) or
+ * reach it only after modSwitch has repaired a negative g_ModNum. So the
+ * negative-modNum hazard MOD_FILEID_MAKE warns about cannot arise here and is
+ * not gated for, which keeps both branches below unconditionally tagged.
+ *
+ * The numeric branch used romdataFileGetName, which reads fileSlots[g_ModNum]
+ * and ignores the modNum argument entirely - it validated a literal against the
+ * ACTIVE mod's table. Harmless only because g_ModNum equals modNum at every
+ * live site today; modCacheAllConfigs already parses one mod's config with
+ * g_ModNum pointed at it, so the two would diverge the moment anything parsed
+ * out of band. Fixed here rather than deferred, because tagging one branch and
+ * not the other would leave the two halves of one function disagreeing about
+ * whether their output carries an owner. romdataFileGetSlotName is the
+ * mod-scoped spelling and bounds-checks modNum as well as fileNum. No config in
+ * PD_AIO_March_2026 or in the working roster uses a numeric file value, so
+ * nothing in either changes today.
+ */
 static inline char *modConfigParseFileValue(char *p, char *token, s32 *filenum, s32 modNum)
 {
 	p = strParseToken(p, token, NULL);
@@ -220,15 +256,15 @@ static inline char *modConfigParseFileValue(char *p, char *token, s32 *filenum, 
 	}
 	// check if it is a number already
 	s32 num = strtol(token, NULL, 0);
-	if (num > 0 && romdataFileGetName(num)) {
-		*filenum = num;
+	if (num > 0 && romdataFileGetSlotName(modNum, num)) {
+		*filenum = MOD_FILEID_MAKE(modNum, num);
 		return p;
 	}
 	// it's a filename
 	char *unquoted = strUnquote(token);
 	num = romdataFileGetNumForNameInMod(unquoted, modNum);
 	if (num >= 0) {
-		*filenum = num;
+		*filenum = MOD_FILEID_MAKE(modNum, num);
 		return p;
 	}
 	sysLogPrintf(LOG_ERROR, "modConfigParseFileValue: failed to find '%s' in mod %d", unquoted, modNum);

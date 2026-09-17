@@ -21,4 +21,10 @@ void bodyAllocateChr(s32 stagenum, struct packedchr *packed, s32 cmdindex);
 struct prop *bodyAllocateEyespy(struct pad *pad, RoomNum room);
 void bodyCalculateHeadOffset(struct modeldef *headmodeldef, s32 headnum, s32 bodynum);
 
+#ifndef PLATFORM_N64
+void modelSwapSetActive(bool on);  // character-model swap from the overlay ROM (pd.model_swap)
+bool modelSwapRomLoaded(void);     // an overlay ROM is available
+void modelSwapResetDefCache(void); // drop the parked base/overlay modeldefs (stage load)
+#endif
+
 #endif

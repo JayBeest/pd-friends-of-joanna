@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
+#include <dirent.h> // model-swap overlay ROM folder scan
 #include <PR/ultratypes.h>
 #include "gbiex.h"
 #include "lib/rzip.h"
@@ -1222,6 +1223,538 @@ static inline struct romfile *romdataGetSeg(const char *name)
 	return seg;
 }
 
+// ---------------------------------------------------------------------------
+// Character-model swap overlay ROM (pd.load_model_rom / pd.model_swap)
+//
+// From the Perfect Dark Kai fork (be46717), where the overlay shared the
+// MOD_CHAINROM file slot of Kai's --mod-rom chain loader. This build has no
+// chain loader and its fileSlots rows belong to the modloader, so the overlay
+// keeps a table of its own. A second PD ROM is loaded WITHOUT switching any
+// active slot. While g_ModelSwapActive is set, character-model files flagged
+// in g_ModelSwapFiles are served from the overlay by NAME (so a mod that
+// reordered its file table still resolves), falling back to the same index.
+// Model textures come from the overlay's own texture table (texdecompress.c)
+// while a swapped model loads (g_ModelSwapTexActive).
+// ---------------------------------------------------------------------------
+
+s32 g_ModelRomActive = 0;                      // overlay ROM loaded
+s32 g_ModelSwapActive = 0;                     // sourcing flagged models from the overlay now
+u8 g_ModelSwapFiles[ROMDATA_MAX_FILES] = { 0 }; // per raw vanilla file id: 1 = redirect when active
+// Diagnostics: bumped each time the redirect actually serves overlay bytes, and
+// each time it was armed for a file but couldn't (name miss / null data).
+s32 g_ModelSwapRedirects = 0;
+s32 g_ModelSwapMisses = 0;
+
+// Overlay TEXTURE table: a copy of the overlay's textureslist (per-texture
+// dataoffset only) and a pointer to its texturesdata, so texLoad can serve
+// overlay textures BY NUMBER while a swapped model loads, without touching the
+// base game's textures.
+struct texture *g_ModelSwapTexList = NULL;
+s32 g_ModelSwapTexCount = 0;
+u8 *g_ModelSwapTexData = NULL;
+s32 g_ModelSwapTexActive = 0; // set only while a swapped model's textures load
+
+struct modelromfile {
+	u8 *data;
+	u32 size;
+	const char *name;
+};
+
+static u8 *modelRomFile;
+static u32 modelRomFileSize;
+static u8 *modelRomDataSeg;
+static u32 modelRomDataSegSize;
+static struct modelromfile *modelRomFiles; // ROMDATA_MAX_FILES entries once loaded
+
+// Raw ROM offset of the stock texturesdata segment, captured before
+// romdataInitSegment turns it into a pointer. The overlay's texturesdata is
+// located by correlating texture bytes against the base ROM there.
+static u32 g_StockTexDataOfs = 0;
+
+// Load and validate an overlay PD ROM, inflating its compressed data segment.
+// Kai's romdataLoadRomFile with fatal=false and requireHeader=false: any
+// problem logs a warning, frees what it allocated and returns false. Total
+// conversions commonly EXPAND the ROM past the stock 32MB, so anything at
+// least stock-sized is accepted; a changed title/cart id only warns. The data
+// segment and file table are still read at their stock offsets, so a mod that
+// relocated those fails the 1173 check and is skipped.
+static bool romdataLoadOverlayRomFile(const char *name, u8 **outRom, u32 *outSize, u8 **outSeg, u32 *outSegSize)
+{
+	sysLogPrintf(LOG_NOTE, "model-swap ROM file: %s", name);
+
+	u32 romSize = 0;
+	u8 *rom = fsFileLoad(name, &romSize);
+
+	if (!rom) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: could not open %s", name);
+		return false;
+	}
+
+	if (romSize > 2 && (!memcmp(rom, "PK", 2) || !memcmp(rom, "Rar", 3) || !memcmp(rom, "7z", 2))) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: %s is an archive, skipping", name);
+		sysMemFree(rom);
+		return false;
+	}
+
+	if (romSize < ROMDATA_ROM_SIZE) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: %s too small (%u), skipping", name, romSize);
+		sysMemFree(rom);
+		return false;
+	} else if (romSize != ROMDATA_ROM_SIZE) {
+		sysLogPrintf(LOG_WARNING, "model-swap ROM is %u bytes (stock %u) — expanded mod, loading anyway", romSize, ROMDATA_ROM_SIZE);
+	}
+
+	if (memcmp(rom + 0x3b, ROMDATA_ROM_ID, 4) || memcmp(rom + 0x20, ROMDATA_ROM_TITLE, sizeof(ROMDATA_ROM_TITLE) - 1)) {
+		sysLogPrintf(LOG_WARNING, "model-swap ROM header does not match stock %s; loading anyway (mod/total conversion)", ROMDATA_ROM_DESC);
+	}
+
+	u8 *zipped = rom + ROMDATA_DATA_OFS;
+	if (!rzipIs1173(zipped)) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: %s data segment not 1173-compressed at 0x%x (relocated/incompatible layout), skipping", name, ROMDATA_DATA_OFS);
+		sysMemFree(rom);
+		return false;
+	}
+
+	const u32 dataSegLen = ((u32)zipped[2] << 16) | ((u32)zipped[3] << 8) | (u32)zipped[4];
+	if (dataSegLen < ROMDATA_FILES_OFS) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: %s data segment too small (%u), skipping", name, dataSegLen);
+		sysMemFree(rom);
+		return false;
+	}
+
+	u8 *dataSeg = sysMemAlloc(dataSegLen);
+	if (!dataSeg) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: could not alloc %u for data seg, skipping", dataSegLen);
+		sysMemFree(rom);
+		return false;
+	}
+
+	u8 scratch[5 * 1024];
+	if (rzipInflate(zipped, dataSeg, scratch) < 0) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: could not inflate %s data seg, skipping", name);
+		sysMemFree(dataSeg);
+		sysMemFree(rom);
+		return false;
+	}
+
+	*outRom = rom;
+	*outSize = romSize;
+	*outSeg = dataSeg;
+	*outSegSize = dataSegLen;
+	return true;
+}
+
+// Build the overlay file table from the overlay ROM's own offset and name
+// tables (Kai's romdataInitChainFiles). The overlay is an arbitrary user file,
+// and a mod that relocated its file table leaves this region pointing at
+// unrelated inflated data, so both loops carry hard bounds.
+static bool romdataInitOverlayFiles(void)
+{
+	const u32 *offsets = (const u32 *)(modelRomDataSeg + ROMDATA_FILES_OFS);
+	u32 i;
+
+	modelRomFiles = sysMemAlloc(ROMDATA_MAX_FILES * sizeof(*modelRomFiles));
+	if (!modelRomFiles) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: could not alloc the overlay file table");
+		return false;
+	}
+	memset(modelRomFiles, 0, ROMDATA_MAX_FILES * sizeof(*modelRomFiles));
+
+	for (i = 1; i < ROMDATA_MAX_FILES; ++i) {
+		// break, don't skip: once the table runs past the data seg every later
+		// entry is out of bounds too.
+		if ((u8 *)(offsets + i + 1) + sizeof(u32) > modelRomDataSeg + modelRomDataSegSize) {
+			break;
+		}
+		if (!offsets[i]) {
+			break;
+		}
+
+		const u32 nextofs = PD_BE32(offsets[i + 1]);
+		const u32 ofs = PD_BE32(offsets[i]);
+		// Only keep entries that lie inside the ROM; the rest stay NULL and
+		// fall through to the base file.
+		if (ofs < modelRomFileSize && nextofs >= ofs && nextofs <= modelRomFileSize) {
+			modelRomFiles[i].data = modelRomFile + ofs;
+			modelRomFiles[i].size = nextofs - ofs;
+		}
+	}
+
+	if (i < 2) {
+		return true;
+	}
+
+	// last offset is to the name table: validate it lands inside the ROM
+	// before dereferencing, then bound the walk the same way.
+	const u32 nametableofs = PD_BE32(offsets[i - 1]);
+
+	if (nametableofs >= modelRomFileSize) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: name table offset 0x%x past end of overlay ROM (0x%x)",
+				nametableofs, modelRomFileSize);
+		return true;
+	}
+
+	const u32 *nameOffsets = (const u32 *)(modelRomFile + nametableofs);
+	const u32 namemax = (modelRomFileSize - nametableofs) / sizeof(u32);
+
+	for (i = 1; i < ROMDATA_MAX_FILES && i < namemax && nameOffsets[i]; ++i) {
+		const u32 ofs = PD_BE32(nameOffsets[i]);
+		// ofs is relative to the start of the name table
+		if ((u64)nametableofs + ofs < modelRomFileSize
+				&& memchr((const u8 *)nameOffsets + ofs, 0, modelRomFileSize - nametableofs - ofs)) {
+			modelRomFiles[i].name = (const char *)nameOffsets + ofs;
+		}
+	}
+
+	return true;
+}
+
+// read the 24-bit big-endian dataoffset of textureslist entry n
+static inline u32 romdataTexListDofs(const u8 *rom, u32 listOfs, u32 n)
+{
+	const u8 *e = rom + listOfs + n * 8;
+	return ((u32)e[1] << 16) | ((u32)e[2] << 8) | e[3];
+}
+
+// Locate the overlay ROM's texture table and data (Kai's
+// romdataChainRelocateTexSegments, overlay path only).
+//
+// Total conversions commonly grow the texture data, which shifts the trailing
+// texturesdata/textureslist/copyright segments away from their stock offsets.
+// The textureslist is found by signature: 8-byte entries with a non-decreasing
+// 24-bit big-endian dataoffset in bytes 1-3 and zeroes in bytes 4-7, first
+// entry at dataoffset 0; the final (terminator) entry holds the total
+// texturesdata size. texturesdata itself is NOT reliably adjacent to the list,
+// so its base is found by correlation against the base ROM: PD-derived mods
+// keep many stock textures byte-identical, so sample entries across the list,
+// take each texture's first bytes from the base ROM and search for them in the
+// overlay ROM; every hit votes for an implied base offset, majority wins. On an
+// unmodified ROM all of this reproduces the stock offsets exactly.
+//
+// Best-effort: if either cannot be found, geometry still swaps and textures
+// stay base.
+static void romdataOverlayLocateTextures(void)
+{
+	const u8 *rom = modelRomFile;
+	u32 bestOfs = 0, bestCount = 0, bestTerm = 0;
+	u32 runOfs = 0, runCount = 0, runRises = 0, prevDofs = 0;
+	// diagnostics: largest run seen regardless of whether it qualified
+	u32 dbgBestRun = 0, dbgBestRunOfs = 0, dbgBestRunRises = 0, dbgBestRunTerm = 0;
+
+	for (u32 o = 0; o + 8 <= modelRomFileSize; o += 8) {
+		const u32 dofs = ((u32)rom[o + 1] << 16) | ((u32)rom[o + 2] << 8) | rom[o + 3];
+		const s32 entryok = rom[o + 4] == 0 && rom[o + 5] == 0 && rom[o + 6] == 0 && rom[o + 7] == 0
+			&& (runCount == 0 ? dofs == 0 : dofs >= prevDofs);
+
+		if (entryok) {
+			if (runCount == 0) {
+				runOfs = o;
+				runRises = 0;
+			} else if (dofs > prevDofs) {
+				++runRises;
+			}
+			prevDofs = dofs;
+			++runCount;
+			continue;
+		}
+
+		if (runCount) {
+			// trim fake leading entries: zero padding right before the real
+			// list can parse as extra zero-dataoffset entries. The real first
+			// entry is the only zero-dataoffset entry whose successor has a
+			// nonzero dataoffset.
+			while (runCount > 1) {
+				const u32 second = ((u32)rom[runOfs + 9] << 16) | ((u32)rom[runOfs + 10] << 8) | rom[runOfs + 11];
+				if (second != 0) {
+					break;
+				}
+				runOfs += 8;
+				--runCount;
+			}
+
+			if (runCount > dbgBestRun) {
+				dbgBestRun = runCount;
+				dbgBestRunOfs = runOfs;
+				dbgBestRunRises = runRises;
+				dbgBestRunTerm = prevDofs;
+			}
+			// 8-byte aligned, plenty of entries, mostly increasing (rejects
+			// zero-filled regions).
+			if ((runOfs & 7) == 0 && runCount >= 1024 && runRises >= runCount / 2
+					&& prevDofs >= 0x10000 && runCount > bestCount) {
+				bestOfs = runOfs;
+				bestCount = runCount;
+				bestTerm = prevDofs;
+			}
+			runCount = 0;
+			// the entry that broke the run may start a new one (the loop's
+			// o += 8 brings it back to this entry)
+			o -= 8;
+		}
+	}
+
+	if (!bestCount) {
+		sysLogPrintf(LOG_WARNING, "model-swap: could not locate a textureslist; overlay textures disabled "
+			"(best run: %u entries at 0x%x, rises=%u, term=0x%x)",
+			dbgBestRun, dbgBestRunOfs, dbgBestRunRises, dbgBestRunTerm);
+		return;
+	}
+
+	// The stock list is read from the preprocessed textureslist segment:
+	// preprocessTexturesList rewrites it in place inside g_RomFile, so the raw
+	// bytes there are no longer the big-endian entries. (Kai read the raw
+	// bytes, which after the rewrite only matched by chance.)
+	const struct romfile *segList = romdataGetSeg("textureslist");
+	const struct texture *stockList = (const struct texture *)segList->data;
+	const u32 stockDataOfs = g_StockTexDataOfs;
+	const u32 stockCount = stockList ? segList->size / sizeof(struct texture) : 0;
+
+	// The stock texture data must sit inside the base ROM, or the correlation
+	// below would read a wild address.
+	if (!g_RomFile || stockDataOfs >= g_RomFileSize || stockCount < 10) {
+		sysLogPrintf(LOG_WARNING, "model-swap: base texture table invalid (data 0x%x, %u entries, rom 0x%x); overlay textures disabled",
+			stockDataOfs, stockCount, g_RomFileSize);
+		return;
+	}
+
+	// Vote for the texturesdata base by correlating texture bytes with the
+	// base ROM. A texture-replacing conversion shares few textures with the
+	// base, so sample many, and reject any base whose data region would
+	// overlap the textureslist (coincidental matches). One surviving 16-byte
+	// exact match at a geometrically valid base is enough.
+	enum { CORR_SAMPLES = 256, CORR_PATLEN = 16, CORR_MAXCAND = 64, CORR_MAXHITS = 16, CORR_MINVOTES = 1 };
+	struct { u32 base; u32 votes; } cand[CORR_MAXCAND];
+	u32 numCand = 0;
+
+	const u32 maxn = (bestCount < stockCount ? bestCount : stockCount) - 1;
+
+	// Not in Kai: first try the textures whose compressed SIZE is the same in
+	// both lists. A texture a mod kept is almost always one of these, so this
+	// finds the survivors directly instead of hoping an evenly spread sample
+	// lands on them (GoldenEye X keeps only about a dozen, and the spread
+	// sample found none of them and settled on a coincidental match). Kai's
+	// spread sample below still runs when this finds nothing.
+	u32 samples[CORR_SAMPLES];
+	u32 numSamples = 0;
+
+	for (u32 n = 0; n < maxn && numSamples < CORR_SAMPLES; ++n) {
+		const u32 sThis = stockList[n].dataoffset;
+		const u32 sNext = stockList[n + 1].dataoffset;
+		const u32 cThis = romdataTexListDofs(rom, bestOfs, n);
+		const u32 cNext = romdataTexListDofs(rom, bestOfs, n + 1);
+		if (sNext > sThis && sNext - sThis >= CORR_PATLEN && cNext > cThis
+				&& sNext - sThis == cNext - cThis) {
+			samples[numSamples++] = n;
+		}
+	}
+
+	for (u32 pass = 0; pass < 2; ++pass) {
+		const u32 passSamples = pass == 0 ? numSamples : CORR_SAMPLES;
+
+		if (pass == 1 && numCand > 0) {
+			break;
+		}
+		for (u32 s = 0; s < passSamples; ++s) {
+			const u32 n = pass == 0 ? samples[s] : 8 + (u32)((u64)(maxn - 8) * s / CORR_SAMPLES);
+			const u32 sThis = stockList[n].dataoffset;
+			const u32 sNext = stockList[n + 1].dataoffset;
+			const u32 cThis = romdataTexListDofs(rom, bestOfs, n);
+			const u32 cNext = romdataTexListDofs(rom, bestOfs, n + 1);
+			if (sThis >= sNext || cThis >= cNext) {
+				continue; // no data for this texture in one of the ROMs
+			}
+			if ((u64)stockDataOfs + sThis + CORR_PATLEN > g_RomFileSize) {
+				continue;
+			}
+
+			const u8 *pat = g_RomFile + stockDataOfs + sThis;
+			const u8 *p = rom;
+			const u8 *end = rom + modelRomFileSize - CORR_PATLEN;
+			u32 hits = 0;
+
+			while (p <= end && hits < CORR_MAXHITS) {
+				p = memchr(p, pat[0], end - p + 1);
+				if (!p) {
+					break;
+				}
+				if (memcmp(p, pat, CORR_PATLEN) == 0) {
+					++hits;
+					const u32 pos = (u32)(p - rom);
+					if (pos >= cThis) {
+						const u32 base = pos - cThis;
+						// the overlay's texturesdata sits BEFORE its textureslist
+						if ((u64)base + bestTerm <= bestOfs) {
+							u32 c;
+							for (c = 0; c < numCand && cand[c].base != base; ++c);
+							if (c < numCand) {
+								++cand[c].votes;
+							} else if (numCand < CORR_MAXCAND) {
+								cand[numCand].base = base;
+								cand[numCand].votes = 1;
+								++numCand;
+							}
+						}
+					}
+				}
+				++p;
+			}
+		}
+	}
+
+	u32 dataOfs = 0, dataVotes = 0;
+	for (u32 c = 0; c < numCand; ++c) {
+		if (cand[c].votes > dataVotes) {
+			dataOfs = cand[c].base;
+			dataVotes = cand[c].votes;
+		}
+	}
+
+	if (dataVotes < CORR_MINVOTES || (u64)dataOfs + bestTerm > modelRomFileSize) {
+		sysLogPrintf(LOG_WARNING, "model-swap: could not locate texturesdata (list at 0x%x, best base 0x%x with %u votes); overlay textures disabled",
+			bestOfs, dataOfs, dataVotes);
+		return;
+	}
+
+	sysLogPrintf(LOG_NOTE, "model-swap: textureslist at 0x%x (%u entries), texturesdata at 0x%x size 0x%x (%u votes; stock data 0x%x)",
+		bestOfs, bestCount, dataOfs, bestTerm, dataVotes, stockDataOfs);
+
+	// Keep only the dataoffset of each entry; it is all loading pixels needs.
+	struct texture *list = sysMemAlloc(bestCount * sizeof(struct texture));
+	if (!list) {
+		sysLogPrintf(LOG_WARNING, "model-swap: could not alloc %u-entry overlay texture table", bestCount);
+		return;
+	}
+	memset(list, 0, bestCount * sizeof(struct texture));
+	for (u32 i = 0; i < bestCount; ++i) {
+		const u8 *e = rom + bestOfs + i * 8;
+		list[i].dataoffset = ((u32)e[1] << 16) | ((u32)e[2] << 8) | e[3];
+	}
+	g_ModelSwapTexList = list;
+	g_ModelSwapTexCount = (s32)bestCount;
+	g_ModelSwapTexData = modelRomFile + dataOfs;
+	sysLogPrintf(LOG_NOTE, "model-swap: overlay texture table ready (%u entries, data at 0x%x)", bestCount, dataOfs);
+}
+
+// The overlay file whose name matches, or -1.
+s32 romdataModelRomFileGetNumForName(const char *name)
+{
+	if (!modelRomFiles || !name || !name[0]) {
+		return -1;
+	}
+
+	for (s32 i = 1; i < ROMDATA_MAX_FILES; ++i) {
+		if (modelRomFiles[i].name && !strcmp(modelRomFiles[i].name, name)) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+// Serve a flagged vanilla file from the overlay, or NULL. name is the base
+// file's name; rawFileNum its raw id.
+static u8 *romdataModelRomRedirect(s32 rawFileNum, const char *name, u32 *outSize)
+{
+	// Prefer matching by NAME (handles a mod that reordered its file table).
+	s32 cn = romdataModelRomFileGetNumForName(name);
+
+	if (cn <= 0 || !modelRomFiles[cn].data) {
+		// Name lookup failed. PD-derived total conversions keep the stock file
+		// NUMBERING but often carry a name table the stock-offset parse can't
+		// resolve, while the file-offset table is correct. So fall back to the
+		// SAME index, guarded on a real 1173 header so a garbage slot can never
+		// be served.
+		if (modelRomFiles[rawFileNum].data && modelRomFiles[rawFileNum].size > 5
+				&& rzipIs1173(modelRomFiles[rawFileNum].data)) {
+			cn = rawFileNum;
+		}
+	}
+
+	if (cn > 0 && modelRomFiles[cn].data) {
+		g_ModelSwapRedirects++;
+		if (outSize) {
+			*outSize = modelRomFiles[cn].size;
+		}
+		return modelRomFiles[cn].data;
+	}
+
+	// armed but couldn't serve
+	g_ModelSwapMisses++;
+	return NULL;
+}
+
+// Load a model-swap overlay ROM at runtime. `path` may be a ROM FILE or a
+// DIRECTORY (scanned for the first ROM-sized file, so a script can point at a
+// folder and the user drops any-named z64 in it). A bare relative path is
+// anchored to the working directory, like scripts/init.lua, not to the data
+// dir. Returns 1 on success (or if one is already loaded), 0 if no usable ROM
+// was found; nothing here is fatal.
+s32 romdataLoadModelRom(const char *path)
+{
+	char filepath[FS_MAXPATH + 1] = { 0 };
+
+	if (g_ModelRomActive) {
+		return 1; // already loaded (idempotent)
+	}
+	if (!path || !path[0]) {
+		return 0;
+	}
+
+	const char *base = path;
+	char anchored[FS_MAXPATH + 1];
+	if (!fsPathIsAbsolute(path) && path[0] != '.' && path[0] != '$') {
+		snprintf(anchored, sizeof(anchored), "./%s", path);
+		base = anchored;
+	}
+
+	if (fsFileSize(base) >= (s32)ROMDATA_ROM_SIZE) {
+		snprintf(filepath, sizeof(filepath), "%s", base);
+	} else {
+		DIR *dr = opendir(base);
+		struct dirent *de;
+
+		if (!dr) {
+			sysLogPrintf(LOG_NOTE, "romdataLoadModelRom: no folder %s", base);
+			return 0;
+		}
+
+		while ((de = readdir(dr)) != NULL) {
+			char cand[FS_MAXPATH + 1];
+			if (de->d_name[0] == '.') {
+				continue;
+			}
+			snprintf(cand, sizeof(cand), "%s/%s", base, de->d_name);
+			if (fsFileSize(cand) >= (s32)ROMDATA_ROM_SIZE) {
+				snprintf(filepath, sizeof(filepath), "%s", cand);
+				break;
+			}
+		}
+
+		closedir(dr);
+
+		if (!filepath[0]) {
+			sysLogPrintf(LOG_NOTE, "romdataLoadModelRom: no ROM-sized file in %s", base);
+			return 0;
+		}
+	}
+
+	sysLogPrintf(LOG_NOTE, "romdataLoadModelRom: loading model overlay ROM: %s", filepath);
+	if (!romdataLoadOverlayRomFile(filepath, &modelRomFile, &modelRomFileSize, &modelRomDataSeg, &modelRomDataSegSize)) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: %s could not be loaded as an overlay (see above); model swap disabled", filepath);
+		return 0;
+	}
+	if (!romdataInitOverlayFiles()) {
+		sysMemFree(modelRomDataSeg);
+		sysMemFree(modelRomFile);
+		modelRomDataSeg = NULL;
+		modelRomFile = NULL;
+		return 0;
+	}
+	romdataOverlayLocateTextures();
+	g_ModelRomActive = 1;
+	return 1;
+}
+
 s32 romdataInit(void)
 {
 	if (getenv("PD_DEBUG_FILELOAD")) {
@@ -1242,6 +1775,11 @@ s32 romdataInit(void)
 
 	romdataLoadRom();
 
+	// Raw stock offset of the texture data, for the model-swap overlay
+	// (romdataOverlayLocateTextures), before romdataInitSegment below turns
+	// it into a pointer.
+	g_StockTexDataOfs = (u32)(uintptr_t)romdataGetSeg("texturesdata")->data;
+
 	// set segments to point to the rom or load them externally
 	for (struct romfile *seg = romSegs; seg->name; ++seg) {
 		romdataInitSegment(seg);
@@ -1249,6 +1787,15 @@ s32 romdataInit(void)
 
 	// load file table from the files segment
 	romdataInitFiles();
+
+	// Model-swap overlay ROM via the --model-rom launch arg (optional; scripts
+	// can load one at runtime with pd.load_model_rom instead).
+	{
+		const char *modelRomName = sysArgGetString("--model-rom");
+		if (modelRomName) {
+			romdataLoadModelRom(modelRomName);
+		}
+	}
 
 	sysLogPrintf(LOG_NOTE, "romdataInit: loaded rom, size = %u", g_RomFileSize);
 
@@ -1710,6 +2257,19 @@ u8 *romdataFileLoad(s32 fileNum, u32 *outSize)
 		DEBUG_FLOAD("romdataFileLoad: file %d (%s) FALLBACK TO ROM (context=%s, allowMod=%d)",
 			fileNum, fileSlots[modNum][fileNum].name, romdataGetContextPrefix(), allowMod);
 	}
+	}
+
+	// Model swap (pd.model_swap): serve a flagged vanilla character-model file
+	// from the overlay ROM. The caller inflates and preprocesses the bytes
+	// under the BASE file id, so texture linkage stays correct. Only files the
+	// base ROM would serve are redirected; loose and alt-ROM files win.
+	if (!out && g_ModelSwapActive && g_ModelRomActive && fileOwner < 0
+			&& g_ModelSwapFiles[fileNum]
+			&& fileSlots[modNum][fileNum].source == SRC_ROM) {
+		u8 *swapped = romdataModelRomRedirect(fileNum, fileSlots[modNum][fileNum].name, outSize);
+		if (swapped) {
+			return swapped;
+		}
 	}
 
 	if (!out) {

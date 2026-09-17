@@ -19,6 +19,27 @@ extern u32 g_RomFileSize;
 
 s32 romdataInit(void);
 
+// Character-model swap overlay ROM (pd.load_model_rom / pd.model_swap), from
+// Kai. g_ModelRomActive: an overlay ROM is loaded. g_ModelSwapActive:
+// character models are currently sourced from it. g_ModelSwapFiles[rawid] != 0
+// flags a vanilla file for redirection. The game side (body.c
+// modelSwapSetActive) owns these.
+extern s32 g_ModelRomActive;
+extern s32 g_ModelSwapActive;
+extern u8 g_ModelSwapFiles[];
+extern s32 g_ModelSwapRedirects; // # of times the redirect served overlay bytes
+extern s32 g_ModelSwapMisses;    // # of times it was armed but couldn't serve
+// Overlay texture table/data (built when the overlay ROM loads) and the flag
+// that gates per-number texture redirection while a swapped model loads.
+struct texture;
+extern struct texture *g_ModelSwapTexList;
+extern s32 g_ModelSwapTexCount;
+extern u8 *g_ModelSwapTexData;
+extern s32 g_ModelSwapTexActive;
+#define ROMDATA_MODELSWAP_MAX_FILES 8192 // size of g_ModelSwapFiles (ROMDATA_MAX_FILES)
+s32 romdataModelRomFileGetNumForName(const char *name);
+s32 romdataLoadModelRom(const char *path); // path = ROM file or dir to scan; 1 = loaded
+
 u8 *romdataFileLoad(s32 fileNum, u32 *outSize);
 void romdataFilePreprocess(s32 fileNum, s32 loadType, u8 *data, u32 size, u32 *outSize);
 void romdataFileFree(s32 fileNum);

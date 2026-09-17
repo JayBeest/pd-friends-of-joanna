@@ -276,12 +276,18 @@ static int l_ctx_self(lua_State *L)
 	return 1;
 }
 
-/* ctx:run(opcode, b0, b1, ...) -> break flag
- * Invoke an arbitrary engine command from Lua with explicit operand bytes. */
+/* ctx:run(opcode, b0, b1, ...) -> 0 continue, 1 yield, 2 list changed
+ * Invoke an arbitrary engine command from Lua with explicit operand bytes.
+ * Same codes as ctx:exec: a command that switches the entity's list (set_ailist
+ * on self, return) reports 2, and the chunk must return it so luaaiExecute
+ * picks up the new list. */
 static int l_ctx_run(lua_State *L)
 {
 	lua_Integer arg = luaL_checkinteger(L, 2);
 	u32 opcode;
+	void *before;
+	void *after;
+	s32 brk;
 	u8 operands[60];
 	int top = lua_gettop(L);
 	int i;
@@ -295,7 +301,16 @@ static int l_ctx_run(lua_State *L)
 		operands[n++] = (u8)(luaL_checkinteger(L, i) & 0xff);
 	}
 
-	lua_pushinteger(L, chraiLuaRunSynthetic(opcode, operands, n));
+	before = chraiLuaGetList();
+	brk = chraiLuaRunSynthetic(opcode, operands, n);
+	after = chraiLuaGetList();
+
+	if (after != before || after == NULL) {
+		lua_pushinteger(L, LUAAI_SWITCH);
+		return 1;
+	}
+
+	lua_pushinteger(L, brk ? LUAAI_YIELD : LUAAI_TERMINAL);
 	return 1;
 }
 

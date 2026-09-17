@@ -109,6 +109,11 @@ s32 chraiLuaOverridesAllowed(void);
  * handler. Intended for hand-written Lua scripts that want to invoke engine
  * commands directly. Returns the handler's break flag (0/1). Note: control
  * flow commands (labels, gotos) are not meaningful in synthetic mode.
+ *
+ * A resume position the handler saves into the entity (yield) is undone, since
+ * it would point at the temporary command buffer. A list switch the handler
+ * makes (set_ailist on self, return) is kept, with its offset, and shows as a
+ * change of g_Vars.ailist.
  */
 s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n);
 

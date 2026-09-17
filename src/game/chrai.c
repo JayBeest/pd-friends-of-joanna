@@ -1244,6 +1244,62 @@ s32 chraiLuaGetPlayerCount(void)
 	return (s32)PLAYERCOUNT();
 }
 
+#ifndef PLATFORM_N64
+// The list position the current entity resumes from next frame. aiYield
+// writes it; the entity types disagree on the offset's width.
+struct chrailuasaved {
+	u8 *ailist;
+	u32 aioffset;
+};
+
+static void chraiLuaGetSaved(struct chrailuasaved *out)
+{
+	out->ailist = NULL;
+	out->aioffset = 0;
+
+	if (g_Vars.chrdata) {
+		out->ailist = g_Vars.chrdata->ailist;
+		out->aioffset = g_Vars.chrdata->aioffset;
+	} else if (g_Vars.truck) {
+		out->ailist = g_Vars.truck->ailist;
+		out->aioffset = g_Vars.truck->aioffset;
+	} else if (g_Vars.heli) {
+		out->ailist = g_Vars.heli->ailist;
+		out->aioffset = g_Vars.heli->aioffset;
+	} else if (g_Vars.hovercar) {
+		out->ailist = g_Vars.hovercar->ailist;
+		out->aioffset = g_Vars.hovercar->aioffset;
+	}
+}
+
+static void chraiLuaSetSaved(const struct chrailuasaved *in)
+{
+	if (g_Vars.chrdata) {
+		g_Vars.chrdata->ailist = in->ailist;
+		g_Vars.chrdata->aioffset = in->aioffset;
+	} else if (g_Vars.truck) {
+		g_Vars.truck->ailist = in->ailist;
+		g_Vars.truck->aioffset = in->aioffset;
+	} else if (g_Vars.heli) {
+		g_Vars.heli->ailist = in->ailist;
+		g_Vars.heli->aioffset = in->aioffset;
+	} else if (g_Vars.hovercar) {
+		g_Vars.hovercar->ailist = in->ailist;
+		g_Vars.hovercar->aioffset = in->aioffset;
+	}
+}
+
+static bool chraiLuaInBuf(const u8 *p, const u8 *buf, u32 len)
+{
+	return (uintptr_t)p >= (uintptr_t)buf && (uintptr_t)p < (uintptr_t)buf + len;
+}
+#endif
+
+// Run one command built from Lua values. Returns the handler's break flag.
+// On return g_Vars.ailist is either the list the script was running, with its
+// offset untouched, or the list the handler switched to (possibly NULL), with
+// the offset the handler set. The caller tells the two apart by comparing
+// g_Vars.ailist, as it does for chraiLuaStep.
 s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 {
 	// Zero-initialised so a handler that reads more operand bytes than the Lua
@@ -1254,6 +1310,10 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 	s32 type = (s32)(opcode & 0xffff);
 	s32 ret = 0;
 	u32 i;
+#ifndef PLATFORM_N64
+	struct chrailuasaved saved;
+	struct chrailuasaved now;
+#endif
 
 	if (n > 60) {
 		n = 60;
@@ -1292,9 +1352,34 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	chraiLuaGetSaved(&saved);
+#endif
+
 	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
 		ret = g_CommandPointers[type]() ? 1 : 0;
 	}
+
+#ifndef PLATFORM_N64
+	// A handler that saves the resume position (aiYield) has just saved buf,
+	// which is gone once this returns, and the entity would run stack garbage
+	// next frame. A synthetic command is not a place in the entity's list, so
+	// put back what was saved before. Checked for every opcode rather than by
+	// a list of saving verbs, which mod verbs would outgrow.
+	chraiLuaGetSaved(&now);
+
+	if (chraiLuaInBuf(now.ailist, buf, sizeof(buf))) {
+		chraiLuaSetSaved(&saved);
+	}
+
+	// A handler that switched lists (set_ailist on self, return) left a real
+	// list, or NULL, in g_Vars. Keep it: that is what the same command does
+	// through chraiLuaStep, and ctx:run then reports 2 like ctx:exec. Only a
+	// g_Vars.ailist still inside buf is the script's own list to restore.
+	if (!chraiLuaInBuf(g_Vars.ailist, buf, sizeof(buf))) {
+		return ret;
+	}
+#endif
 
 	g_Vars.ailist = savelist;
 	g_Vars.aioffset = saveoff;

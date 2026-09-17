@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/activemenu.h"
 #include "game/bondbike.h"
 #include "game/bondgrab.h"
@@ -2296,6 +2297,109 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 	}
 
 #ifndef PLATFORM_N64
+	// Chaos weapon effects (Kai be46717), applied right before
+	// bgunTickGameplay consumes triggeron and before the cycle offsets are
+	// consumed below.
+
+	// Chaos "Cyclone Frenzy" gun-lock (pd.gun_lock): force secondary fire on
+	// both hands, hold the trigger (auto-fire), and suppress weapon cycling.
+	// amOpen (the weapon menu) is blocked at its own definition.
+	if (g_ChaosGunLock
+			&& g_Vars.currentplayer->pausemode == PAUSEMODE_UNPAUSED
+			&& !g_Vars.currentplayer->isdead) {
+		g_Vars.currentplayer->hands[HAND_RIGHT].gset.weaponfunc = FUNC_SECONDARY;
+		g_Vars.currentplayer->hands[HAND_LEFT].gset.weaponfunc = FUNC_SECONDARY;
+		movedata.triggeron = true;
+		movedata.weaponforwardoffset = 0;
+		movedata.weaponbackoffset = 0;
+	}
+
+	// Chaos "Knife fight" lock (pd.knife_lock): suppress weapon cycling only
+	// (the knife is used normally — no forced function or auto-swing). amOpen
+	// blocked at its def.
+	if (g_ChaosKnifeLock
+			&& g_Vars.currentplayer->pausemode == PAUSEMODE_UNPAUSED
+			&& !g_Vars.currentplayer->isdead) {
+		movedata.weaponforwardoffset = 0;
+		movedata.weaponbackoffset = 0;
+	}
+
+	// Chaos "Secondaries only" (pd.force_secondary): pin both hands to the
+	// secondary function. Re-asserted every tick (a function toggle or weapon
+	// switch reverts it for one frame at most); everything else is left alone.
+	if (g_ChaosForceSecondary
+			&& g_Vars.currentplayer->pausemode == PAUSEMODE_UNPAUSED
+			&& !g_Vars.currentplayer->isdead) {
+		g_Vars.currentplayer->hands[HAND_RIGHT].gset.weaponfunc = FUNC_SECONDARY;
+		g_Vars.currentplayer->hands[HAND_LEFT].gset.weaponfunc = FUNC_SECONDARY;
+	}
+
+	// Chaos "Mag Dump" (pd.mag_dump): a single trigger tap empties the magazine.
+	// Automatic weapons get the trigger held; semi-autos get it pulsed off/on so
+	// each release+press fires another round. Bullet weapons only (SHOOT single /
+	// automatic — excludes melee/throw/device by the low byte and rockets by the
+	// 0x0200 high byte). Armed on the player's real press; disarmed when the clip
+	// empties (one tap == one mag) or after a safety cap. A held trigger simply
+	// re-arms next tick, so ordinary auto fire is unchanged.
+	if (g_ChaosMagDump
+			&& g_Vars.currentplayer->pausemode == PAUSEMODE_UNPAUSED
+			&& !g_Vars.currentplayer->isdead) {
+		struct hand *rhand = &g_Vars.currentplayer->hands[HAND_RIGHT];
+		struct gunctrl *ctrl = &g_Vars.currentplayer->gunctrl;
+		struct weaponfunc *func = currentPlayerGetWeaponFunction(HAND_RIGHT);
+		static s32 magpulse = 0;
+		static s32 magticks = 0;
+
+		if (func && (func->type & 0xff) == INVENTORYFUNCTYPE_SHOOT
+				&& ((func->type & 0xff00) == 0x0000 || (func->type & 0xff00) == 0x0100)) {
+			if (movedata.triggeron) {
+				g_ChaosMagDumpArmed = 1; // the player fired — start dumping
+			}
+
+			if (g_ChaosMagDumpArmed) {
+				magticks += g_Vars.lvupdate60;
+
+				if ((func->ammoindex >= 0
+							&& rhand->loadedammo[func->ammoindex] == 0
+							&& ctrl->ammotypes[func->ammoindex] >= 0)
+						|| magticks > 240) {
+					g_ChaosMagDumpArmed = 0; // clip empty (or capped) — stop
+					magpulse = 0;
+					magticks = 0;
+				} else if ((func->type & 0xff00) == 0x0100) {
+					movedata.triggeron = true;            // automatic: hold
+					magpulse = 0;
+				} else {
+					magpulse++;                           // semi-auto: rapid tap
+					movedata.triggeron = (magpulse & 1) != 0;
+				}
+			}
+		} else {
+			g_ChaosMagDumpArmed = 0; // non-bullet weapon — never dump
+			magpulse = 0;
+			magticks = 0;
+		}
+	}
+
+	// Chaos "Trigger Happy" (pd.rapid_fire): while YOU hold the trigger, pulse
+	// it so semi-autos fire as fast as automatics. It only acts while you are
+	// actively firing (movedata.triggeron already set from your input), so it
+	// reads as "press = rapid fire" rather than auto-fire. Automatic weapons
+	// (0x0100) already re-fire on a held trigger, so leave them untouched and
+	// only pulse the single-shot SHOOT funcs (0x0000).
+	if (g_ChaosRapidFire
+			&& g_Vars.currentplayer->pausemode == PAUSEMODE_UNPAUSED
+			&& !g_Vars.currentplayer->isdead && movedata.triggeron) {
+		struct weaponfunc *rfunc = currentPlayerGetWeaponFunction(HAND_RIGHT);
+		static s32 rapidpulse = 0;
+
+		if (rfunc && (rfunc->type & 0xff) == INVENTORYFUNCTYPE_SHOOT
+				&& (rfunc->type & 0xff00) == 0x0000) {
+			rapidpulse++;
+			movedata.triggeron = (rapidpulse & 1) != 0;
+		}
+	}
+
 	// Lua "Forced March" (pd.forced_march, from Kai): force the walk at the
 	// movedata level, after every control-style branch; the digital step is
 	// consumed uniformly by bwalk. Before the freeze block so Take a Break
@@ -2303,6 +2407,11 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 	if (g_ChaosForcedMarch && !g_Vars.currentplayer->isdead) {
 		movedata.digitalstepforward = true;
 		movedata.digitalstepback = false;
+	}
+
+	// Chaos "Itchy Trigger Finger" (pd.forced_fire): hold the trigger down.
+	if (g_ChaosForcedFire && !g_Vars.currentplayer->isdead) {
+		movedata.triggeron = true;
 	}
 
 	// Lua "Take a break" (pd.player_freeze, from Kai): block ALL player input

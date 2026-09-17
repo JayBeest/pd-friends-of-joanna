@@ -187,4 +187,11 @@ s32 bgunGetWeaponNum2(s32 handnum);
 s8 bgunFreeFireslotWrapper(s32 fireslot);
 s8 bgunFreeFireslot(s32 fireslot);
 
+#ifndef PLATFORM_N64
+/* Kai (be46717) chaos weapon effects */
+void bgunChaosTemuSpentClear(void);
+void bgunChaosRebakeClipSizes(void);
+u16 bgunGetShortNameId(s32 weaponnum);
+#endif
+
 #endif

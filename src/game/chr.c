@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include "lib/sched.h"
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/bondmove.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
@@ -2136,6 +2137,14 @@ void chrUncloak(struct chrdata *chr, bool value)
 
 void chrUncloakTemporarily(struct chrdata *chr)
 {
+#ifndef PLATFORM_N64
+	// Chaos "Now you see me..." (pd.cloak_lock): while set, the player's cloak
+	// is unbreakable — firing doesn't drop it, and it neither drains nor
+	// requires cloak ammo (chrUpdateCloak gate below).
+	if (g_ChaosCloakLock && chr->prop && chr->prop->type == PROPTYPE_PLAYER) {
+		return;
+	}
+#endif
 	chrUncloak(chr, true);
 	chr->cloakpause = TICKS(120);
 }
@@ -2223,6 +2232,13 @@ void chrUpdateCloak(struct chrdata *chr)
 		prevplayernum = g_Vars.currentplayernum;
 		setCurrentPlayerNum(playermgrGetPlayerNumByProp(chr->prop));
 
+#ifndef PLATFORM_N64
+		if (g_ChaosCloakLock && (g_Vars.currentplayer->devicesactive & DEVICE_CLOAKDEVICE)) {
+			// Chaos cloak lock: infinite cloak — skip the ammo drain and the
+			// out-of-ammo auto-off (a chaos device_on grants no cloak ammo,
+			// so the vanilla path would switch the device straight back off)
+		} else
+#endif
 		if (g_Vars.currentplayer->devicesactive & DEVICE_CLOAKDEVICE) {
 			// Cloak is active - but may or may not be in effect due to recent shooting
 			s32 qty = bgunGetReservedAmmoCount(AMMOTYPE_CLOAK);
@@ -2451,6 +2467,9 @@ s32 chrTick(struct prop *prop)
 	f32 sp178;
 	struct hoverbikeobj *bike;
 	u8 stack[0x28];
+#ifndef PLATFORM_N64
+	bool chaosbackfireforced = false;
+#endif
 
 	if (prop->flags & PROPFLAG_NOTYETTICKED) {
 		fulltick = true;
@@ -2697,12 +2716,38 @@ s32 chrTick(struct prop *prop)
 		chrUpdateAimProperties(chr);
 	}
 
+#ifndef PLATFORM_N64
+	// Chaos "Backwards bullets" (pd.backfire). bgunCalculatePlayerShotSpread
+	// reverses the shot ray, but shotCalculateHits only ever walks
+	// g_Vars.onscreenprops, and the chr narrow phase tests against
+	// model->matrices, which are model-to-SCREEN and are only built in the
+	// `if (needsupdate)` block below. A chr behind the player has neither, so
+	// the reversed ray would have nothing to test against.
+	//
+	// Force the render prep on for chrs within draw distance while the effect
+	// runs, so they enter onscreenprops WITH valid matrices. Placed BEFORE the
+	// kill-plane and corpse-reap guards below so those still get the last
+	// word. Gated on the effect, so this is one branch when it's off.
+	if (g_ChaosBackfire && !needsupdate && posIsInDrawDistance(&prop->pos)) {
+		needsupdate = true;
+		chaosbackfireforced = true;
+	}
+#endif
+
 	if (prop->pos.y < -65536) {
 		needsupdate = false;
 	}
 
 #if VERSION >= VERSION_NTSC_1_0
+	// Chaos: a backfire-forced chr must not spend the per-frame render-prep
+	// budget below, or the effect eats it with everything behind the player
+	// and chrs beyond the cap silently lose their matrices. Forced chrs are
+	// exempt from the budget AND from the corpse-reap counters.
+#ifndef PLATFORM_N64
+	if (!g_Vars.normmplayerisrunning && needsupdate && !chaosbackfireforced) {
+#else
 	if (!g_Vars.normmplayerisrunning && needsupdate) {
+#endif
 		if (chr->actiontype == ACT_DEAD
 				|| (chr->actiontype == ACT_DRUGGEDKO && (chr->chrflags & CHRCFLAG_KEEPCORPSEKO) == 0)) {
 			var8009cdac++;
@@ -4646,7 +4691,17 @@ void chrTestHit(struct prop *prop, struct shotdata *shotdata, bool isshooting, b
 	if ((chr->chrflags & CHRCFLAG_HIDDEN) == 0 && (prop->flags & PROPFLAG_ONTHISSCREENTHISTICK)) {
 		f32 radius = chrGetHitRadius(chr);
 
+#ifndef PLATFORM_N64
+		// Chaos "Backwards bullets": prop->z is depth along the camera's
+		// FORWARD axis, so a chr behind the player carries a negative one. Use
+		// the magnitude so this reads as a real distance and compares correctly
+		// against the (now also magnitude) shot distance — see the matching
+		// note at the bg-depth clamp in prop.c's shotCalculateHits.
+		if (g_ChaosBackfire ? (ABSF(prop->z) - radius < shotdata->distance)
+				: (prop->z - radius < shotdata->distance)) {
+#else
 		if (prop->z - radius < shotdata->distance) {
+#endif
 			struct model *model = chr->model;
 			s32 hitpart = 0;
 			struct modelnode *node = NULL;
@@ -4716,6 +4771,15 @@ void chrTestHit(struct prop *prop, struct shotdata *shotdata, bool isshooting, b
 				mtx = camGetWorldToScreenMtxf();
 				sp68 = spdc.x * mtx->m[0][2] + spdc.y * mtx->m[1][2] + spdc.z * mtx->m[2][2] + mtx->m[3][2];
 				sp68 = -sp68;
+
+#ifndef PLATFORM_N64
+				// Same sign problem as prop->z above: this is depth along the
+				// camera's forward axis, and it doubles as hitCreate's sort
+				// key, so a negative would also mis-order the hit list.
+				if (g_ChaosBackfire && sp68 < 0.0f) {
+					sp68 = -sp68;
+				}
+#endif
 
 				if (sp68 < shotdata->distance) {
 					hitCreate(shotdata, prop, sp68, hitpart, node, &sp88, sp84, sp80, model, true, chrGetShield(chr) > 0.0f, &spdc, &spd0);

@@ -41,4 +41,8 @@ void gsetGetNoiseSettings(struct gset *gset, struct noisesettings *settings);
 struct guncmd *gsetGetPriToSecAnim(struct gset *gset);
 struct guncmd *gsetGetSecToPriAnim(struct gset *gset);
 
+#ifndef PLATFORM_N64
+bool chaosAmmoSwapProjectile(s32 heldweaponnum);
+#endif
+
 #endif

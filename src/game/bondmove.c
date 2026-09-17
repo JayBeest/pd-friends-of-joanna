@@ -822,6 +822,12 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		// c1buttons, so strip the stolen buttons there too.
 		c1allowedbuttons &= ~g_ChaosButtonMask;
 	}
+
+	// Lua "Take a break" (pd.player_freeze): fojo's roll and jump are read
+	// through c1allowedbuttons, which the movedata wipe below doesn't reach.
+	if (g_ChaosPlayerFreeze && !g_Vars.currentplayer->isdead) {
+		c1allowedbuttons &= ~(u32)(BUTTON_ROLL | BUTTON_JUMP);
+	}
 #endif
 
 	numsamples = joyGetNumSamples();

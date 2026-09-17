@@ -1,0 +1,861 @@
+#!/usr/bin/env python3
+"""pdhead — work with Perfect Dark head models, including GE-editor templates.
+
+  pdhead info       <file>                        what it is, and what is in it
+  pdhead untemplate <template> -o <out.Z>         strip the prefix, emit a *Z
+  pdhead textures   <file> -o <dir>               write the embedded textures as PNGs
+  pdhead reindex    <file> -o <out.Z> [...]       move its texture ids out of the way
+  pdhead install    <file> --mod <d> --name <n>   reindex, install, drop the PNGs
+  pdhead build      <mesh.fbx> -o <out.Z> [...]   author a head from a mesh
+
+A *template* is an editor artefact: a fixed-size prefix of metadata followed by
+a complete, ordinary PD head model. Nothing in the prefix is needed to use the
+model, so this tool does not decode it — it LOCATES the model by its own
+signature and ignores everything before it. That means a template, a raw model
+and a 0x1173-compressed *Z are all the same input here.
+
+  --from-template <file>   take the hit box, model scale and node-tree shape
+                           from that file instead of this tool's defaults.
+                           Accepts a template, a raw model or a *Z.
+
+What this tool refuses, and why: everything here reads structures the tool did
+not write, so a file that is not what it claims can send it walking a vertex
+array as display-list commands and writing into whatever it finds. Rather than
+guess, `reindex`, `install` and `textures` stop with a sentence when the model
+holds texconfig pointers instead of texture ids (the vanilla ROM form — the
+pointers would be overwritten with small integers), when it holds a node type
+whose display list lives at an offset this tool does not read, or when a display
+list has no ENDDL where one is due. `info` never refuses: it reports.
+
+stdlib only.
+"""
+
+import argparse, os, shutil, struct, sys, zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pdhead_fbx as fbxlib
+import pdhead_model as M
+
+NODETYPES = {0x01: "CHRINFO", 0x02: "POSITION", 0x04: "GUNDL", 0x05: "05",
+             0x08: "DISTANCE", 0x09: "REORDER", 0x0a: "BBOX", 0x0b: "0B",
+             0x0c: "CHRGUNFIRE", 0x0d: "0D", 0x0e: "0E", 0x0f: "0F", 0x11: "11",
+             0x12: "TOGGLE", 0x15: "POSITIONHELD", 0x16: "STARGUNFIRE",
+             0x17: "HEADSPOT", 0x18: "DL"}
+
+# Nodes whose rodata begins with the pair (Gfx *opagdl, Gfx *xlugdl). That is
+# the only shape this tool knows how to find a display list in: modelrodata_dl
+# (0x18) and modelrodata_gundl (0x04) are bit-identical in those two fields.
+DL_NODETYPES = (0x04, 0x18)
+
+# Nodes that carry a display list somewhere else. STARGUNFIRE (0x16) keeps a
+# single Gfx* at offset 0x08, behind an s32 and a Vtx*, so reading 0x00 as a
+# gdl pair would walk a vertex array as if it were commands. Refuse instead.
+DL_ELSEWHERE = {0x16: "STARGUNFIRE"}
+
+# A display list this tool walks has to end. The longest in the models to hand
+# is 243 commands; an order of magnitude past that means the bytes being walked
+# are not a display list at all, and writing into them would corrupt the file.
+MAX_DL_COMMANDS = 2048
+MAX_TREE_DEPTH = 64
+
+def die(m): sys.exit("pdhead: " + m)
+
+def need(d, off, n, what):
+    """Bounds-check a read, so a malformed file gets a sentence and not a
+    struct.error traceback from somewhere three calls down."""
+    if off < 0 or off + n > len(d):
+        die("%s at 0x%x runs past the end of the file (%d bytes) — this file is "
+            "truncated, or it is not the model it looks like" % (what, off, len(d)))
+
+# ── loading ──────────────────────────────────────────────────────────
+
+def rare_unzip(b):
+    import zlib
+    if b[:2] == b"\x11\x73":
+        return zlib.decompress(b[5:], wbits=-15)
+    if b[:2] == b"\x11\x72":
+        return zlib.decompress(b[2:], wbits=-15)
+    return None
+
+def plausible_modeldef(d, o):
+    """Does a modeldef start at offset o? Checked against its own invariants."""
+    if o + 0x1c > len(d):
+        return False
+    root, skel, parts = struct.unpack_from(">III", d, o)
+    numparts, nummtx = struct.unpack_from(">hh", d, o + 0x0c)
+    scale, = struct.unpack_from(">f", d, o + 0x10)
+    rwdatalen, numtex = struct.unpack_from(">hh", d, o + 0x14)
+    texptr, = struct.unpack_from(">I", d, o + 0x18)
+    if root >> 24 != 5 or texptr >> 24 != 5:
+        return False
+    tex_off = texptr & 0xffffff
+    if tex_off < 0x1c or o + tex_off + 12 > len(d):
+        return False                          # after the header, and inside the file
+    if numparts and parts >> 24 != 5:         # a parts array is segment 5 too
+        return False
+    if not (1 <= numtex <= 64) or not (1 <= nummtx <= 64):
+        return False
+    if numparts < 0 or rwdatalen < 0:
+        return False
+    if not (0.0 < scale < 1e5):
+        return False
+    if o + (root & 0xffffff) + 0x18 > len(d):
+        return False                          # the whole node, not just its type
+    if struct.unpack_from(">H", d, o + (root & 0xffffff))[0] not in NODETYPES:
+        return False
+    for i in range(numtex):                   # every texconfig must be sane
+        p = o + tex_off + i * 12
+        if p + 12 > len(d):
+            return False
+        w, h, lvl, fmt, depth = d[p + 4], d[p + 5], d[p + 6], d[p + 7], d[p + 8]
+        if not (1 <= w <= 255 and 1 <= h <= 255) or fmt > 7 or depth > 3:
+            return False
+    return True
+
+def load(path, scan=4096):
+    """Return (kind, header_bytes, model_bytes)."""
+    raw = open(path, "rb").read()
+    un = rare_unzip(raw)
+    if un is not None:
+        if not plausible_modeldef(un, 0):
+            die("%s: decompresses but is not a model" % path)
+        return "compressed", b"", un
+    if plausible_modeldef(raw, 0):
+        return "raw model", b"", raw
+    for o in range(2, min(scan, len(raw)), 2):
+        if plausible_modeldef(raw, o):
+            return "template", raw[:o], raw[o:]
+    die("%s: no model found. Not a *Z, a raw model, or a template with a model "
+        "in its first %d bytes." % (path, scan))
+
+# ── reading the model ────────────────────────────────────────────────
+
+def modeldef(d):
+    root, skel, parts = struct.unpack_from(">III", d, 0)
+    numparts, nummtx = struct.unpack_from(">hh", d, 0x0c)
+    scale, = struct.unpack_from(">f", d, 0x10)
+    rwdatalen, numtex = struct.unpack_from(">hh", d, 0x14)
+    return dict(root=root & 0xffffff, skel=skel, numparts=numparts,
+                nummatrices=nummtx, scale=scale, rwdatalen=rwdatalen, numtex=numtex)
+
+def texconfigs(d, n):
+    """The texconfig table. Its offset comes from the modeldef, NOT a fixed
+    0x1c — a model with a parts array puts that array first and the table
+    after it (CheadFoslerferZ: 0x28; CcarringtonZ: 0x48; Gfalcon2Z: 0x78)."""
+    base = struct.unpack_from(">I", d, 0x18)[0] & 0xffffff
+    out = []
+    for i in range(n):
+        p = base + i * 12
+        need(d, p, 12, "texconfig %d" % i)
+        v = struct.unpack_from(">I", d, p)[0]
+        # the field is a union: a texture id, or a segment-5 pointer to
+        # texture data embedded in this file (vanilla ROM models use both)
+        out.append(dict(texid=v, pointer=(v >> 24) == 5, width=d[p + 4],
+                        height=d[p + 5], level=d[p + 6], format=d[p + 7], depth=d[p + 8]))
+    return out
+
+def node(d, o):
+    need(d, o, 0x18, "node")
+    t, = struct.unpack_from(">H", d, o)
+    ro, par, nxt, prv, ch = [x & 0xffffff for x in struct.unpack_from(">IIIII", d, o + 4)]
+    return dict(off=o, type=t, name=NODETYPES.get(t, "%02x" % t),
+                rodata=ro, next=nxt, child=ch)
+
+def walk(d, o, depth=0, out=None, seen=None):
+    """Every node in the tree, depth-first.
+
+    A node tree is data we did not write, so it can point anywhere: at itself,
+    at a sibling already visited, or past the end of the file. Each of those is
+    a hang or a traceback without the three guards here.
+    """
+    out = [] if out is None else out
+    seen = set() if seen is None else seen
+    if depth > MAX_TREE_DEPTH:
+        die("node tree is more than %d deep — it is cyclic or corrupt" % MAX_TREE_DEPTH)
+    while o:
+        if o in seen:
+            die("node tree returns to 0x%x — it is cyclic, so it cannot be walked" % o)
+        seen.add(o)
+        n = node(d, o)
+        n["depth"] = depth
+        out.append(n)
+        if n["child"]:
+            walk(d, n["child"], depth + 1, out, seen)
+        o = n["next"]
+    return out
+
+def gdl_nodes(d, md):
+    """The nodes whose rodata starts with (Gfx *opagdl, Gfx *xlugdl).
+
+    Refuses the whole model if the tree holds a node that keeps its display
+    list in some other shape, rather than walking whatever sits at rodata+0.
+    """
+    nodes = walk(d, md["root"])
+    for n in nodes:
+        if n["type"] in DL_ELSEWHERE:
+            die("this model has a %s(0x%02x) node at 0x%x, which keeps its display "
+                "list at a different offset than DL and GUNDL do. Refusing to touch it."
+                % (DL_ELSEWHERE[n["type"]], n["type"], n["off"]))
+    return [n for n in nodes if n["type"] in DL_NODETYPES]
+
+def scan_gdl(d, base, limit=MAX_DL_COMMANDS):
+    """Offsets of every command in the display list at `base`, ENDDL included.
+
+    An unterminated list is refused rather than truncated: reaching the cap or
+    the end of the file means these bytes are not a display list, and the
+    callers of this function write into what it returns.
+    """
+    if not base:
+        return []
+    offs, o = [], base
+    while True:
+        if o + 8 > len(d):
+            die("display list at 0x%x runs off the end of the file without an ENDDL" % base)
+        if len(offs) >= limit:
+            die("display list at 0x%x has no ENDDL in %d commands — these bytes are "
+                "not a display list" % (base, limit))
+        offs.append(o)
+        c = d[o]
+        o += 8
+        if c == 0xb8:
+            return offs
+
+def bbox_of(d):
+    for n in walk(d, modeldef(d)["root"]):
+        if n["type"] == 0x0a:
+            need(d, n["rodata"], 0x1c, "bbox rodata")
+            hit, = struct.unpack_from(">i", d, n["rodata"])
+            return (hit,) + struct.unpack_from(">6f", d, n["rodata"] + 4)
+    return None
+
+def dl_of(d):
+    for n in walk(d, modeldef(d)["root"]):
+        if n["type"] == 0x18:
+            need(d, n["rodata"], 0x18, "display-list rodata")
+            opa, xlu, col, vtx = [x & 0xffffff for x in struct.unpack_from(">IIII", d, n["rodata"])]
+            nv, mc, rw, nc = struct.unpack_from(">hhHH", d, n["rodata"] + 16)
+            return dict(opagdl=opa, vertices=vtx, numvertices=nv, numcolours=nc, mcount=mc)
+    return None
+
+# ── donor ────────────────────────────────────────────────────────────
+
+def donor_from(path):
+    kind, hdr, m = load(path)
+    md, box = modeldef(m), bbox_of(m)
+    if box is None:
+        die("%s: no BBOX node, so it cannot be a shape donor" % path)
+    has_toggle = any(n["type"] == 0x12 for n in walk(m, md["root"]))
+    return dict(kind=kind, header=len(hdr), box=box[1:], hitpart=box[0],
+                scale=md["scale"], with_toggle=has_toggle, texconfigs=texconfigs(m, md["numtex"]))
+
+# ── embedded textures ────────────────────────────────────────────────
+
+def write_png(path, w, h, rgba):
+    """Minimal RGBA8 PNG. stdlib only, so this runs anywhere python does."""
+    raw = b"".join(b"\x00" + rgba[y * w * 4:(y + 1) * w * 4] for y in range(h))
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw, 9))
+    png += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+def core_end(m):
+    """First byte after the last display list — where a texture payload starts.
+
+    Derived from the model rather than read out of the template prefix, so it
+    works on a raw model or a *Z too.
+    """
+    end = 0
+    for n in gdl_nodes(m, modeldef(m)):
+        need(m, n["rodata"], 8, "display-list rodata")
+        for base in [x & 0xffffff for x in struct.unpack_from(">II", m, n["rodata"])]:
+            offs = scan_gdl(m, base)
+            if offs:
+                end = max(end, offs[-1] + 8)
+    return end
+
+def extract_textures(m):
+    """Pull the CI8 + palette payload a GE-editor template carries.
+
+    Per texconfig, after the last display list:
+        u32 texid, u32 zero, u32 payload_len,
+        256-entry RGBA5551 palette, u8 width, u8 height,
+        0x1173 blob -> width*height bytes of 8-bit palette indices.
+
+    Two things are NOT decoded and are handled empirically, because one sample
+    is not enough to pin them down:
+      - the few bytes between an entry header and its palette vary (517 vs 515
+        observed), so the 512-byte palette window is auto-aligned per entry by
+        rejecting alignments where an index the bitmap actually uses decodes to
+        an impossible colour;
+      - rows are stored bottom-up, so each image is flipped to match the
+        upright convention the mod's other ext_tex PNGs use.
+    """
+    md = modeldef(m)
+    tail = core_end(m)
+    if not tail:
+        die("no display list found, so there is no way to tell where the model ends "
+            "and a texture payload would begin")
+    out = []
+    for i, t in enumerate(texconfigs(m, md["numtex"])):
+        if t["pointer"]:
+            # the union holds a pointer to texture data already inside the file,
+            # not an id — searching the tail for it would match arbitrary bytes
+            sys.stderr.write("pdhead: texconfig %d points at inline texture data "
+                             "(%08x) rather than naming an id; skipping it\n"
+                             % (i, t["texid"]))
+            continue
+        e = m.find(struct.pack(">I", t["texid"]), tail)
+        if e < 0:
+            continue
+        j = m.find(b"\x11\x73", e)
+        if j < 0:
+            continue
+        w, h = m[j - 2], m[j - 1]
+        n = int.from_bytes(m[j + 2:j + 5], "big")
+        try:
+            bits = zlib.decompress(m[j + 5:], wbits=-15)[:n]
+        except zlib.error:
+            continue
+        if len(bits) != w * h:
+            continue
+        used, best = set(bits), None
+        for shift in range(-12, 13):
+            p = j - 2 - 512 + shift
+            if p < e + 12 or p + 512 > len(m):
+                continue
+            lut = []
+            for i in range(256):
+                v = struct.unpack_from(">H", m, p + i * 2)[0]
+                lut.append((((v >> 11) & 31) * 255 // 31, ((v >> 6) & 31) * 255 // 31,
+                            ((v >> 1) & 31) * 255 // 31, 255 if v & 1 else 0))
+            bad = sum(1 for b in used if max(lut[b][:3]) - min(lut[b][:3]) > 150)
+            if best is None or bad < best[1]:
+                best = (shift, bad, lut)
+        if best is None:
+            continue
+        shift, bad, lut = best
+        rows = []
+        for y in range(h):
+            rows.append(b"".join(bytes(lut[bits[y * w + x]]) for x in range(w)))
+        rgba = b"".join(reversed(rows))           # stored bottom-up
+        out.append(dict(texid=t["texid"], width=w, height=h, rgba=rgba,
+                        shift=shift, bad=bad))
+    return out
+
+def cmd_textures(a):
+    kind, hdr, m = load(a.file)
+    remap = check_mapping(parse_map(a.remap, "--remap"), "--remap") if a.remap else {}
+    tex = extract_textures(m)
+    if not tex:
+        die("%s carries no embedded texture payload" % a.file)
+    # a remapped id can also collide with one that was left alone, which
+    # check_mapping cannot see; settle every name before writing any file
+    names = {}
+    for t in tex:
+        tid = remap.get(t["texid"], t["texid"])
+        if tid in names:
+            die("0x%04x and 0x%04x would both be written as %04x.png; nothing written"
+                % (names[tid], t["texid"], tid))
+        names[tid] = t["texid"]
+    os.makedirs(a.out, exist_ok=True)
+    for t in tex:
+        tid = remap.get(t["texid"], t["texid"])
+        path = os.path.join(a.out, "%04x.png" % tid)
+        write_png(path, t["width"], t["height"], t["rgba"])
+        print("  0x%04x -> %s  %dx%d  palette shift %+d%s"
+              % (t["texid"], os.path.basename(path), t["width"], t["height"],
+                 t["shift"], "" if not t["bad"] else "  WARNING %d odd indices" % t["bad"]))
+    print("pdhead: wrote %d textures to %s" % (len(names), a.out))
+    return 0
+
+# ── install ──────────────────────────────────────────────────────────
+
+def cmd_install(a):
+    if a.keep_texids and a.base is not None:
+        die("--base and --keep-texids ask for opposite things: one picks new ids, "
+            "the other leaves them alone")
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    old = [t["texid"] for t in texconfigs(m, md["numtex"])]
+    files = os.path.join(a.mod, "files")
+    exttex = os.path.join(a.mod, "ext_tex", a.name)
+    os.makedirs(files, exist_ok=True)
+
+    # textures carry the ORIGINAL ids in their payload headers, so pull them
+    # out before any reindex renames the texconfig table underneath them
+    tex = extract_textures(m)
+
+    remap = {}
+    if not a.keep_texids:
+        base = next_free_texid(a.mod) if a.base is None else int(a.base, 0)
+        remap = default_remap(old, base)
+        m, ntab, ndl = rewrite_texids(m, remap)
+        for t in old:
+            print("  0x%04x -> 0x%04x" % (t, remap[t]))
+        print("  %d texconfig entries, %d display-list binds" % (ntab, ndl))
+
+    dest = os.path.join(files, a.name)
+    M.write_out(dest, M.rarezip(m))
+    print("  model  -> %s (%d bytes)" % (dest, os.path.getsize(dest)))
+
+    if tex:
+        os.makedirs(exttex, exist_ok=True)
+        for t in tex:
+            path = os.path.join(exttex, "%04x.png" % remap.get(t["texid"], t["texid"]))
+            write_png(path, t["width"], t["height"], t["rgba"])
+        print("  %d textures -> %s" % (len(tex), exttex))
+    else:
+        print("  no embedded textures; %s will need PNGs of its own" % exttex)
+
+    print()
+    print("still to do by hand:")
+    print('  1. add to %s_filetable.json:' % os.path.basename(a.mod.rstrip("/")))
+    print('       { "name": "%s", "path": "files/%s", "description": "...", "prefix": "always" }'
+          % (a.name, a.name))
+    print("  2. regenerate filetable.dat  (pdt build-mod-filetable, NOT mkfiletable)")
+    print("  3. add a HeadsAndBodies block to modconfig.txt")
+    return 0
+
+# ── reindexing ───────────────────────────────────────────────────────
+
+def next_free_texid(moddir, floor=0x0db7):
+    """Next id after the highest this MOD already overrides.
+
+    Scans `<moddir>/ext_tex/<Model>/<id>.png` only — the per-model PNG override
+    convention — deliberately not other mods. `floor` is the first id free on
+    every regional ROM (JPN's texture table is longer than NTSC's), so nothing
+    below it is ever handed out.
+    """
+    hi = floor - 1
+    ext = os.path.join(moddir, "ext_tex")
+    if not os.path.isdir(ext):
+        die("%s has no ext_tex/ to scan; pass --base instead" % moddir)
+    for model in os.listdir(ext):
+        d = os.path.join(ext, model)
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            stem = os.path.splitext(f)[0]
+            if len(stem) == 4:
+                try:
+                    hi = max(hi, int(stem, 16))
+                except ValueError:
+                    pass
+    return hi + 1
+
+def parse_map(text, flag):
+    """`old=new,old=new` in any base python understands."""
+    out = {}
+    for pair in text.split(","):
+        if pair.count("=") != 1:
+            die("%s: %r is not old=new" % (flag, pair))
+        k, v = pair.split("=")
+        try:
+            k, v = int(k.strip(), 0), int(v.strip(), 0)
+        except ValueError:
+            die("%s: %r is not a pair of numbers" % (flag, pair))
+        if k in out and out[k] != v:
+            die("%s: 0x%04x is given two different destinations" % (flag, k))
+        out[k] = v
+    return out
+
+def check_mapping(mapping, source):
+    """Every new id fits the 12 bits a display list carries, and no two old ids
+    land on the same new one.
+
+    The collision half is deliberately stricter than it has to be. Consolidating
+    several textures onto one id is a real thing to want, but done silently here
+    it is indistinguishable from a typo, and the result — a table with two
+    entries naming one texture — renders without complaint. Ask for it as its
+    own edit.
+    """
+    for v in sorted(mapping.values()):
+        if not (0 < v <= 0xfff):
+            die("%s: texture id 0x%x does not fit the 12 bits a display list carries"
+                % (source, v))
+    seen = {}
+    for k in sorted(mapping):
+        v = mapping[k]
+        if v in seen:
+            die("%s: 0x%04x and 0x%04x both map to 0x%04x. Refusing — a merge has "
+                "to be asked for on its own." % (source, seen[v], k, v))
+        seen[v] = k
+    return mapping
+
+def default_remap(old, base):
+    """base, base+1, ... across the texconfig table in table order."""
+    if len(old) != len(set(old)):
+        dup = sorted({t for t in old if old.count(t) > 1})
+        die("the texconfig table names %s more than once, so numbering the entries "
+            "in order would send one old id to two new ones. Pass --map to say what "
+            "you want." % ", ".join("0x%04x" % t for t in dup))
+    return {t: base + i for i, t in enumerate(old)}
+
+def rewrite_texids(m, mapping):
+    """Remap texture ids in the texconfig table AND in every display list.
+
+    The ids live in two places: a u32 per texconfig, and the low bits of the
+    repurposed G_NOOP (0xC0) binds inside each DL — w1 bits 0-11, plus bits
+    12-23 when the subcommand is 1. Changing one and not the other silently
+    ships a model whose table and geometry disagree.
+    """
+    check_mapping(mapping, "remap")
+    d = bytearray(m)
+    md = modeldef(d)
+
+    # The texconfig's first u32 is a union: an id, or a segment-5 pointer to
+    # texture data held inside this same file. Writing a small integer over a
+    # pointer loses the texture and nothing downstream notices, so this is
+    # checked before any byte is touched — the display-list walk included.
+    ptr = [i for i, t in enumerate(texconfigs(d, md["numtex"])) if t["pointer"]]
+    if ptr:
+        die("texconfig %s hold segment-5 pointers to texture data inside this file "
+            "rather than naming ids — this is a model whose textures travel with it, "
+            "not a mod head. Reindexing would overwrite those pointers. Refusing."
+            % ", ".join("#%d" % i for i in ptr))
+
+    tex_off = struct.unpack_from(">I", d, 0x18)[0] & 0xffffff
+    ntab = 0
+    for i in range(md["numtex"]):
+        q = tex_off + i * 12
+        need(d, q, 12, "texconfig %d" % i)
+        old = struct.unpack_from(">I", d, q)[0]
+        if old in mapping:
+            struct.pack_into(">I", d, q, mapping[old]); ntab += 1
+    ndl = 0
+    for n in gdl_nodes(d, md):
+        need(d, n["rodata"], 8, "display-list rodata")
+        for base in [x & 0xffffff for x in struct.unpack_from(">II", d, n["rodata"])]:
+            for o in scan_gdl(d, base):
+                if d[o] != 0xc0:
+                    continue
+                w0, w1 = struct.unpack_from(">II", d, o)
+                t0 = w1 & 0xfff
+                if t0 in mapping:
+                    w1 = (w1 & ~0xfff) | (mapping[t0] & 0xfff); ndl += 1
+                if (w0 & 0xff) == 1:
+                    t1 = (w1 >> 12) & 0xfff
+                    if t1 in mapping:
+                        w1 = (w1 & ~(0xfff << 12)) | ((mapping[t1] & 0xfff) << 12); ndl += 1
+                struct.pack_into(">I", d, o + 4, w1)
+    return bytes(d), ntab, ndl
+
+def cmd_reindex(a):
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    old = [t["texid"] for t in texconfigs(m, md["numtex"])]
+    if a.map:
+        if a.base is not None:
+            die("--map and --base ask for opposite things: one gives the mapping, "
+                "the other asks for one to be made up")
+        mapping = check_mapping(parse_map(a.map, "--map"), "--map")
+    else:
+        base = next_free_texid(a.mods) if a.base is None else int(a.base, 0)
+        mapping = default_remap(old, base)
+    new, ntab, ndl = rewrite_texids(m, mapping)
+    M.write_out(a.out, M.rarezip(new))
+    for t in old:
+        print("  0x%04x -> 0x%04x" % (t, mapping.get(t, t)))
+    print("pdhead: %d texconfig entries and %d display-list binds rewritten; wrote %s"
+          % (ntab, ndl, a.out))
+    return 0
+
+# ── commands ─────────────────────────────────────────────────────────
+
+def cmd_info(a):
+    kind, hdr, m = load(a.file)
+    md = modeldef(m)
+    print("%s: %s" % (os.path.basename(a.file), kind)
+          + (" (%d-byte prefix ignored)" % len(hdr) if hdr else ""))
+    print("  skel %d  nummatrices %d  numparts %d  scale %.4f  rwdatalen %d  texconfigs %d"
+          % (md["skel"], md["nummatrices"], md["numparts"], md["scale"],
+             md["rwdatalen"], md["numtex"]))
+    tcs = texconfigs(m, md["numtex"])
+    for i, t in enumerate(tcs):
+        ref = ("ptr %08x" % t["texid"]) if t["pointer"] else ("id  0x%04x" % t["texid"])
+        print("    tex %-2d %s  %dx%d  level %d  format %d  depth %d"
+              % (i, ref, t["width"], t["height"], t["level"], t["format"], t["depth"]))
+    b = bbox_of(m)
+    if b:
+        print("  bbox hitpart %d  x %.1f..%.1f  y %.1f..%.1f  z %.1f..%.1f" % b)
+    d = dl_of(m)
+    if d:
+        print("  dl  %d vertices  %d colours  mcount %d" % (d["numvertices"], d["numcolours"], d["mcount"]))
+    print("  tree:")
+    nodes = walk(m, md["root"])
+    for n in nodes:
+        print("    " + "  " * n["depth"] + "%s(0x%02x) @%04x" % (n["name"], n["type"], n["off"]))
+    odd = sorted({n["type"] for n in nodes if n["type"] in DL_ELSEWHERE})
+    if odd:
+        print("  note: holds %s, which keeps its display list somewhere this tool "
+              "does not read; reindex and textures will refuse this model"
+              % ", ".join("%s(0x%02x)" % (DL_ELSEWHERE[t], t) for t in odd))
+    if any(t["pointer"] for t in tcs):
+        print("  note: texconfigs point at texture data inside this file instead of "
+              "naming ids; reindex will refuse this model, and textures will skip "
+              "those entries")
+    if hdr:
+        nz = [(i, hdr[i]) for i in range(len(hdr)) if hdr[i]]
+        print("  prefix: %d bytes, %d non-zero: %s" % (len(hdr), len(nz),
+              " ".join("%d=0x%02x" % t for t in nz)))
+        print("  (not decoded — nothing in it is needed to use the model)")
+    return 0
+
+def cmd_untemplate(a):
+    kind, hdr, m = load(a.file)
+    if not hdr:
+        print("pdhead: %s has no prefix (%s); re-emitting as *Z" % (a.file, kind))
+    M.write_out(a.out, M.rarezip(m))
+    print("pdhead: wrote %s (%d bytes, from %d bytes of model)" % (a.out, os.path.getsize(a.out), len(m)))
+    return 0
+
+def cmd_build(a):
+    # head_texturePresets.txt: one "HEXID some name.bmp" per line. The editor
+    # writes XXXX for a slot that was never assigned a texture, and a mesh that
+    # uses that slot cannot be built — say so instead of raising.
+    presets = {}
+    for ln, line in enumerate(open(a.textures), 1):
+        if not line.strip():
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            die("%s line %d: expected `HEXID name`, got %r"
+                % (a.textures, ln, line.strip()))
+        tid, name = parts
+        try:
+            presets[name.strip().rsplit(".", 1)[0]] = int(tid, 16)
+        except ValueError:
+            die("%s line %d: %r is not a hex texture id%s"
+                % (a.textures, ln, tid,
+                   " — the editor writes XXXX for a slot it never filled in, so "
+                   "that texture has to be given an id by hand" if set(tid.upper()) == {"X"} else ""))
+
+    pos, tris, uv, uvi, mat, mat_png = fbxlib.read_mesh(a.mesh)
+    missing = sorted({p for p in mat_png if p.rsplit(".", 1)[0] not in presets})
+    if missing:
+        die("the mesh uses %s, which %s does not give an id for"
+            % (", ".join(missing), a.textures))
+    matmap = [presets[p.rsplit(".", 1)[0]] for p in mat_png]
+    texsize = {t: (a.texwidth, a.texheight) for t in presets.values()}
+
+    box, scale, toggle = M.DEFAULT_BOX, M.DEFAULT_SCALE, True
+    if a.from_template:
+        d = donor_from(a.from_template)
+        box, scale, toggle = d["box"], d["scale"], d["with_toggle"]
+        print("pdhead: donor %s (%s) — box %s scale %.4f %s"
+              % (os.path.basename(a.from_template), d["kind"],
+                 " ".join("%.0f" % v for v in box), scale,
+                 "with toggle" if toggle else "no toggle"))
+
+    try:
+        raw, info = M.build(pos, tris, uv, uvi, mat, matmap, texsize, box, scale,
+                            with_toggle=toggle)
+    except ValueError as e:
+        die(str(e))
+    M.write_out(a.out, M.rarezip(raw))
+    print("pdhead: wrote %s — %d vertices, %d bytes raw, %d compressed, texids %s"
+          % (a.out, info["numvertices"], len(raw), os.path.getsize(a.out),
+             " ".join(hex(t) for t in info["texids"])))
+    return 0
+
+RAW = argparse.RawDescriptionHelpFormatter
+
+TOP_EPILOG = """\
+the three inputs are interchangeable
+  a GE-editor template (*Template.bin)   a metadata prefix, then a whole model
+  a raw model                            the model on its own, uncompressed
+  a Rare-compressed *Z                   1173 + 3-byte length + raw deflate
+Every command finds the model by its own signature rather than at a fixed
+offset, so none of them need to be told which of the three they were given.
+
+what a command will refuse
+  a texconfig that holds a segment-5 pointer instead of a texture id
+  a node type that keeps its display list somewhere other than rodata+0
+  a display list with no ENDDL where one is due
+  a node tree that is cyclic, too deep, or points past the end of the file
+`info` never refuses: run it first, and it names what the others will turn
+down on that file.
+
+  pdhead info CheadJohnZTemplate.bin
+  pdhead install CheadJohnZTemplate.bin --mod ../pd-fojo-basedir/data/mods/mod_fojo --name CheadAceZ
+"""
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="pdhead", formatter_class=RAW,
+        description="Read, author, reindex and install Perfect Dark model files.",
+        epilog=TOP_EPILOG)
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
+
+    # ── info ─────────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "info", formatter_class=RAW,
+        help="what the file is, and what is in it",
+        description="Print what the file is, its modeldef, texconfig table, hit box, "
+                    "display-list stats and node tree.",
+        epilog="""\
+Read-only, and the one command that never refuses: where another command would
+stop, this prints a `note:` saying so. Reach for it first on anything
+unfamiliar, and again on the output of `build`, `reindex` or `install`.
+
+  pdhead info ../pd-fojo-basedir/data/mods/mod_fojo/files/CheadAceZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.set_defaults(fn=cmd_info)
+
+    # ── reindex ──────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "reindex", formatter_class=RAW,
+        help="move a model's texture ids out of the way",
+        description="Renumber a model's textures, rewriting the texconfig table and "
+                    "every display-list bind together.",
+        epilog="""\
+The ids live in two places: a u32 per texconfig, and the low bits of the
+repurposed G_NOOP (0xC0) binds inside each display list. Rewriting one and not
+the other ships a model whose table and geometry disagree, so this does both or
+neither, across DL and GUNDL nodes alike.
+
+The check that matters is that reindexing forward and back returns the original
+bytes.
+
+  pdhead reindex CheadJohnZTemplate.bin -o CheadAceZ --base 0x0dbd
+  pdhead reindex CheadAceZ -o out.Z --map 0x0dbd=0x0e00,0x0dbe=0x0e01
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the reindexed model, Rare-compressed")
+    p.add_argument("--base", metavar="ID",
+                   help="first new id; the rest follow it in table order. "
+                        "Default: the next id free in --mods")
+    p.add_argument("--mods", dest="mods", default="pd-fojo-basedir/data/mods/mod_fojo",
+                   metavar="DIR",
+                   help="mod whose ext_tex/ decides the next free id "
+                        "(default: %(default)s)")
+    p.add_argument("--map", metavar="OLD=NEW,...",
+                   help="say the mapping outright instead of numbering from --base, "
+                        "e.g. 0x0daf=0x0dbd,0x0db0=0x0dbe. Two ids may not share a "
+                        "destination")
+    p.set_defaults(fn=cmd_reindex)
+
+    # ── textures ─────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "textures", formatter_class=RAW,
+        help="write a model's embedded textures out as PNGs",
+        description="Decode the CI8-plus-palette texture payload a GE-editor template "
+                    "carries and write each image as an RGBA8 PNG.",
+        epilog="""\
+Names each file <texid>.png, which is the layout ext_tex/<Model>/ wants. Rows
+come out of the payload bottom-up and are flipped; the palette window is fitted
+per entry rather than decoded, and the shift chosen is printed. Look at the
+PNGs before shipping them: speckle in dark regions means the palette landed
+wrong, and an upside-down face means the flip did.
+
+  pdhead textures CheadJohnZTemplate.bin -o /tmp/tex
+  pdhead textures CheadJohnZTemplate.bin -o ext_tex/CheadAceZ --remap 0x0daf=0x0dbe
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="DIR",
+                   help="directory to write the PNGs into; created if missing")
+    p.add_argument("--remap", metavar="OLD=NEW,...",
+                   help="name the files after new ids, e.g. 0x0daf=0x0dbe. Use this "
+                        "when the model was reindexed separately; two textures may "
+                        "not end up sharing a file name")
+    p.set_defaults(fn=cmd_textures)
+
+    # ── install ──────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "install", formatter_class=RAW,
+        help="reindex, install, and drop the PNGs into a mod",
+        description="The whole path in one command: pull the embedded textures, move "
+                    "the texture ids clear of everything the mod already uses, and "
+                    "write files/<name> and ext_tex/<name>/.",
+        epilog="""\
+Textures come out before the reindex, because the payload headers carry the
+original ids; anything that renumbers first finds nothing.
+
+Three steps are left for you, and are printed at the end: the mod's
+_filetable.json entry, regenerating filetable.dat, and the modconfig.txt
+HeadsAndBodies block. Nothing outside files/ and ext_tex/ is touched.
+
+  pdhead install CheadJohnZTemplate.bin \\
+      --mod ../pd-fojo-basedir/data/mods/mod_fojo --name CheadAceZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("--mod", required=True, metavar="DIR",
+                   help="the mod to install into, e.g. .../data/mods/mod_fojo")
+    p.add_argument("--name", required=True, metavar="NAME",
+                   help="what to call the model file, e.g. CheadAceZ. Also the "
+                        "ext_tex/ subdirectory, since PNG overrides are per model")
+    p.add_argument("--base", metavar="ID",
+                   help="first new texture id. Default: the next one free in this "
+                        "mod's ext_tex/, never below 0x0db7 (the first id free on "
+                        "every regional ROM)")
+    p.add_argument("--keep-texids", action="store_true",
+                   help="install the ids as they are. Only safe when you already know "
+                        "they clash with nothing in the mod")
+    p.set_defaults(fn=cmd_install)
+
+    # ── untemplate ───────────────────────────────────────────────────
+    p = sub.add_parser(
+        "untemplate", formatter_class=RAW,
+        help="strip an editor template's prefix and emit a *Z",
+        description="Drop the editor's metadata prefix and re-emit the model on its "
+                    "own, Rare-compressed.",
+        epilog="""\
+Nothing in the prefix is needed to use the model, and no other command here
+requires this one to have been run first. Reach for it when something outside
+this tool wants an ordinary *Z.
+
+  pdhead untemplate CheadJohnZTemplate.bin -o CheadJohnZ
+""")
+    p.add_argument("file", help="a template, a raw model, or a *Z")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the model, Rare-compressed")
+    p.set_defaults(fn=cmd_untemplate)
+
+    # ── build ────────────────────────────────────────────────────────
+    p = sub.add_parser(
+        "build", formatter_class=RAW,
+        help="author a head from a mesh",
+        description="Turn a triangulated FBX into a Perfect Dark head model.",
+        epilog="""\
+This is the one head-shaped command: it emits SKEL_HEAD, a BBOX root with a DL
+child, and fits the mesh to a head-sized box. Every other command here is
+written against the generic model format.
+
+--textures takes the editor's head_texturePresets.txt, one `HEXID name.bmp` per
+line, matching each material in the mesh to the texture id it will be bound to.
+A slot the editor left as XXXX has to be given an id by hand first.
+
+  pdhead build "head new.fbx" -o CheadWillowZ --textures head_texturePresets.txt
+  pdhead build head.fbx -o CheadWillowZ --textures presets.txt \\
+      --from-template CheadJohnZTemplate.bin
+""")
+    p.add_argument("mesh", help="a triangulated mesh, FBX (binary) or OBJ")
+    p.add_argument("-o", "--out", required=True, metavar="OUT.Z",
+                   help="where to write the head, Rare-compressed")
+    p.add_argument("--textures", required=True, metavar="PRESETS",
+                   help="the editor's head_texturePresets.txt: one `HEXID name.bmp` "
+                        "per line, naming the id each material binds to")
+    p.add_argument("--from-template", dest="from_template", metavar="FILE",
+                   help="borrow the hit box, model scale and node-tree shape from "
+                        "this template / model / *Z instead of using the defaults "
+                        "taken from a shipped head")
+    p.add_argument("--texwidth", type=int, default=32, metavar="N",
+                   help="texture width the UVs are scaled against "
+                        "(default: %(default)s). One size for every texture, so a "
+                        "mesh mixing sizes needs them equal for now")
+    p.add_argument("--texheight", type=int, default=64, metavar="N",
+                   help="texture height the UVs are scaled against (default: %(default)s)")
+    p.set_defaults(fn=cmd_build)
+
+    a = ap.parse_args()
+    return a.fn(a)
+
+if __name__ == "__main__":
+    sys.exit(main())

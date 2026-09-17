@@ -45,6 +45,9 @@ s32 g_LuaAiEnabled = 0;
 #define LUAAI_SWITCH   2
 #define LUAAI_ERR      (-1)
 
+/* Run once per stage when present. Relative to the working directory. */
+#define LUAAI_INIT_SCRIPT "scripts/init.lua"
+
 /* The opcode that ends an ailist (see commands.h: endlist). */
 #ifndef CMD_END
 #define CMD_END 0x0004
@@ -138,6 +141,17 @@ static void luaai_set_error(const char *what, const char *msg)
 {
 	g_LuaErrWhat = what;
 	snprintf(g_LuaErrMsg, sizeof(g_LuaErrMsg), "%s", msg ? msg : "(no message)");
+}
+
+/* An error value as text, without lua_tostring's number conversion, which
+ * allocates and so could raise outside a protected call. */
+static const char *luaai_errstr(lua_State *L, int idx)
+{
+	if (lua_type(L, idx) == LUA_TSTRING) {
+		return lua_tostring(L, idx);
+	}
+
+	return "(error object is not a string)";
 }
 
 static s32 luaai_is_quarantined(void *list)
@@ -363,24 +377,37 @@ static unsigned int luaai_cmdlen(const unsigned char *list, unsigned int off)
 	return (unsigned int)chraiGetCommandLength((u8 *)list, off);
 }
 
+/* Protected: load and run init.lua, text only. */
+static int luaai_load_init_p(lua_State *L)
+{
+	if (luaL_loadfilex(L, LUAAI_INIT_SCRIPT, "t") != LUA_OK) {
+		return lua_error(L);
+	}
+
+	lua_call(L, 0, 0);
+	return 0;
+}
+
 static void luaai_load_external_scripts(lua_State *L)
 {
 	/* Best-effort: if a scripts/init.lua exists in the working dir, run it. It
 	 * may require/dofile additional files and call pd.register_ailist. Errors
-	 * are logged and ignored so a broken mod cannot crash the game. */
-	FILE *f = fopen("scripts/init.lua", "rb");
+	 * are logged and ignored so a broken mod cannot crash the game. The load
+	 * runs protected too, because luaL_loadfilex allocates before it gets to
+	 * its own protected parse. */
+	FILE *f = fopen(LUAAI_INIT_SCRIPT, "rb");
 	if (!f) {
 		return;
 	}
 	fclose(f);
 
-	if (luaL_loadfilex(L, "scripts/init.lua", "t") != LUA_OK
-			|| luaai_pcall_budget(L, 0, 0, LUAAI_INIT_INSTRUCTION_BUDGET) != LUA_OK) {
-		sysLogPrintf(LOG_ERROR, "luaai: error loading scripts/init.lua: %s",
-				lua_tostring(L, -1));
+	lua_pushcfunction(L, luaai_load_init_p);
+
+	if (luaai_pcall_budget(L, 0, 0, LUAAI_INIT_INSTRUCTION_BUDGET) != LUA_OK) {
+		sysLogPrintf(LOG_ERROR, "luaai: error loading %s: %s", LUAAI_INIT_SCRIPT, luaai_errstr(L, -1));
 		lua_pop(L, 1);
 	} else {
-		sysLogPrintf(LOG_NOTE, "luaai: loaded scripts/init.lua");
+		sysLogPrintf(LOG_NOTE, "luaai: loaded %s", LUAAI_INIT_SCRIPT);
 	}
 }
 
@@ -552,6 +579,24 @@ static void luaai_open_safe_libs(lua_State *L)
 	lua_pop(L, 1);
 }
 
+/* Protected: everything that fills a new state. Each step allocates, and an
+ * allocation failure raises a Lua error, which outside a protected call goes
+ * to the panic handler and aborts the game. */
+static int luaai_setup_p(lua_State *L)
+{
+	luaai_open_safe_libs(L);
+
+	/* registry tables */
+	lua_newtable(L);
+	lua_setfield(L, LUA_REGISTRYINDEX, KEY_CHUNKS);
+	lua_newtable(L);
+	lua_setfield(L, LUA_REGISTRYINDEX, KEY_OVERRIDES);
+
+	luaai_build_ctx(L);
+	luaai_build_pd(L);
+	return 0;
+}
+
 static int luaai_ensure_state(void)
 {
 	lua_State *L;
@@ -564,23 +609,24 @@ static int luaai_ensure_state(void)
 	}
 
 	L = luaL_newstate();
+
+	if (L) {
+		/* Pushing a C function with no upvalues does not allocate. */
+		lua_pushcfunction(L, luaai_setup_p);
+
+		if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+			sysLogPrintf(LOG_ERROR, "luaai: Lua state setup failed: %s", luaai_errstr(L, -1));
+			lua_close(L);
+			L = NULL;
+		}
+	}
+
 	if (!L) {
 		g_LuaInitFailed = 1;
 		g_LuaAiEnabled = 0;
 		sysLogPrintf(LOG_ERROR, "luaai: failed to create Lua state; disabling Lua AI");
 		return 0;
 	}
-
-	luaai_open_safe_libs(L);
-
-	/* registry tables */
-	lua_newtable(L);
-	lua_setfield(L, LUA_REGISTRYINDEX, KEY_CHUNKS);
-	lua_newtable(L);
-	lua_setfield(L, LUA_REGISTRYINDEX, KEY_OVERRIDES);
-
-	luaai_build_ctx(L);
-	luaai_build_pd(L);
 
 	g_LuaState = L;
 
@@ -614,21 +660,20 @@ s32 luaaiEnsureState(void)
 
 /* ------------------------------------------------------------------------- *
  * Chunk cache / lookup
- *
- * On return, the chunk function for `list` is left on top of the Lua stack.
- * Returns 1 on success, 0 on failure (nothing pushed).
  * ------------------------------------------------------------------------- */
 
 /* Whether the last chunk luaai_get_chunk handed out was a script override
  * rather than a transpiled list. */
 static s32 g_LuaChunkIsOverride = 0;
 
-static int luaai_get_chunk(lua_State *L, void *list)
+/* Protected: [list] -> chunk function, ctx; or nothing, with the reason in
+ * luaai_set_error. The registry lookups and the cache insert allocate (key
+ * strings, table growth), so they run under lua_pcall with the rest. */
+static int luaai_get_chunk_p(lua_State *L)
 {
+	void *list = lua_touserdata(L, 1);
 	char *src;
 	u32 listlen;
-
-	g_LuaChunkIsOverride = 0;
 
 	/* 1) Lua override by ailist id. Consulted only when overrides are actually
 	 * registered (g_LuaOverrideCount), and never on a net client: AI is
@@ -642,9 +687,9 @@ static int luaai_get_chunk(lua_State *L, void *list)
 			lua_pushinteger(L, id);
 			lua_gettable(L, -2);
 			if (lua_isfunction(L, -1)) {
-				lua_remove(L, -2); /* remove overrides table, keep function */
 				g_LuaChunkIsOverride = 1;
-				return 1;
+				lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
+				return 2;
 			}
 			lua_pop(L, 2); /* nil + overrides table */
 		}
@@ -655,8 +700,8 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	lua_pushlightuserdata(L, list);
 	lua_gettable(L, -2);
 	if (lua_isfunction(L, -1)) {
-		lua_remove(L, -2); /* remove chunks table */
-		return 1;
+		lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
+		return 2;
 	}
 	lua_pop(L, 1); /* nil */
 	/* chunks table still on stack at -1 */
@@ -668,28 +713,24 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	src = luaaiTranspile((const unsigned char *)list, listlen ? listlen : 0xffffu, luaai_cmdlen, CMD_END);
 	if (!src) {
 		luaai_set_error("transpile failure", "out of memory");
-		lua_pop(L, 1); /* chunks table */
 		return 0;
 	}
 
 	if (luaL_loadstring(L, src) != LUA_OK) {
-		luaai_set_error("transpile load error", lua_tostring(L, -1));
 		free(src);
-		lua_pop(L, 2); /* error + chunks table */
+		luaai_set_error("transpile load error", luaai_errstr(L, -1));
 		return 0;
 	}
 	free(src);
 
 	/* run the chunk to obtain the function it returns */
 	if (luaai_pcall_budget(L, 0, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
-		luaai_set_error("transpile run error", lua_tostring(L, -1));
-		lua_pop(L, 2); /* error + chunks table */
+		luaai_set_error("transpile run error", luaai_errstr(L, -1));
 		return 0;
 	}
 
 	if (!lua_isfunction(L, -1)) {
 		luaai_set_error("transpile run error", "chunk did not return a function");
-		lua_pop(L, 2); /* result + chunks table */
 		return 0;
 	}
 
@@ -698,11 +739,39 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	lua_pushvalue(L, -2); /* the function */
 	lua_settable(L, -4);  /* chunks table */
 
-	lua_remove(L, -2); /* remove chunks table, keep function */
+	lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
+	return 2;
+}
+
+/* Leaves the chunk function for `list` and its ctx argument on the stack and
+ * returns 1, or leaves nothing and returns 0 with the reason recorded. */
+static int luaai_get_chunk(lua_State *L, void *list)
+{
+	g_LuaChunkIsOverride = 0;
+	luaai_set_error("chunk lookup error", "no chunk");
+
+	/* Neither push allocates: a C function with no upvalues and a light
+	 * userdata are plain values. */
+	lua_pushcfunction(L, luaai_get_chunk_p);
+	lua_pushlightuserdata(L, list);
+
+	if (lua_pcall(L, 1, 2, 0) != LUA_OK) {
+		luaai_set_error("chunk lookup error", luaai_errstr(L, -1));
+		lua_pop(L, 1);
+		return 0;
+	}
+
+	if (!lua_isfunction(L, -2)) {
+		lua_pop(L, 2);
+		return 0;
+	}
+
 	return 1;
 }
 
-/* Run the chunk for `list`. Returns LUAAI_* status. */
+/* Run the chunk for `list`. Returns LUAAI_* status. The chunk's own run is
+ * protected by luaai_pcall_budget; only lua_tointeger touches the stack
+ * outside a protected call, and it does not allocate. */
 static int luaai_run_list(lua_State *L, void *list)
 {
 	int status;
@@ -711,11 +780,9 @@ static int luaai_run_list(lua_State *L, void *list)
 		return LUAAI_ERR;
 	}
 
-	/* push ctx argument */
-	lua_getfield(L, LUA_REGISTRYINDEX, KEY_CTX);
-
+	/* chunk + ctx are on the stack */
 	if (luaai_pcall_budget(L, 1, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
-		luaai_set_error("run error", lua_tostring(L, -1));
+		luaai_set_error("run error", luaai_errstr(L, -1));
 		lua_pop(L, 1);
 		return LUAAI_ERR;
 	}

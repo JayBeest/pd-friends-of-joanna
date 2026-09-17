@@ -618,7 +618,7 @@ u16 g_CommandLengths[] = {
 	/*0x0188*/ 4,  /*0x0189*/ 4,  /*0x018a*/ 5,  /*0x018b*/ 3,
 	/*0x018c*/ 4,  /*0x018d*/ 4,  /*0x018e*/ 7,  /*0x018f*/ 8,
 	/*0x0190*/ 3,  /*0x0191*/ 3,  /*0x0192*/ 4,  /*0x0193*/ 4,
-	/*0x0194*/ 1,  /*0x0195*/ 1,  /*0x0196*/ 1,  /*0x0197*/ 1,
+	/*0x0194*/ 2,  /*0x0195*/ 1,  /*0x0196*/ 1,  /*0x0197*/ 1,
 	/*0x0198*/ 1,  /*0x0199*/ 1,  /*0x019a*/ 1,  /*0x019b*/ 1,
 	/*0x019c*/ 1,  /*0x019d*/ 1,  /*0x019e*/ 6,  /*0x019f*/ 5,
 	/*0x01a0*/ 4,  /*0x01a1*/ 2,  /*0x01a2*/ 4,  /*0x01a3*/ 3,
@@ -1244,6 +1244,16 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 	if (n > 60) {
 		n = 60;
 	}
+
+#ifndef PLATFORM_N64
+	// Same as chraiRunLoop and chraiLuaStep: an opcode with no handler, NULL
+	// slot or past the table, is reported and yields. Checked before buf is
+	// swapped in so the warning names the list the script is running.
+	if (type >= ARRAYCOUNT(g_CommandPointers) || !g_CommandPointers[type]) {
+		chraiWarnNoHandler(type);
+		return 1;
+	}
+#endif
 
 	buf[0] = (opcode >> 8) & 0xff;
 	buf[1] = opcode & 0xff;

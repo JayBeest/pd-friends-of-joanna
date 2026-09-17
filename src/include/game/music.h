@@ -45,4 +45,8 @@ void musicSetXReason(s32 reason, u32 minsecs, u32 maxsecs);
 void musicUnsetXReason(s32 reason);
 void musicTickAmbient(void);
 
+#ifndef PLATFORM_N64
+extern s32 g_MusicSuppressed; // pd.stage_music(false): every music start path is blocked
+#endif
+
 #endif

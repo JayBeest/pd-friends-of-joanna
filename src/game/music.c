@@ -48,6 +48,16 @@ s32 g_MusicSilenceTimer60 = 0;  // Counts down the 2 second silence between MP t
 
 #ifndef PLATFORM_N64
 s32 g_MusicDisableMpDeath = false;
+
+// Chaos "Silo Countdown" music suppression (Kai fork): while set, every
+// music-restart path (primary / ambient / nrg / menu) early-returns, so the
+// sequenced game music stays silent for the whole effect even when closing the
+// pause menu would otherwise restart it (musicEndMenu -> musicStartPrimary).
+// Deliberately does NOT touch g_MusicVolume / the slider, so a pd.play_file
+// track that follows the music volume is unaffected. Set/cleared via
+// pd.stage_music (chraiLuaStageMusic); force-cleared on stage load (lv.c) so it
+// can never get stuck silent.
+s32 g_MusicSuppressed = 0;
 #endif
 
 #if VERSION < VERSION_NTSC_1_0
@@ -323,6 +333,17 @@ void musicRestoreInterval(void)
 
 void musicStartPrimary(f32 arg0)
 {
+#ifndef PLATFORM_N64
+	if (g_MusicSuppressed) {
+		return;
+	}
+	{
+		// Beat-game drum sync: re-learn the kick key for the new track (it's the
+		// lowest-key percussion note, and only ever decreases within a track).
+		extern s32 g_SndBeatKickKey;
+		g_SndBeatKickKey = 127;
+	}
+#endif
 	if (PRIMARYTRACK() >= 0) {
 		musicQueueStartEvent(TRACKTYPE_PRIMARY, PRIMARYTRACK(), arg0, musicGetVolume());
 	}
@@ -331,6 +352,11 @@ void musicStartPrimary(f32 arg0)
 void musicStartAmbient(f32 arg0)
 {
 	s32 pass = false;
+#ifndef PLATFORM_N64
+	if (g_MusicSuppressed) {
+		return;
+	}
+#endif
 
 	if (AMBIENTTRACK() >= 0) {
 		if (g_TemporaryAmbientTrack != -1) {
@@ -399,6 +425,11 @@ bool musicIsAnyPlayerInAmbientRoom(void)
 
 void musicStartNrg(f32 arg0)
 {
+#ifndef PLATFORM_N64
+	if (g_MusicSuppressed) {
+		return;
+	}
+#endif
 	musicQueueStartEvent(TRACKTYPE_NRG, stageGetNrgTrack(g_MusicStageNum), arg0, musicGetVolume());
 }
 
@@ -417,6 +448,11 @@ void musicStartWatch(f32 arg0)
  */
 void musicStartTrackAsMenu(s32 tracknum)
 {
+#ifndef PLATFORM_N64
+	if (g_MusicSuppressed) {
+		return;
+	}
+#endif
 	if (tracknum != g_MenuTrack) {
 		musicQueueStopEvent(TRACKTYPE_MENU);
 		musicQueueStopEvent(TRACKTYPE_DEATH);

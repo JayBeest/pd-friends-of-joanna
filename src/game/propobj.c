@@ -16893,6 +16893,15 @@ void weaponPlayPickupSound(s32 weaponnum)
 {
 	s32 sound;
 
+#ifndef PLATFORM_N64
+	// Per-pickup Lua event: this is the local player's every-pickup
+	// chokepoint, unlike the first-discovery "weaponfound" emit.
+	{
+		extern void luaEmitWeaponPickup(s32 weaponnum);
+		luaEmitWeaponPickup(weaponnum);
+	}
+#endif
+
 	const struct weapon *definition = bgunGetWeaponDefinition(weaponnum);
 
 	if (definition && definition->pickupsound) {

@@ -95,6 +95,14 @@ void frSaveScoreIfBest(s32 weaponindex, s32 difficulty)
 		value += (difficulty << shiftamount) & mask;
 
 		g_GameFile.firingrangescores[byteindex] = value;
+
+#ifndef PLATFORM_N64
+		{
+			// A new firing-range medal was earned (weapon, medal 1..3).
+			extern void luaEmitFiringRange(s32 weaponindex, s32 medal);
+			luaEmitFiringRange(weaponindex, difficulty);
+		}
+#endif
 	}
 }
 
@@ -174,10 +182,25 @@ void frSetWeaponFound(s32 weaponnum)
 	if (weaponnum < (s32)sizeof(g_GameFile.weaponsfound) * 8) {
 		u32 byteindex = weaponnum >> 3;
 		u32 value = g_GameFile.weaponsfound[byteindex];
+#ifndef PLATFORM_N64
+		u32 bit = 1 << (weaponnum % 8);
+		s32 wasfound = (value & bit) != 0;
+#endif
 
 		value |= (1 << (weaponnum % 8));
 
 		g_GameFile.weaponsfound[byteindex] = value;
+
+#ifndef PLATFORM_N64
+		// Emit once, the first time a weapon is discovered — but only in the
+		// solo campaign. Combat Simulator pickups also flag weaponsfound
+		// (vanilla), which would fire it every match. The vanilla bit-set
+		// above is left untouched.
+		if (!wasfound && !g_Vars.normmplayerisrunning) {
+			extern void luaEmitWeaponFound(s32 weaponnum);
+			luaEmitWeaponFound(weaponnum);
+		}
+#endif
 	}
 }
 

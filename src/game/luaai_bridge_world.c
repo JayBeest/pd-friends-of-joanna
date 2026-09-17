@@ -10,6 +10,7 @@
  */
 
 #include <ultra64.h>
+#include <math.h>
 #include "constants.h"
 #include "types.h"
 #include "bss.h"
@@ -31,7 +32,20 @@
 #include "lib/snd.h"
 #include "luaai_api_internal.h"
 
-#include <math.h>
+// Script forces end up in velocities the engine keeps integrating, where a NaN
+// or inf never goes away. Refuse those and cap the rest.
+static s32 luaForceOk(f32 *force)
+{
+	if (!isfinite(*force)) {
+		return 0;
+	}
+	if (*force > 1000.0f) {
+		*force = 1000.0f;
+	} else if (*force < -1000.0f) {
+		*force = -1000.0f;
+	}
+	return 1;
+}
 
 // pd.sound(sfxnum): play a one-shot sound locally (announcer stingers etc).
 // sfxnum is a packed sound number, 0..0xffff (0x8000 set = audio config id).
@@ -147,7 +161,7 @@ s32 chraiLuaHaunt(f32 force)
 	struct prop *plprop;
 	s32 thrown = 0;
 
-	if (apLuaPlayerChr() == NULL) {
+	if (apLuaPlayerChr() == NULL || !luaForceOk(&force)) {
 		return 0;
 	}
 	plprop = g_Vars.currentplayer->prop;
@@ -212,7 +226,7 @@ s32 chraiLuaGust(f32 force)
 	struct coord dir;
 	f32 angle;
 
-	if (apLuaPlayerChr() == NULL) {
+	if (apLuaPlayerChr() == NULL || !luaForceOk(&force)) {
 		return 0;
 	}
 

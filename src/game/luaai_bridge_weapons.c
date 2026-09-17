@@ -11,6 +11,7 @@
  */
 
 #include <ultra64.h>
+#include <math.h>
 #include "constants.h"
 #include "types.h"
 #include "bss.h"
@@ -502,7 +503,7 @@ s32 chraiLuaNoReload(s32 on)
 // crosshair bloom (bondgun.c g_ChaosSpreadMult). 1 = normal; clamped sane.
 s32 chraiLuaSpread(f32 mult)
 {
-
+	if (isnan(mult)) mult = 1.0f;
 	if (mult < 0.0f) mult = 0.0f;
 	if (mult > 20.0f) mult = 20.0f;
 	g_ChaosSpreadMult = mult;

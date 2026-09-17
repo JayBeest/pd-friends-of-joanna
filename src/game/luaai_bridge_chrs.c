@@ -22,6 +22,7 @@
  */
 
 #include <ultra64.h>
+#include <math.h>
 #include "constants.h"
 #include "types.h"
 #include "bss.h"
@@ -605,8 +606,15 @@ s32 chraiLuaYeetChr(s32 chrnum, f32 force)
 {
 	struct chrdata *chr = chrFindByLiteralId(chrnum);
 
-	if (apLuaPlayerChr() == NULL || chr == NULL || chr->prop == NULL || chr->model == NULL) {
+	// a NaN or inf would stay in the chr's fallspeed and position
+	if (apLuaPlayerChr() == NULL || chr == NULL || chr->prop == NULL || chr->model == NULL
+			|| !isfinite(force)) {
 		return 0;
+	}
+	if (force > 1000.0f) {
+		force = 1000.0f;
+	} else if (force < -1000.0f) {
+		force = -1000.0f;
 	}
 	chrYeetFromPos(chr, &g_Vars.currentplayer->prop->pos, force);
 	return 1;

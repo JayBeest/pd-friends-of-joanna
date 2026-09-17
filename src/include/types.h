@@ -3011,6 +3011,23 @@ struct player {
   // so the two are read together: a distance of 0 means there is no frozen
   // camera to go back to, and the death is the stock first person one.
   /*ext*/ struct coord thirdpersoncampos;
+  // Camera Tether: where the far end of the rod stood last frame, before any
+  // wall brought the camera in, so this frame can read which way round the
+  // player it is pointing. Only x and z are used; the height is not
+  // tethered. Nothing to read until the flag says a frame has written it -
+  // the first frame of third person, and every one after a spell on the eye,
+  // starts the rod behind the aim.
+  /*ext*/ struct coord thirdpersontetherpos;
+  /*ext*/ bool thirdpersontethered;
+  // Camera Tether: the body's own facing, in the radians chrSetLookAngle()
+  // takes, kept apart from vv_theta so the right stick turns the camera and
+  // not the body. It turns to face where the left stick moves the body, holds
+  // while the body stands, and faces the camera for as long as the trigger is
+  // held and a moment after (the countdown, in 60Hz ticks). Not worth reading
+  // until the flag says a frame has written it.
+  /*ext*/ f32 thirdpersonbodytheta;
+  /*ext*/ bool thirdpersonbodyset;
+  /*ext*/ s32 thirdpersonfirehold;
 };
 
 struct ailist {

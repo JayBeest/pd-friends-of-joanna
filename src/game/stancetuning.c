@@ -24,6 +24,8 @@ f32 g_ThirdPersonCamMinDist = THIRDPERSON_CAMMINDIST;
 f32 g_ThirdPersonCamSide = THIRDPERSON_CAMSIDE;
 f32 g_ThirdPersonCamForward = THIRDPERSON_CAMFWD;
 f32 g_ThirdPersonCamHeight = THIRDPERSON_CAMHEIGHT;
+s32 g_ThirdPersonCamTether = THIRDPERSON_TETHER;
+f32 g_TetherBodyTurnSpeed = TETHER_BODYTURN;
 
 f32 g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 f32 g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;
@@ -82,6 +84,8 @@ void stanceTuningReset(void)
 	g_ThirdPersonCamSide = THIRDPERSON_CAMSIDE;
 	g_ThirdPersonCamForward = THIRDPERSON_CAMFWD;
 	g_ThirdPersonCamHeight = THIRDPERSON_CAMHEIGHT;
+	g_ThirdPersonCamTether = THIRDPERSON_TETHER;
+	g_TetherBodyTurnSpeed = TETHER_BODYTURN;
 
 	g_BodyFadeStart = THIRDPERSON_BODYFADE_START;
 	g_BodyFadeFloor = THIRDPERSON_BODYFADE_FLOOR;

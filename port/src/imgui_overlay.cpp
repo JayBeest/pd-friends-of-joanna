@@ -226,6 +226,8 @@ extern "C" f32 g_ThirdPersonCamMinDist;
 extern "C" f32 g_ThirdPersonCamSide;
 extern "C" f32 g_ThirdPersonCamForward;
 extern "C" f32 g_ThirdPersonCamHeight;
+extern "C" s32 g_ThirdPersonCamTether;
+extern "C" f32 g_TetherBodyTurnSpeed;
 extern "C" f32 g_BodyFadeStart;
 extern "C" f32 g_BodyFadeFloor;
 extern "C" s32 g_AnimSplitLowerMask;
@@ -3280,6 +3282,31 @@ static void imguiOverlayDrawStancePanel(void)
 				"Negative brings the camera round in front of her.");
 		imguiOverlayStanceKnob("Height", &g_ThirdPersonCamHeight, -150.0f, 150.0f, "%.0f",
 				"Units straight up in the world, not along the camera's up.");
+
+		{
+			static const char *tethers[] = { "Off", "Loose", "Normal", "Tight" };
+			int tether = g_ThirdPersonCamTether;
+
+			if (tether < 0 || tether > 3) {
+				tether = 0;
+			}
+
+			if (ImGui::Combo("Camera tether", &tether, tethers, 4)) {
+				g_ThirdPersonCamTether = tether;
+			}
+
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("The camera on a pole that pivots about her.\n"
+						"Right stick orbits the camera; she turns to face where\n"
+						"the left stick takes her, and faces the camera while firing.\n"
+						"Loose swings to 60 degrees, Normal 45, Tight 30.\n"
+						"Off is the rigid camera, body facing the aim.");
+			}
+		}
+
+		imguiOverlayStanceKnob("Body turn (deg/tick)", &g_TetherBodyTurnSpeed, 5.0f, 90.0f, "%.0f",
+				"With the tether on: how fast she turns to face her travel.\n"
+				"30 is an about-turn in a tenth of a second; 90 is instant.");
 	}
 
 	if (ImGui::CollapsingHeader("Body fade", ImGuiTreeNodeFlags_DefaultOpen)) {

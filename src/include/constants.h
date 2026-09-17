@@ -429,6 +429,30 @@
 #define THIRDPERSON_CAMHEIGHT    0.0f // straight up in the world
 
 /**
+ * Camera Tether: the third person camera as a pole attached to the body rather
+ * than bolted to the back of its head. The right stick orbits the camera round
+ * the body, the left stick moves the body in screen space and the body turns to
+ * face the way it goes, and while the trigger is held it faces the camera,
+ * which is where the shot goes. The pole is elastic to the setting: strafing
+ * drags its far end round and it eases back behind the camera. Loose lets it
+ * swing to sixty degrees and takes its time, Tight holds it within thirty and
+ * is close to a rigid pole. Off, the default, is the rigid camera with the
+ * body facing the aim. playerTetherCamera() and playerTetherBody() have it.
+ *
+ * TETHER_BODYTURN is how fast the tethered body comes round to face the way
+ * it is going, in degrees per 60Hz tick: 30 is an about-turn in a tenth of a
+ * second, 90 is as good as instant.
+ */
+#define TETHER_OFF    0
+#define TETHER_LOOSE  1
+#define TETHER_NORMAL 2
+#define TETHER_TIGHT  3
+#define TETHER_MAX    TETHER_TIGHT
+
+#define THIRDPERSON_TETHER TETHER_OFF
+#define TETHER_BODYTURN    30.0f
+
+/**
  * The shortest pull-back worth having.
  *
  * A corridor or a corner can clamp the camera down to nothing, and a camera

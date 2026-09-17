@@ -48,6 +48,12 @@ extern f32 g_ThirdPersonCamSide;
 extern f32 g_ThirdPersonCamForward;
 extern f32 g_ThirdPersonCamHeight;
 
+// Camera Tether (TETHER_*, off by default): the camera on a rod that pivots
+// about her, and the body with a facing of its own; and how fast that body
+// turns to face its travel, in degrees per 60Hz tick.
+extern s32 g_ThirdPersonCamTether;
+extern f32 g_TetherBodyTurnSpeed;
+
 // The body fade: the distance the fade starts at, and how much of her alpha it
 // takes at its deepest. A floor of 1 would make her vanish outright.
 extern f32 g_BodyFadeStart;

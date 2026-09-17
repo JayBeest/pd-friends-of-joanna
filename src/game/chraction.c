@@ -3132,6 +3132,19 @@ void chrBeginDeath(struct chrdata *chr, struct coord *dir, f32 relangle, s32 hit
 
 	chr->sleep = 0;
 
+#ifndef PLATFORM_N64
+	// Campaign chr death CHOKE POINT: every non-aibot death that plays a death
+	// animation funnels through here — gunfire (via the argh path), robots and
+	// Dr Caroll from explosions, KO'd chrs finished off. Emit the Lua "kill"
+	// event here (not on knockouts — a KO'd chr that's later killed re-enters
+	// with knockout == false). The aibot path (chrDie) and the explosion-yeet
+	// path (chrDamage) emit at their own sites.
+	if (knockout == false) {
+		extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+		luaEmitKill((s32)chr->chrnum, aplayernum);
+	}
+#endif
+
 	// Handle robots and Dr Caroll then return early
 	if (race == RACE_ROBOT || race == RACE_DRCAROLL) {
 		impactforce1 = gsetGetImpactForce(gset) * 0.5f;
@@ -4874,6 +4887,11 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 	bool ismelee;
 	struct prop *vprop = chr->prop;
 	f32 headshotdamagescale = 1;
+#ifndef PLATFORM_N64
+	// Remembers a head hit so the luaEmitDamage site below (where the
+	// attacker is resolved) can emit the "headshot" event.
+	bool chaosheadshot = false;
+#endif
 	bool usedshield = false;
 	bool showshield = false;
 	bool showdamage = false;
@@ -5339,6 +5357,9 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 		// Apply damage multipliers based on which body parts were hit,
 		// and flinch head if shot in the head
 		if (hitpart == HITPART_HEAD) {
+#ifndef PLATFORM_N64
+			chaosheadshot = true;
+#endif
 			if (race == RACE_SKEDAR) {
 				damage += damage;
 				chrFlinchHead(chr, angle);
@@ -5644,6 +5665,16 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 				chr->damage += damage;
 				chr->lastattacker = (aprop ? aprop->chr : NULL);
 				chr->chrflags |= CHRCFLAG_JUST_INJURED;
+#ifndef PLATFORM_N64
+				{
+					extern void luaEmitDamage(s32 chrnum, s32 attackerplayernum, s32 amount);
+					extern void luaEmitHeadshot(s32 chrnum, s32 attackerplayernum);
+					luaEmitDamage((s32)chr->chrnum, aplayernum, (s32)damage);
+					if (chaosheadshot) {
+						luaEmitHeadshot((s32)chr->chrnum, aplayernum);
+					}
+				}
+#endif
 
 				if (chr->aibot) {
 					if (g_Vars.normmplayerisrunning && (g_MpSetup.options & MPOPTION_ONEHITKILLS)) {
@@ -5698,6 +5729,17 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 							chrBeginDeath(chr, vector, angle, hitpart, gset, false, aplayernum);
 						} else {
 							chrYeetFromPos(chr, explosionpos, explosionforce);
+#ifndef PLATFORM_N64
+							{
+								// Explosion deaths of humans are yeeted straight to
+								// dead and never reach chrBeginDeath (the kill-event
+								// choke point) — emit here for this path only.
+								extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+								luaEmitKill((s32)chr->chrnum,
+										(aprop && aprop->type == PROPTYPE_PLAYER)
+											? (s32)playermgrGetPlayerNumByProp(aprop) : -1);
+							}
+#endif
 						}
 
 						if (canchoke) {
@@ -5808,6 +5850,12 @@ void chrDie(struct chrdata *chr, s32 aplayernum)
 	if (chr->actiontype != ACT_DIE) {
 		chrStopFiring(chr);
 		chrUncloak(chr, true);
+#ifndef PLATFORM_N64
+		{
+			extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+			luaEmitKill((s32)chr->chrnum, aplayernum);
+		}
+#endif
 
 		chr->actiontype = ACT_DIE;
 		chr->act_die.notifychrindex = 0;
@@ -8556,6 +8604,15 @@ bool chrTryPunch(struct chrdata *chr, u8 reverse)
 	if (ok) {
 		struct prop *targetprop = chrGetTargetProp(chr);
 
+#ifndef PLATFORM_N64
+		{
+			// An NPC punch/kick counts like a gun discharge (weaponnum
+			// UNARMED marks it as melee).
+			extern void luaEmitChrFire(s32 chrnum, s32 weaponnum);
+			luaEmitChrFire(chr->chrnum, WEAPON_UNARMED);
+		}
+#endif
+
 		if (targetprop->type == PROPTYPE_EYESPY || targetprop->type == PROPTYPE_PLAYER) {
 			chr->act_anim.hitradius = playerhitradius;
 		} else {
@@ -11032,6 +11089,16 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 			f32 roty = chrGetAimAngle(chr);
 			f32 rotx = chrGetPitchAngle(chr);
 			bool extracdtypes = isaibot ? CDTYPE_PLAYERS : 0;
+
+#ifndef PLATFORM_N64
+			// Report the discharge to Lua (pd.on "chrfire"): campaign guards
+			// and simulants alike. Player shots report via luaEmitWeaponFire
+			// (bondgun.c); the PROPTYPE_PLAYER gate avoids double counting.
+			if (chrprop->type != PROPTYPE_PLAYER) {
+				extern void luaEmitChrFire(s32 chrnum, s32 weaponnum);
+				luaEmitChrFire(chr->chrnum, gset.weaponnum);
+			}
+#endif
 
 			firingthisframe = true;
 

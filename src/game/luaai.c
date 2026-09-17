@@ -598,6 +598,7 @@ void luaaiReset(void)
 	g_LuaOverrideCount = 0;
 	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
 	g_LuaSwitchWarnings = 0;
+	chraiLuaInvalidateListLength();
 	luaApiResetFrame();
 }
 

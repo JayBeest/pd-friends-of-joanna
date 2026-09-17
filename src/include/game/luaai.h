@@ -30,9 +30,11 @@ extern s32 g_LuaAiEnabled;
 void luaaiExecute(void *entity, s32 proptype);
 
 /**
- * Reset all cached Lua state. Should be called when a new stage is loaded so
- * that transpiled chunks and registered overrides from the previous stage do
- * not leak into the next one.
+ * Reset all cached Lua state. Called from lvReset before the stage's setup
+ * files are loaded, restarts of the same stage included, so that transpiled
+ * chunks, overrides and quarantine entries keyed on list pointers from the
+ * previous load do not leak into the next one. luaaiExecute also resets when
+ * it sees the stage number change, as a backstop.
  */
 void luaaiReset(void);
 
@@ -83,6 +85,12 @@ void chraiRunLoop(void);
  * command handler requested a break (e.g. yield), 0 otherwise.
  */
 s32 chraiLuaStep(u32 off);
+
+/**
+ * Forget chraiLuaStep's cached list length. luaaiReset calls it, because a
+ * reloaded list can land at an old list's address.
+ */
+void chraiLuaInvalidateListLength(void);
 
 /** Current program counter (g_Vars.aioffset). */
 u32 chraiLuaGetOffset(void);

@@ -999,22 +999,50 @@ u32 chraiGetAilistLength(u8* list)
 // one command at a time through chraiLuaStep.
 // ---------------------------------------------------------------------------
 
+// Per-list length cache. Transpiler-emitted ctx:exec offsets are always in
+// range, but a hand-written Lua override can pass an arbitrary integer; if we
+// indexed ailist[off] with it we'd read the opcode (and the handler's
+// operands) out of bounds. The length is computed once per list (the pointer
+// is constant for the duration of a list's dispatch) so the hot path stays
+// O(1). See docs/netplay-code-review-2026.md (CR-8).
+static u8 *s_LuaLenList = NULL;
+static u32 s_LuaListLen = 0;
+#ifndef PLATFORM_N64
+// Setup lists are reloaded at stage load and a new list can land at an old
+// list's address. luaaiReset, called from the stage load, drops the cache;
+// keying it on the stage too is a backstop. A stale short length would make
+// every step report out of range.
+static s32 s_LuaLenStage = -1;
+#endif
+
+void chraiLuaInvalidateListLength(void)
+{
+	s_LuaLenList = NULL;
+	s_LuaListLen = 0;
+#ifndef PLATFORM_N64
+	s_LuaLenStage = -1;
+#endif
+}
+
+// Length of g_Vars.ailist, 0 for none.
+static u32 chraiLuaListLength(void)
+{
+#ifndef PLATFORM_N64
+	if (g_Vars.ailist != s_LuaLenList || g_Vars.stagenum != s_LuaLenStage) {
+		s_LuaLenStage = g_Vars.stagenum;
+#else
+	if (g_Vars.ailist != s_LuaLenList) {
+#endif
+		s_LuaLenList = g_Vars.ailist;
+		s_LuaListLen = chraiGetAilistLength(g_Vars.ailist);
+	}
+
+	return s_LuaListLen;
+}
+
 s32 chraiLuaStep(u32 off)
 {
-	// Per-list length cache. Transpiler-emitted ctx:exec offsets are always in
-	// range, but a hand-written Lua override can pass an arbitrary integer; if we
-	// indexed ailist[off] with it we'd read the opcode (and the handler's
-	// operands) out of bounds. The length is computed once per list (the pointer
-	// is constant for the duration of a list's dispatch) so the hot path stays
-	// O(1). See docs/netplay-code-review-2026.md (CR-8).
-	static u8 *s_lenlist = NULL;
-	static u32 s_listlen = 0;
-#ifndef PLATFORM_N64
-	// Setup lists are reloaded at stage load and a new list can land at an
-	// old list's address, so the cache is keyed on the stage too. A stale
-	// short length would make every step below report out of range.
-	static s32 s_lenstage = -1;
-#endif
+	u32 listlen;
 	u8 *cmd;
 	s32 type;
 
@@ -1038,18 +1066,13 @@ s32 chraiLuaStep(u32 off)
 
 		return 1;
 	}
-
-	if (g_Vars.ailist != s_lenlist || g_Vars.stagenum != s_lenstage) {
-		s_lenstage = g_Vars.stagenum;
-#else
-	if (g_Vars.ailist != s_lenlist) {
 #endif
-		s_lenlist = g_Vars.ailist;
-		s_listlen = chraiGetAilistLength(g_Vars.ailist);
-	}
+
+	listlen = chraiLuaListLength();
+
 	// Two opcode bytes must fit. Written so it cannot wrap: off + 1 overflows
 	// for off = 0xffffffff and would pass.
-	if (!g_Vars.ailist || off >= s_listlen || s_listlen - off < 2) {
+	if (!g_Vars.ailist || off >= listlen || listlen - off < 2) {
 #ifndef PLATFORM_N64
 		// Out of range. Only a hand-written override can pass such an
 		// offset. A 0 here would tell the chunk to continue from an

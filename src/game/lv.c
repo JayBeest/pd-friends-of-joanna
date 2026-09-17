@@ -39,6 +39,7 @@
 #include "game/hudmsg.h"
 #include "game/inv.h"
 #include "game/lang.h"
+#include "game/luaai.h"
 #include "game/lv.h"
 #include "game/menu.h"
 #include "game/mplayer/mplayer.h"
@@ -375,6 +376,13 @@ void lvReset(s32 stagenum)
 	vtxstoreReset();
 	modelmgrReset();
 	psReset();
+#ifndef PLATFORM_N64
+	// Setup lists are about to be reloaded, and a new list can land at an old
+	// list's address. The Lua AI layer keys chunks, overrides and quarantine on
+	// list pointers, so drop them here; a same-stage restart would not change
+	// the stage number luaaiExecute also watches.
+	luaaiReset();
+#endif
 	setupLoadFiles(stagenum);
 	scenarioReset();
 	varsReset();

@@ -19,6 +19,7 @@
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
 #include "gfx_pc.h"
+#include "gfx_retro.h"
 
 using namespace std;
 
@@ -33,6 +34,7 @@ struct ShaderProgram {
     GLint frame_count_location;
     GLint noise_scale_location;
     GLint three_point_filter_locations[2];
+    GLint wireframe_color_location; // pd.* fx flat fill / wire colour (rgb, a > 0.5 = on)
 };
 
 struct Framebuffer {
@@ -62,6 +64,13 @@ static char gl_glsl_version_str[16] = "130";
 static GLenum gl_mirror_clamp = GL_MIRROR_CLAMP_TO_EDGE;
 static bool gl_es = false;
 static bool gl_core_profile = false;
+
+// pd.* fx (wireframe enemies, iPod Ad silhouette; from the Perfect Dark Kai
+// fork, be46717): the program the next draw uses, and whether that draw is
+// depth-tested. Only depth-tested (3D) geometry is ever outlined or filled,
+// never the 2D HUD/menus.
+static struct ShaderProgram* gfx_current_shader_program = NULL;
+static bool s_fx_depth_test = false;
 
 static int gfx_opengl_get_max_texture_size() {
     GLint max_texture_size;
@@ -119,6 +128,7 @@ static void gfx_opengl_unload_shader(struct ShaderProgram* old_prg) {
 static void gfx_opengl_load_shader(struct ShaderProgram* new_prg) {
     // if (!new_prg) return;
     glUseProgram(new_prg->opengl_program_id);
+    gfx_current_shader_program = new_prg;
     gfx_opengl_vertex_array_set_attribs(new_prg);
     gfx_opengl_set_uniforms(new_prg);
 }
@@ -362,6 +372,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 
     append_line(fs_buf, &fs_len, "uniform int frame_count;");
     append_line(fs_buf, &fs_len, "uniform float noise_scale;");
+    // pd.* fx flat colour: rgb = colour, a > 0.5 enables the override.
+    append_line(fs_buf, &fs_len, "uniform vec4 wireframe_color;");
 
     append_line(fs_buf, &fs_len, "float random(in vec3 value) {");
     append_line(fs_buf, &fs_len, "    float random = dot(sin(value), vec3(12.9898, 78.233, 37.719));");
@@ -485,6 +497,9 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "    texel.rgb = mix(texel.rgb, new_texel, vGrayscaleColor.a);");
     }
 
+    // pd.* fx: replace the surface colour with a flat colour when enabled.
+    append_line(fs_buf, &fs_len, "    if (wireframe_color.a > 0.5) texel.rgb = wireframe_color.rgb;");
+
     if (cc_features.opt_alpha) {
         if (cc_features.opt_alpha_threshold) {
             append_line(fs_buf, &fs_len, "    if (texel.a < 8.0 / 256.0) discard;");
@@ -602,6 +617,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     prg->noise_scale_location = glGetUniformLocation(shader_program, "noise_scale");
     prg->three_point_filter_locations[0] = glGetUniformLocation(shader_program, "three_point_filter0");
     prg->three_point_filter_locations[1] = glGetUniformLocation(shader_program, "three_point_filter1");
+    prg->wireframe_color_location = glGetUniformLocation(shader_program, "wireframe_color");
 
     gfx_opengl_load_shader(prg);
 
@@ -625,6 +641,7 @@ static void gfx_opengl_clear_shaders(void) {
         glDeleteProgram(pair.second.opengl_program_id);
     }
     shader_program_pool.clear();
+    gfx_current_shader_program = NULL;
 }
 
 static GLuint gfx_opengl_new_texture(void) {
@@ -672,6 +689,7 @@ static void gfx_opengl_set_sampler_parameters(int tile, bool linear_filter, uint
 }
 
 static void gfx_opengl_set_depth_mode(bool depth_test, bool depth_update, bool depth_compare, bool depth_source_prim, uint16_t zmode) {
+    s_fx_depth_test = depth_test;
     if (depth_test) {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(depth_update ? GL_TRUE : GL_FALSE);
@@ -744,7 +762,45 @@ static void gfx_opengl_set_use_alpha(bool use_alpha, bool modulate) {
 static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
+
+    // pd.* fx "wireframe enemies": draw the bracketed depth-tested 3D geometry
+    // as polygon outlines. Skipped for 2D HUD/menus (no depth test) and on
+    // GL ES (glPolygonMode is desktop-GL only).
+    const bool wireframe = gfx_wireframe_scope && s_fx_depth_test && !gl_es;
+    // pd.* fx "iPod Ad": flat-fill depth-tested 3D geometry with the current
+    // scope colour (walls bright, chrs black, objects/weapons white). Not
+    // while wireframe outlines are on.
+    const bool sil_fill = gfx_silhouette && !wireframe && s_fx_depth_test
+            && gfx_current_shader_program && gfx_current_shader_program->wireframe_color_location >= 0;
+    if (wireframe) {
+        glLineWidth(gfx_wireframe_line_width);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    }
+    if (sil_fill) {
+        glUniform4f(gfx_current_shader_program->wireframe_color_location,
+                gfx_silhouette_color[0], gfx_silhouette_color[1], gfx_silhouette_color[2], 1.0f);
+    }
+
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+
+    if (sil_fill && gfx_silhouette_edges && !gl_es) {
+        // White wireframe edges over the flat fill (walls only; chrs, objects
+        // and weapons stay clean silhouettes): a second pass in line mode.
+        glLineWidth(gfx_wireframe_line_width);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glUniform4f(gfx_current_shader_program->wireframe_color_location, 1.0f, 1.0f, 1.0f, 1.0f);
+        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glLineWidth(1.0f);
+    }
+    if (sil_fill) {
+        // Reset so later draws sharing this program (e.g. the HUD) are unaffected.
+        glUniform4f(gfx_current_shader_program->wireframe_color_location, 0.0f, 0.0f, 0.0f, 0.0f);
+    }
+    if (wireframe) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glLineWidth(1.0f);
+    }
 }
 
 typedef void (APIENTRY *DEBUGPROC)(GLenum source,
@@ -1196,6 +1252,18 @@ FilteringMode gfx_opengl_get_texture_filter(void) {
     return current_filter_mode;
 }
 
+// pd.* fx post filter (from the Perfect Dark Kai fork, be46717).
+// gfx_retro.cpp does the work and saves/restores every piece of GL state it
+// touches. Desktop GL only: the capture path needs FBOs and blits.
+static void gfx_opengl_retro_filter(int pixw, int pixh, int cmode, int clevels, int fx, float warp) {
+    if (gl_es || gl_glsl_version < 130 || !gfx_framebuffers_enabled) {
+        return;
+    }
+    const Framebuffer& fb = framebuffers[current_framebuffer];
+    gfx_retro_filter(pixw, pixh, cmode, clevels, fx, warp, fb.fbo, (int)fb.width, (int)fb.height,
+                     gl_glsl_version_str);
+}
+
 struct GfxRenderingAPI gfx_opengl_api = { 
     gfx_opengl_get_name,
     gfx_opengl_get_max_texture_size,
@@ -1231,5 +1299,6 @@ struct GfxRenderingAPI gfx_opengl_api = {
     gfx_opengl_select_texture_fb,
     gfx_opengl_delete_texture,
     gfx_opengl_set_texture_filter,
-    gfx_opengl_get_texture_filter
+    gfx_opengl_get_texture_filter,
+    gfx_opengl_retro_filter
 };

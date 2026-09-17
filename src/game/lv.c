@@ -247,6 +247,23 @@ void lvReset(s32 stagenum)
 	// Lua effect state (pd.*) must not carry into the next stage: the Lua
 	// state is torn down below without running any effect's stop().
 	chaosStateResetPerStage();
+
+	// World/audio effect state that lives outside chaosstate.c. The saved door
+	// and room lists point at the old stage's props and rooms, so they are
+	// forgotten, never restored.
+	{
+		extern void chraiLuaRoomHighlightReset(void);
+		extern void chraiLuaDoorsHoldReset(void);
+		extern void chraiLuaDoorsSpeedsReset(void);
+		extern void audioSetHold(s32 on);
+
+		audioSetHold(0); // a stage change mid-Fake-Crash must not strand the held audio
+		chraiLuaRoomHighlightReset();
+		chraiLuaDoorsHoldReset();
+		chraiLuaDoorsSpeedsReset();
+		sndChaosSetMusicRate(1.0f); // pd.music_rate
+		g_MusicSuppressed = 0;      // never carry a pd.stage_music silence latch across stages
+	}
 #endif
 
 	var80084014 = false;

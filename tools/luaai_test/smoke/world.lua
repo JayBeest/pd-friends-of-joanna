@@ -196,7 +196,9 @@ local function clearall()
 	check("room_highlight off", function() return pd.room_highlight() == true end)
 	check("mute off", function() return pd.mute(false) == true end)
 	check("stop_file", function()
-		pd.stop_file(state.voice) -- the looping one by id
+		if state.voice then
+			pd.stop_file(state.voice) -- the looping one by id
+		end
 		pd.stop_file(123456)      -- a stale id is a no-op
 		pd.stop_file()            -- the rest
 		return true

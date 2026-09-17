@@ -65,6 +65,7 @@ for _, ev in ipairs({ "weaponfire", "chrfire", "punch", "alert", "kill", "damage
 end
 
 local overridden = nil
+local ranall = false
 
 local function passthrough(ctx)
 	if ctxcheck == nil then
@@ -227,12 +228,19 @@ pd.on("draw", function()
 	if pd.player_count() < 1 or pd.player_pos() == nil or frames.draw < 60 then
 		return
 	end
-	if overridden == nil then
+	if not ranall then
+		ranall = true
 		runall()
 		if overridden ~= nil then
 			pd.register_ailist(overridden, passthrough)
 			pd.log(string.format("core smoke override on list 0x%x", overridden))
 		end
+		return
+	end
+	if overridden == nil then
+		-- a stage with no chrs (a Combat Simulator arena) has no list to override
+		report("ctx read-only", false, "no chr list to override on this stage")
+		done = true
 		return
 	end
 	if ctxcheck == nil then

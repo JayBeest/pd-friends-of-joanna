@@ -400,6 +400,11 @@ static int l_pd_draw_text(lua_State *L)
 #define LUA_PERSIST_MAX 32
 #define LUA_PERSIST_FILE "$S/lua_persist.txt"
 #define LUA_PERSIST_MAXLINE 2048
+/* The file has one "key=value\n" line per entry and the reader (fgets into
+ * char[LUA_PERSIST_MAXLINE]) SPLITS anything longer, so a longer value would
+ * come back as a truncated value plus a junk second entry. Refuse it at
+ * pd.persist_set instead, where the script can still see it fail. */
+#define LUA_PERSIST_MAXENTRY (LUA_PERSIST_MAXLINE - 2)
 static struct luapersist { char *key; char *val; } g_LuaPersist[LUA_PERSIST_MAX];
 static s32 g_LuaPersistLoaded = 0;
 
@@ -567,8 +572,19 @@ static void luaApiPersistEnsureLoaded(void)
  * with '~' is session-only -- kept in memory, never written to the file. */
 static int l_pd_persist_set(lua_State *L)
 {
-	const char *key = luaL_checkstring(L, 1);
-	const char *val = lua_isnoneornil(L, 2) ? NULL : luaL_checkstring(L, 2);
+	size_t keylen = 0;
+	size_t vallen = 0;
+	const char *key = luaL_checklstring(L, 1, &keylen);
+	const char *val = lua_isnoneornil(L, 2) ? NULL : luaL_checklstring(L, 2, &vallen);
+
+	/* A session-only key is never written, so only the file-backed ones have
+	 * to fit a line -- but hold both to the same limit so a script cannot
+	 * find out a value was too long only when it drops the '~'. */
+	if (keylen + vallen + 1 > LUA_PERSIST_MAXENTRY) {
+		luaApiLog2("pd.persist_set: entry too long for the settings file, refused: ", key);
+		lua_pushboolean(L, 0);
+		return 1;
+	}
 
 	luaApiPersistEnsureLoaded();
 
@@ -576,7 +592,8 @@ static int l_pd_persist_set(lua_State *L)
 		luaApiPersistSave();
 	}
 
-	return 0;
+	lua_pushboolean(L, 1);
+	return 1;
 }
 
 /* pd.persist_get(key) -> string | nil */

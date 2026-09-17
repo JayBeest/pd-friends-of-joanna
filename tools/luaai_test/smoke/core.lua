@@ -145,6 +145,17 @@ local function runall()
 	check("lvupdate", function() return isnum(pd.lvupdate()), pd.lvupdate() end)
 	check("mission_complete", function() return pd.mission_complete() == false end)
 	check("load_serial", function() local s = pd.load_serial() return isnum(s) and s >= 1, s end)
+	check("persist_set too long", function()
+		-- the settings file is read back a line at a time into char[2048], so
+		-- a longer entry would come back split into a truncated value and a
+		-- junk second key. pd.persist_set refuses it and returns false; the
+		-- key must be left untouched, not half-written.
+		local huge = string.rep("x", 4096)
+		local refused = pd.persist_set("core_smoke_huge", huge) == false
+		local edge = pd.persist_set("core_smoke_edge", string.rep("y", 2000)) == true
+		return refused and pd.persist_get("core_smoke_huge") == nil and edge
+			and #pd.persist_get("core_smoke_edge") == 2000
+	end)
 	check("persist_set", function()
 		pd.persist_set("core_smoke", "ok=1")
 		pd.persist_set("~core_smoke_session", "yes")

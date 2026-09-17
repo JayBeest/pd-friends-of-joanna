@@ -756,10 +756,11 @@ s32 chraiLuaForceSecondary(s32 on)
 }
 
 // pd.ammo_cost(mult): each shot spends mult rounds from the clip
-// (bondgun.c post-decrement top-up). 1 = normal.
+// (bondgun.c post-decrement top-up). 1 = normal. Capped at 1000, more than any
+// clip holds, so bondgun.c's shotstotake * (mult - 1) stays in int range.
 s32 chraiLuaAmmoCost(s32 mult)
 {
-	g_ChaosAmmoCost = mult < 1 ? 1 : mult;
+	g_ChaosAmmoCost = mult < 1 ? 1 : mult > 1000 ? 1000 : mult;
 	return 1;
 }
 

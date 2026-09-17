@@ -298,11 +298,36 @@ s32 fsInit(void)
 	// The shipped default when no --moddir is given. A hardcoded roster, and
 	// it stays one until a mods-dir scan or --boot-mod replaces it; order here
 	// is what resolution ties break on today.
+	//
+	// ORDER IS LOAD-BEARING, and not only as a tiebreak of last resort.
+	// romdataFileLoad takes a file's NAME from its owner's row but then hunts
+	// the BYTES through every mod dir in reverse, highest index first, so for
+	// a relative path two mods both ship, the LAST one listed wins. Measured
+	// on this roster: exactly four paths are contested with differing bytes,
+	// and all four are the files stage 0x24 names -
+	//   bgdata/bg_mp20.seg, bg_mp20_tilesZ, bg_mp20_padsZ, Ump_setupmp20Z
+	// which mod_gex_stages also carries. mod_kakariko_stages CLAIMS 0x24, so
+	// it has to sit after mod_gex_stages or Kakariko Village loads GoldenEye:X
+	// geometry. Nothing else on this roster is contested: the three character
+	// mods share 103 texture ids with the stage mods and every one of those is
+	// byte-identical.
+	//
+	// mod_fojo stays at index 0: pdmain.c finds the boot mod by looking for
+	// "mod_fojo" as a substring of a mod dir, and index 0 is also the row
+	// romdataFileLoad falls back to for an unowned id.
+	//
+	// The stage mods claim disjoint stages - 0x24, 0x10/0x49/0x07/0x14, 0x18 -
+	// so no stage is contested and each one's level data is reachable only on
+	// the stages it claims. The rest of their level data is inert until
+	// someone decides the claim question; see the AIO stage-claims decision.
 	if (numModDirs == 0) {
-		numModDirs = 3;
+		numModDirs = 6;
 		strcpy(modDirs[0], "$B/mods/mod_fojo");
 		strcpy(modDirs[1], "$B/mods/mod_gex_characters");
 		strcpy(modDirs[2], "$B/mods/mod_aio_characters");
+		strcpy(modDirs[3], "$B/mods/mod_gex_stages");
+		strcpy(modDirs[4], "$B/mods/mod_aio_stages");
+		strcpy(modDirs[5], "$B/mods/mod_kakariko_stages");
 	}
 	fileSlotsInit(numModDirs);
 	g_NumModDirs = numModDirs;

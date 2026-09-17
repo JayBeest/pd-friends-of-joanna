@@ -20,7 +20,7 @@
  * chunk for a given list.
  */
 
-/* Non-zero when action blocks should be executed via Lua. Defaults to 1. */
+/* Non-zero when action blocks should be executed via Lua. Defaults to 0. */
 extern s32 g_LuaAiEnabled;
 
 /**

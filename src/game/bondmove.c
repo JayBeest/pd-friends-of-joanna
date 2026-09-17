@@ -41,6 +41,7 @@
 #include "lib/anim.h"
 #include "data.h"
 #include "types.h"
+#include "game/chaosstate.h"
 #ifndef PLATFORM_N64
 #include <math.h>
 #include "input.h"
@@ -688,6 +689,14 @@ void bmoveResetMoveData(struct movedata *data)
 	data->zoomoutfovpersec = 0;
 	data->zoominfovpersec = 0;
 	data->invertpitch = !optionsGetForwardPitch(g_Vars.currentplayerstats->mpindex);
+#ifndef PLATFORM_N64
+	// Lua "Inverted Look" (pd.invert_look, from Kai): flip whatever the player
+	// runs. The stored option itself is never touched, so nothing can persist
+	// mid-effect.
+	if (g_ChaosInvertLook) {
+		data->invertpitch = !data->invertpitch;
+	}
+#endif
 	data->disablelookahead = false;
 	data->c1stickxsafe = 0;
 	data->c1stickysafe = 0;
@@ -801,6 +810,20 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		g_Vars.currentplayer->joybutinhibit = (g_Vars.currentplayer->joybutinhibit & 0x0) | inhibitedbuttons;
 	}
 
+#ifndef PLATFORM_N64
+	// Lua "Button thief" (pd.button_block, from Kai): strip the stolen buttons
+	// from this tick's gameplay input. Keyboard/mouse route through the same
+	// virtual pad, so this covers every binding of the stolen action.
+	if (g_ChaosButtonMask) {
+		c1buttons &= ~g_ChaosButtonMask;
+		c1buttonsthisframe &= ~g_ChaosButtonMask;
+		// The aim-mode toggle, fire-while-aiming, reload and next-weapon reads
+		// use joyGetButtons*OnSample masked with c1allowedbuttons, not
+		// c1buttons, so strip the stolen buttons there too.
+		c1allowedbuttons &= ~g_ChaosButtonMask;
+	}
+#endif
+
 	numsamples = joyGetNumSamples();
 	bmoveResetMoveData(&movedata);
 
@@ -823,6 +846,38 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 	movedata.c1stickxraw = c1stickx;
 	movedata.c1stickyraw = c1sticky;
 
+#ifndef PLATFORM_N64
+	// Lua "Gormless" (pd.gormless) and "Australia" (g_ChaosControlReverse),
+	// from Kai: the c1 stick feeds walk/strafe AND turn/pitch alike, so
+	// negating it here flips all four axes. Scripted autowalk drives
+	// synthetic stick input aimed at a WORLD target, so it is exempt or the
+	// player would walk away from it.
+	if ((g_ChaosGormless || g_ChaosControlReverse)
+			&& g_Vars.tickmode != TICKMODE_AUTOWALK) {
+		movedata.c1stickxsafe = -movedata.c1stickxsafe;
+		movedata.c1stickysafe = -movedata.c1stickysafe;
+		movedata.c1stickxraw = -movedata.c1stickxraw;
+		movedata.c1stickyraw = -movedata.c1stickyraw;
+		// The twin-stick MOVEMENT stick rides c2 (analogstrafe/analogwalk in
+		// CONTROLMODE_PC). Gormless flips both axes; Australia flips strafe
+		// only (forward must stay forward in the 180-rotated view).
+		c2stickx = -c2stickx;
+		if (g_ChaosGormless) {
+			c2sticky = -c2sticky;
+		}
+	}
+
+	// Lua "Take a break" (pd.player_freeze, from Kai): kill the movement stick
+	// here; the rest of the input is zeroed after all input is finalised,
+	// just before bgunTickGameplay below.
+	if (g_ChaosPlayerFreeze && g_Vars.tickmode != TICKMODE_AUTOWALK) {
+		movedata.c1stickxsafe = 0;
+		movedata.c1stickysafe = 0;
+		movedata.c1stickxraw = 0;
+		movedata.c1stickyraw = 0;
+	}
+#endif
+
 	// These are zeroed further down conditionally on control style
 	movedata.analogturn = movedata.c1stickxsafe;
 	movedata.analogstrafe = movedata.c1stickxsafe;
@@ -832,9 +887,27 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 #ifndef PLATFORM_N64
 	if (allowmlook) {
 		inputMouseGetScaledDelta(&movedata.freelookdx, &movedata.freelookdy);
+
+		// Lua SUPERHOT look continuity (pd.time_stop, from Kai): add the
+		// deltas lvTick banked on zero-tick frames so no mouse motion is lost.
+		// No extra scaling: mlookscale is already 4/lvupdate240, so the banked
+		// delta lands 1:1 on the frame it is released.
+		if (g_ChaosTimeStop) {
+			movedata.freelookdx += g_ChaosLookBankX;
+			movedata.freelookdy += g_ChaosLookBankY;
+			g_ChaosLookBankX = 0.0f;
+			g_ChaosLookBankY = 0.0f;
+		}
+
 		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !bmoveIsCodAimLock() &&
 			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 		if (movedata.invertpitch) {
+			movedata.freelookdy = -movedata.freelookdy;
+		}
+		// Lua "Gormless": invert the whole mouse look (both axes). Stacks with
+		// the invert-pitch option above by design.
+		if (g_ChaosGormless || g_ChaosControlReverse) {
+			movedata.freelookdx = -movedata.freelookdx;
 			movedata.freelookdy = -movedata.freelookdy;
 		}
 	}
@@ -1288,6 +1361,18 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 					aimbuttons = L_TRIG | R_TRIG;
 					invbuttons = A_BUTTON;
 				}
+
+#ifndef PLATFORM_N64
+				// Lua "Gormless" (from Kai): fire and aim swap places. Swapping
+				// the button-set variables covers every downstream read in the
+				// 1.x/PC styles; on PC mouse1 aims and mouse2 shoots. The 2.x
+				// dual-pad styles keep normal mapping.
+				if (g_ChaosGormless) {
+					u32 tmpbuttons = shootbuttons;
+					shootbuttons = aimbuttons;
+					aimbuttons = tmpbuttons;
+				}
+#endif
 
 				if (controlmode == CONTROLMODE_PC) {
 					if (!g_Vars.currentplayer->insightaimmode) {
@@ -1994,6 +2079,27 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Lua "Gormless"/"Australia" (from Kai): the analog sticks and mouse are
+	// reversed at their read sites above, but digital movement (keyboard and
+	// dpad step buttons) lands in digitalstep* inside the control-mode
+	// routing. Swap the finalised step directions here. Autowalk is exempt
+	// like the stick negate above.
+	if ((g_ChaosGormless || g_ChaosControlReverse)
+			&& g_Vars.tickmode != TICKMODE_AUTOWALK) {
+		// Strafe reverses for both effects; forward/back for Gormless only.
+		bool tmpstep = movedata.digitalstepleft;
+		movedata.digitalstepleft = movedata.digitalstepright;
+		movedata.digitalstepright = tmpstep;
+
+		if (g_ChaosGormless) {
+			tmpstep = movedata.digitalstepforward;
+			movedata.digitalstepforward = movedata.digitalstepback;
+			movedata.digitalstepback = tmpstep;
+		}
+	}
+#endif
+
 	g_Vars.currentplayer->bondactivateorreload = 0;
 
 	s32 usereloads = (controlmode != CONTROLMODE_PC);
@@ -2188,6 +2294,55 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		movedata.speedvertadown = movedata.speedvertaup;
 		movedata.speedvertaup = savedverta;
 	}
+
+#ifndef PLATFORM_N64
+	// Lua "Forced March" (pd.forced_march, from Kai): force the walk at the
+	// movedata level, after every control-style branch; the digital step is
+	// consumed uniformly by bwalk. Before the freeze block so Take a Break
+	// still wins.
+	if (g_ChaosForcedMarch && !g_Vars.currentplayer->isdead) {
+		movedata.digitalstepforward = true;
+		movedata.digitalstepback = false;
+	}
+
+	// Lua "Take a break" (pd.player_freeze, from Kai): block ALL player input
+	// (movement, look, shooting, crouching, leaning, weapon switching,
+	// activate/reload) while the world keeps running. Pause still works.
+	if (g_ChaosPlayerFreeze && !g_Vars.currentplayer->isdead) {
+		movedata.triggeron = false;
+		movedata.freelookdx = 0.0f;
+		movedata.freelookdy = 0.0f;
+		movedata.analogturn = 0;
+		movedata.analogpitch = 0;
+		movedata.analogstrafe = 0;
+		movedata.analogwalk = 0;
+		movedata.analoglean = 0.0f;
+		movedata.digitalstepforward = false;
+		movedata.digitalstepback = false;
+		movedata.digitalstepleft = false;
+		movedata.digitalstepright = false;
+		movedata.speedvertadown = 0.0f;
+		movedata.speedvertaup = 0.0f;
+		movedata.aimturnleftspeed = 0.0f;
+		movedata.aimturnrightspeed = 0.0f;
+		movedata.weaponforwardoffset = 0;
+		movedata.weaponbackoffset = 0;
+		movedata.crouchdown = 0;
+		movedata.crouchup = 0;
+		movedata.rleanleft = false;
+		movedata.rleanright = false;
+		movedata.btapcount = 0;
+		movedata.alt1tapcount = 0;
+	}
+
+	// Lua "Permacrouch" (pd.forced_crouch, from Kai): pin the stance to the
+	// LOWEST crouch. The crouchpos state machine already ran this frame, so
+	// override its result directly. CROUCHPOS_SQUAT, not DUCK: the constants
+	// run SQUAT=0, DUCK=1, STAND=2.
+	if (g_ChaosForcedCrouch && !g_Vars.currentplayer->isdead) {
+		g_Vars.currentplayer->crouchpos = CROUCHPOS_SQUAT;
+	}
+#endif
 
 #ifndef PLATFORM_N64
 	// A flinch takes the trigger for as long as it lasts. Refused here, at the

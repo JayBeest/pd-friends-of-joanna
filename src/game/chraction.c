@@ -59,6 +59,7 @@
 #include "lib/vi.h"
 #include "data.h"
 #include "types.h"
+#include "game/chaosstate.h"
 
 s32 g_RecentQuipsPlayed[5];
 u32 var8009cd84;
@@ -5393,6 +5394,19 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 			s32 prevplayernum = g_Vars.currentplayernum;
 			setCurrentPlayerNum(playermgrGetPlayerNumByProp(vprop));
 
+#ifndef PLATFORM_N64
+			// Lua "No Damage Except Headshots" (pd.headshots_only, from Kai):
+			// zero every non-head hit on the player. Zeroing damage lets the
+			// damage>0 guard below fall through; makedizzy=false drops the
+			// blur/dizzy accum for the ignored hit. Kill-plane/forced kills
+			// bypass chrDamage entirely, so this doesn't make the player
+			// unkillable.
+			if (g_ChaosHeadshotsOnly && hitpart != HITPART_HEAD) {
+				damage = 0;
+				makedizzy = false;
+			}
+#endif
+
 			if (g_Vars.normmplayerisrunning || g_MissionConfig.isteam) {
 				damage /= mpHandicapToDamageScale(*g_PlayerConfigsArray[g_Vars.currentplayerstats->mpindex].handicap);
 			}
@@ -5676,6 +5690,25 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 				}
 #endif
 
+#ifndef PLATFORM_N64
+				// Lua "Headshots Only" (pd.headshots_only, from Kai): the same
+				// rule the player gets further up, applied to NPCs too.
+				//
+				// This CLAMPS the accumulated damage rather than zeroing the
+				// incoming damage: only a head hit can KILL, but body shots
+				// still read as hits (flinch, blood, AI reaction). Parking the
+				// chr at maxdamage - 0.1 (the engine's own "survive at the
+				// brink" idiom, see the tranquiliser clamp below) leaves it
+				// alive, so the next head hit finishes it.
+				//
+				// Explosions are exempt: they force damage to maxdamage and are
+				// not body shots in any meaningful sense.
+				if (g_ChaosHeadshotsOnly && !explosion && hitpart != HITPART_HEAD
+						&& chr->damage >= chr->maxdamage) {
+					chr->damage = chr->maxdamage - 0.1f;
+				}
+#endif
+
 				if (chr->aibot) {
 					if (g_Vars.normmplayerisrunning && (g_MpSetup.options & MPOPTION_ONEHITKILLS)) {
 						chr->damage = chr->maxdamage;
@@ -5792,7 +5825,15 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 
 					// If chr has armour or the weapon doesn't stun
 					if (chr->damage < 0 ||
-							(gsetHasFunctionFlags(gset, FUNCFLAG_NOSTUN) && chr->damage < chr->maxdamage)) {
+							(gsetHasFunctionFlags(gset, FUNCFLAG_NOSTUN) && chr->damage < chr->maxdamage)
+#ifndef PLATFORM_N64
+							// Lua "Headshots Only" (see the damage clamp above):
+							// a non-head hit must not stagger the guard either,
+							// so route it down this light-flinch branch, as
+							// negative-damage armour already is.
+							|| (g_ChaosHeadshotsOnly && hitpart != HITPART_HEAD)
+#endif
+							) {
 						f32 endframe = -1;
 
 						if (!chrIsAnimPreventingArgh(chr, &endframe)) {

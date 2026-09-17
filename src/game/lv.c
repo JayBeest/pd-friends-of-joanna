@@ -147,6 +147,50 @@ void setVar80084040(u32 value)
 	var80084040 = value;
 }
 
+#ifndef PLATFORM_N64
+// Lua SUPERHOT (pd.time_stop, from Kai): the movement/button rate, 0..1,
+// looped onto the player's actual input magnitude. The mouse-look trickle is
+// handled in lvTick (instant, never smoothed) and look stays 1:1 via
+// g_ChaosLookBank* (consumed in bondmove.c).
+// - Held buttons = full rate (firing/interacting/pausing tick normally).
+// - Move stick = proportional to deflection (walk slowly, time crawls).
+static f32 chaosTimeStopMoveRate(void)
+{
+	f32 rate = 0.0f;
+	s32 pad;
+
+	for (pad = 0; pad < 2; pad++) {
+		s32 sx = joyGetStickX(pad);
+		s32 sy = joyGetStickY(pad);
+		f32 mag;
+
+		if (joyGetButtons(pad, 0xffffffff) != 0) {
+			return 1.0f;
+		}
+
+		if (sx < 0) {
+			sx = -sx;
+		}
+		if (sy < 0) {
+			sy = -sy;
+		}
+		if (sy > sx) {
+			sx = sy;
+		}
+		// deadzone 12, full speed around 60 (the keyboard/stick walk range)
+		mag = (sx > 12) ? sx * (1.0f / 60.0f) : 0.0f;
+		if (mag > 1.0f) {
+			mag = 1.0f;
+		}
+		if (mag > rate) {
+			rate = mag;
+		}
+	}
+
+	return rate;
+}
+#endif
+
 void lvInit(void)
 {
 	g_Vars.lockscreen = 0;
@@ -247,6 +291,20 @@ void lvReset(s32 stagenum)
 	// Lua effect state (pd.*) must not carry into the next stage: the Lua
 	// state is torn down below without running any effect's stop().
 	chaosStateResetPerStage();
+#endif
+
+#ifndef PLATFORM_N64
+	// Lua input effects (pd.input_delay, pd.deadzone, pd.sens_boost) keep
+	// their state in input.c.
+	{
+		extern void inputSetChaosInputDelay(s32 frames);
+		extern void inputSetChaosDeadzone(s32 dz);
+		extern void inputSetChaosSensMult(f32 mult);
+
+		inputSetChaosInputDelay(0);
+		inputSetChaosDeadzone(0);
+		inputSetChaosSensMult(1.0f);
+	}
 #endif
 
 	var80084014 = false;
@@ -2174,6 +2232,62 @@ void lvTick(void)
 	} else {
 		s32 slowmo = lvGetSlowMotionType();
 		g_Vars.lvupdate240 = g_Vars.diffframe240;
+
+#ifndef PLATFORM_N64
+		// Lua SUPERHOT (pd.time_stop, from Kai): a literal time stop. The game
+		// tick advances only as fast as the player is acting (the lvIsPaused
+		// mechanism above, not slow-mo; lvupdate60/freal derive from this
+		// below, so the whole sim scales). The movement rate eases in and out
+		// (~1/3s ramp); the mouse-look trickle (0.2) is instant and
+		// unsmoothed. Fractional ticks accumulate so low rates emit one sim
+		// tick every few frames instead of rounding to zero forever.
+		if (g_ChaosTimeStop && !g_Vars.in_cutscene) {
+			extern void inputMouseGetScaledDelta(f32 *dx, f32 *dy);
+			static f32 acc = 0.0f;
+			static f32 smoothed = 0.0f;
+			f32 mdx;
+			f32 mdy;
+			f32 rate;
+			f32 k;
+			s32 ticks;
+			s32 orig = g_Vars.lvupdate240;
+
+			// frame-rate-independent ease toward the raw movement rate
+			k = 0.1f * orig * 0.25f;
+			if (k > 1.0f) {
+				k = 1.0f;
+			}
+			smoothed += (chaosTimeStopMoveRate() - smoothed) * k;
+			rate = smoothed;
+
+			// looking advances time slightly, immediately (never smoothed: a
+			// head turn must not spool time up or leave it running down)
+			inputMouseGetScaledDelta(&mdx, &mdy);
+			if ((mdx != 0.0f || mdy != 0.0f) && rate < 0.2f) {
+				rate = 0.2f;
+			}
+
+			acc += orig * rate;
+			ticks = (s32)acc;
+			acc -= ticks;
+
+			if (ticks > orig) {
+				ticks = orig;
+			}
+
+			if (ticks == 0) {
+				// no sim tick this frame: bank the look delta so it isn't lost
+				// (bondmove adds it on the next ticking frame)
+				g_ChaosLookBankX += mdx;
+				g_ChaosLookBankY += mdy;
+			}
+
+			g_Vars.lvupdate240 = ticks;
+		} else {
+			g_ChaosLookBankX = 0.0f;
+			g_ChaosLookBankY = 0.0f;
+		}
+#endif
 
 		if (slowmo == SLOWMOTION_ON) {
 			if (g_Vars.speedpillon == false || g_Vars.in_cutscene) {

@@ -67,7 +67,7 @@ static s32 g_LuaOverrideCount = 0;
 /* Registry keys for our internal tables. */
 static const char *const KEY_CHUNKS = "luaai.chunks";       /* lightuserdata(list) -> function */
 static const char *const KEY_OVERRIDES = "luaai.overrides"; /* id (int) -> function */
-static const char *const KEY_CTX = "luaai.ctx";             /* the shared ctx table */
+static const char *const KEY_CTX = "luaai.ctx";             /* the shared, read-only ctx */
 
 /* Last error message from luaai_get_chunk / luaai_run_list, copied out of the
  * Lua stack so the caller can log it once after the stack has been cleaned. */
@@ -415,10 +415,24 @@ static void luaai_load_external_scripts(lua_State *L)
 	}
 }
 
+/* ctx.<name> = v: every chunk shares the one ctx, so a script that could
+ * replace ctx.exec would change how every other list runs. */
+static int l_ctx_newindex(lua_State *L)
+{
+	return luaL_error(L, "ctx is read-only");
+}
+
 static void luaai_build_ctx(lua_State *L)
 {
-	/* ctx = { cur=..., exec=..., run=... } stored in registry. */
-	lua_newtable(L);
+	/* ctx is a userdata whose locked metatable indexes a hidden method
+	 * table (cur, exec, run, self), stored in the registry. Kai used a plain
+	 * table, which any chunk could write to. A userdata cannot be written
+	 * to, rawset does not take one, and __metatable keeps getmetatable from
+	 * handing out the method table. */
+	lua_newuserdatauv(L, 0, 0);
+
+	lua_createtable(L, 0, 3); /* metatable */
+	lua_createtable(L, 0, 4); /* methods */
 
 	lua_pushcfunction(L, l_ctx_cur);
 	lua_setfield(L, -2, "cur");
@@ -429,6 +443,13 @@ static void luaai_build_ctx(lua_State *L)
 	lua_pushcfunction(L, l_ctx_self);
 	lua_setfield(L, -2, "self");
 
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, l_ctx_newindex);
+	lua_setfield(L, -2, "__newindex");
+	lua_pushliteral(L, "ctx");
+	lua_setfield(L, -2, "__metatable");
+
+	lua_setmetatable(L, -2);
 	lua_setfield(L, LUA_REGISTRYINDEX, KEY_CTX);
 }
 
@@ -650,8 +671,27 @@ void luaaiReset(void)
 	g_LuaOverrideCount = 0;
 	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
 	g_LuaSwitchWarnings = 0;
+	/* lvReset calls this with the new stage number already set. Record it,
+	 * or the first AI tick of the stage would see a stage change and reset
+	 * the state luaTick has built since, running init.lua twice. */
+	g_LuaCurStage = chraiLuaGetStageNum();
 	chraiLuaInvalidateListLength();
 	luaApiResetFrame();
+}
+
+/* lua_pcall for calls into Lua from outside an entity call (event handlers,
+ * pd.* callbacks), with the instruction budget armed. Inside an armed call it
+ * shares that budget. */
+s32 luaaiPcall(struct lua_State *L, s32 nargs, s32 nresults)
+{
+	return luaai_pcall_budget(L, nargs, nresults, LUAAI_INSTRUCTION_BUDGET);
+}
+
+/* An error value as text, for callers outside this file. See
+ * luaai_errstr. */
+const char *luaaiErrStr(struct lua_State *L, s32 idx)
+{
+	return luaai_errstr(L, idx);
 }
 
 /* Whether there is a Lua script for the AI layer to run. Plan item 0.3

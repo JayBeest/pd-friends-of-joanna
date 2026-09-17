@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/bondgun.h"
 #include "game/player.h"
@@ -850,11 +851,25 @@ void playermgrSetViewPosition(s32 viewleft, s32 viewtop)
 
 void playermgrSetFovY(f32 fovy)
 {
+#ifndef PLATFORM_N64
+	// pd.fov_scale: playerTick re-sets the FOV every tick, so this setter is
+	// the only stable interception point (and clearing self-restores).
+	if (g_ChaosFovMult > 0.0f && g_ChaosFovMult != 1.0f) {
+		fovy *= g_ChaosFovMult;
+	}
+#endif
 	g_Vars.currentplayer->fovy = fovy;
 }
 
 void playermgrSetAspectRatio(f32 aspect)
 {
+#ifndef PLATFORM_N64
+	// pd.aspect_scale: same self-restoring setter hook. >1 stretches the
+	// world wide, <1 tall.
+	if (g_ChaosAspectMult > 0.0f && g_ChaosAspectMult != 1.0f) {
+		aspect *= g_ChaosAspectMult;
+	}
+#endif
 	g_Vars.currentplayer->aspect = aspect;
 }
 

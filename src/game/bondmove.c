@@ -5,6 +5,7 @@
 #include "game/bondgrab.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/chaosstate.h"
 #include "game/stancetuning.h"
 #include "game/cheats.h"
 #include "game/modspectate.h"
@@ -823,6 +824,27 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 	movedata.c1stickxraw = c1stickx;
 	movedata.c1stickyraw = c1sticky;
 
+#ifndef PLATFORM_N64
+	// Chaos "Gormless"/"Australia": the c1 stick feeds walk/strafe AND
+	// turn/pitch alike, so negating it here flips all four axes. Local
+	// player only; scripted autowalk drives synthetic stick input aimed at
+	// a WORLD target, so it is exempt or the player would walk away from it.
+	if ((g_ChaosGormless || g_ChaosControlReverse)
+			&& g_Vars.tickmode != TICKMODE_AUTOWALK) {
+		movedata.c1stickxsafe = -movedata.c1stickxsafe;
+		movedata.c1stickysafe = -movedata.c1stickysafe;
+		movedata.c1stickxraw = -movedata.c1stickxraw;
+		movedata.c1stickyraw = -movedata.c1stickyraw;
+		// The twin-stick MOVEMENT stick rides c2 and would otherwise never
+		// be reversed. Gormless flips both axes; Australia flips strafe only
+		// (forward must stay forward in the 180-rotated view).
+		c2stickx = -c2stickx;
+		if (g_ChaosGormless) {
+			c2sticky = -c2sticky;
+		}
+	}
+#endif
+
 	// These are zeroed further down conditionally on control style
 	movedata.analogturn = movedata.c1stickxsafe;
 	movedata.analogstrafe = movedata.c1stickxsafe;
@@ -835,6 +857,12 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !bmoveIsCodAimLock() &&
 			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 		if (movedata.invertpitch) {
+			movedata.freelookdy = -movedata.freelookdy;
+		}
+		// Chaos "Gormless"/"Australia": invert the whole mouse look (both
+		// axes). Stacks with the user's invert-pitch option above by design.
+		if (g_ChaosGormless || g_ChaosControlReverse) {
+			movedata.freelookdx = -movedata.freelookdx;
 			movedata.freelookdy = -movedata.freelookdy;
 		}
 	}
@@ -1993,6 +2021,29 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
 			} // end 1.x
 		}
 	}
+
+#ifndef PLATFORM_N64
+	// Chaos "Gormless"/"Australia": the analog sticks + mouse are reversed at
+	// their read sites above, but keyboard/gamepad DIGITAL movement never
+	// touches the sticks - forward/back/strafe land in digitalstep* inside
+	// the control-mode routing. Swap the finalised step directions here,
+	// after routing and before the movement is consumed.
+	if ((g_ChaosGormless || g_ChaosControlReverse)
+			&& g_Vars.tickmode != TICKMODE_AUTOWALK) {
+		// Strafe left/right reverses for both effects - a 180-rotated screen
+		// (Australia) swaps left/right visually, and Gormless flips everything.
+		bool tmpstep = movedata.digitalstepleft;
+		movedata.digitalstepleft = movedata.digitalstepright;
+		movedata.digitalstepright = tmpstep;
+		// Forward/back reverses for Gormless only. In Australia mode you still
+		// walk "into" the scene.
+		if (g_ChaosGormless) {
+			tmpstep = movedata.digitalstepforward;
+			movedata.digitalstepforward = movedata.digitalstepback;
+			movedata.digitalstepback = tmpstep;
+		}
+	}
+#endif
 
 	g_Vars.currentplayer->bondactivateorreload = 0;
 

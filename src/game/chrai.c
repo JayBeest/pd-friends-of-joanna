@@ -1047,7 +1047,10 @@ s32 chraiLuaStep(u32 off)
 		s_lenlist = g_Vars.ailist;
 		s_listlen = chraiGetAilistLength(g_Vars.ailist);
 	}
-	if (!g_Vars.ailist || off + 1 >= s_listlen) {
+	// Two opcode bytes must fit. Written so it cannot wrap: off + 1 overflows
+	// for off = 0xffffffff and would pass.
+	if (!g_Vars.ailist || off >= s_listlen || s_listlen - off < 2) {
+
 #ifndef PLATFORM_N64
 		// Out of range. Only a hand-written override can pass such an
 		// offset. A 0 here would tell the chunk to continue from an

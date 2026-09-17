@@ -238,12 +238,17 @@ static int l_ctx_cur(lua_State *L)
 /* ctx:exec(off) -> 0 continue, 1 yield, 2 list changed/terminated */
 static int l_ctx_exec(lua_State *L)
 {
-	u32 off = (u32)luaL_checkinteger(L, 2);
-	void *before = chraiLuaGetList();
+	lua_Integer arg = luaL_checkinteger(L, 2);
+	void *before;
 	s32 brk;
 	void *after;
 
-	brk = chraiLuaStep(off);
+	/* Checked before the cast: -1 would become 0xffffffff. chraiLuaStep
+	 * bounds what is left against the list. */
+	luaL_argcheck(L, arg >= 0 && arg <= 0xffffffffLL, 2, "offset out of range");
+
+	before = chraiLuaGetList();
+	brk = chraiLuaStep((u32)arg);
 	after = chraiLuaGetList();
 
 	if (after != before || after == NULL) {
@@ -275,11 +280,17 @@ static int l_ctx_self(lua_State *L)
  * Invoke an arbitrary engine command from Lua with explicit operand bytes. */
 static int l_ctx_run(lua_State *L)
 {
-	u32 opcode = (u32)luaL_checkinteger(L, 2);
+	lua_Integer arg = luaL_checkinteger(L, 2);
+	u32 opcode;
 	u8 operands[60];
 	int top = lua_gettop(L);
 	int i;
 	u32 n = 0;
+
+	/* Opcodes are 16 bits. Anything else would be masked into a real one. */
+	luaL_argcheck(L, arg >= 0 && arg <= 0xffff, 2, "opcode out of range");
+	opcode = (u32)arg;
+
 
 	for (i = 3; i <= top && n < (u32)sizeof(operands); i++) {
 		operands[n++] = (u8)(luaL_checkinteger(L, i) & 0xff);

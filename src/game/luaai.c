@@ -653,6 +653,22 @@ void luaaiReset(void)
 	luaApiResetFrame();
 }
 
+/* Whether there is a Lua script for the AI layer to run. Plan item 0.3
+ * replaces the body with "any loaded mod declares a script in
+ * modconfig.txt"; until then it is the file luaai_load_external_scripts
+ * runs, looked up the same way. */
+s32 luaaiScriptDetected(void)
+{
+	FILE *f = fopen(LUAAI_INIT_SCRIPT, "rb");
+
+	if (!f) {
+		return 0;
+	}
+
+	fclose(f);
+	return 1;
+}
+
 struct lua_State *luaaiGetState(void)
 {
 	return g_LuaState;

@@ -24,6 +24,13 @@
 extern s32 g_LuaAiEnabled;
 
 /**
+ * Non-zero when a Lua script for the AI layer is present: today
+ * scripts/init.lua, relative to the working directory. Startup turns the
+ * layer on from this unless pd.ini or the command line forces it.
+ */
+s32 luaaiScriptDetected(void);
+
+/**
  * Execute the current action block for the given entity via the Lua layer.
  * Mirrors chraiExecute(). Falls back to the bytecode interpreter on error.
  */

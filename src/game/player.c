@@ -6193,8 +6193,9 @@ Gfx *playerRenderHud(Gfx *gdl)
 		// her. The view model is drawn in screen space from an eye the camera
 		// is no longer sitting at, so it would hang across the picture. Only
 		// the model goes: bgunTickGameplay2() above still runs, and the
-		// crosshair below is still correct, the camera having moved only along
-		// the axis it aims down.
+		// crosshair below is still correct, because the shot is built at the
+		// camera through the crosshair's own pixel wherever the camera stands
+		// (playerGetShotOriginPullback()).
 		//
 		// The toggle rather than the distance. A wall can hold the camera on
 		// the eye with third person still on, and the view model used to come
@@ -6205,15 +6206,27 @@ Gfx *playerRenderHud(Gfx *gdl)
 		// body is drawn on, so the two can never disagree - and it is already
 		// false while aiming, which is the case that genuinely wants the gun
 		// back.
+		//
+		// The light glares go on before the gun rather than after it. A glare
+		// is a depth-less screen rectangle whose only occlusion is the line of
+		// sight test in artifactTestLos(), and the view model is not in the
+		// world that test walks, so a light behind the gun drew its glare on
+		// top of the gun. Drawn first, the opaque gun simply paints over it -
+		// the gun goes into a freshly cleared depth buffer, so this is the
+		// depth test the rectangle cannot have. The tell is a translucent gun
+		// wherever a light sits behind it; the fix is Murk's
+		// (perfect_dark_netplay, PORT_GLARE_OCCLUSION.md). In third person the
+		// gun is not drawn and the body occludes the glare through
+		// shotTestLos() instead.
+		if (g_Vars.currentplayer->visionmode != VISIONMODE_XRAY) {
+			gdl = bgRenderArtifacts(gdl);
+		}
+
 		if (!playerIsThirdPerson(g_Vars.currentplayer)) {
 			bgunRender(&gdl);
 		}
 
 		gdl = lasersightRenderDot(gdl);
-
-		if (g_Vars.currentplayer->visionmode != VISIONMODE_XRAY) {
-			gdl = bgRenderArtifacts(gdl);
-		}
 
 		if (g_NbombsActive) {
 			gdl = nbombRenderOverlay(gdl);

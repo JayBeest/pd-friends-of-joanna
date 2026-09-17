@@ -100,6 +100,26 @@ local steps = {
 		function() return pd.internal_res() == true end },
 	{ "hud_message", function() pd.hud_message("fx smoke: hello") return true end,
 		function() pd.hud_message("fx smoke: big banner", 1) return true end },
+	-- Hostile: one 200-character unbroken word. textWrap accumulates a word
+	-- into a char[32] with no bound, so before the fix this smashed its stack
+	-- frame. The bridge soft-breaks the run and textWrap drops any tail that
+	-- still does not fit; both must survive a render (HOLD frames) intact.
+	{ "hud_message_longword", function()
+			pd.hud_message(string.rep("W", 200))
+			pd.hud_message(string.rep("M", 200), 1)
+			pd.hud_message(string.rep("i", 60) .. " " .. string.rep("W", 120))
+			return true
+		end,
+		function() return true end },
+	-- Hostile: 8-bit and control bytes in a long word (the scrub turns these
+	-- into '?', which is a word character, so the run must still be broken).
+	{ "hud_message_hostile_bytes", function()
+			pd.hud_message(string.rep("\xff\x01W", 80))
+			pd.hud_message(string.rep("\n", 40) .. string.rep("Z", 100))
+			pd.hud_message("")
+			return true
+		end,
+		function() return true end },
 	{ "draw_sprite", function() pd.draw_sprite(0x09, 20, 20, 48, 48, 0x000000ff, 1) return true end,
 		function() return true end,
 		check = function() pd.draw_sprite(0x0a, 80, 20, 32, 32) end },

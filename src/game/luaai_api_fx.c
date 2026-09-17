@@ -233,6 +233,11 @@ static int l_pd_draw_image(lua_State *L)
 	return 0;
 }
 
+/* Longest unbroken run of non-space bytes pd.hud_message will emit before
+ * inserting a soft space. textWrap's per-word scratch is char[32] and it
+ * keeps two bytes for a multibyte pair plus the terminator. */
+#define LUA_HUDMSG_MAXWORD 28
+
 /* pd.hud_message(text, [type]): HUD message. Default type is
  * HUDMSGTYPE_DEFAULT — the standard BOTTOM line (pickup style) — so chatter
  * stays out of the middle of the screen; pass an explicit type
@@ -243,16 +248,42 @@ static int l_pd_hud_message(lua_State *L)
 	const char *text = luaL_checkstring(L, 1);
 	s32 type = (s32)luaL_optinteger(L, 2, HUDMSGTYPE_DEFAULT);
 	char buf[256];
-	size_t n = strlen(text);
+	size_t n = 0;
+	size_t i;
+	s32 run = 0;
 
 	// The hudmsg text MUST end with '\n': textMeasure only advances the height
 	// on a newline, so a message without one measures height 0 and its box
 	// collapses to a sliver under the text (and centred types mis-position).
 	// The engine's own messages are all '\n'-terminated; Lua strings aren't.
-	if (n > sizeof(buf) - 2) {
-		n = sizeof(buf) - 2;
+	//
+	// Word-break as we copy: textWrap accumulates each whitespace-delimited
+	// word into a 32-byte stack buffer, so a script passing one long unbroken
+	// run (string.rep("W", 200)) walks off it. textWrap now drops the tail of
+	// an over-long word; break it here as well so the text still renders in
+	// full instead of being silently truncated at 30 characters.
+	for (i = 0; text[i] && n < sizeof(buf) - 2; i++) {
+		char c = text[i];
+
+		// Unsigned: luaApiTextScrub below turns every byte >= 0x80 into '?',
+		// a word character, so they have to count toward the run here too.
+		if ((u8)c > ' ') {
+			if (run >= LUA_HUDMSG_MAXWORD) {
+				buf[n++] = ' ';
+				run = 0;
+
+				if (n >= sizeof(buf) - 2) {
+					break;
+				}
+			}
+
+			run++;
+		} else {
+			run = 0;
+		}
+
+		buf[n++] = c;
 	}
-	memcpy(buf, text, n);
 
 	// The HUD font is ASCII-only. Any byte >= 0x80 is routed by the text
 	// renderer into the JPN multibyte glyph path, whose cache table is NULL in

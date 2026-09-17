@@ -408,6 +408,34 @@ static void luaai_build_pd(lua_State *L)
 // native code. dofile/loadfile/load are kept so the modding system can still
 // chain scripts; with os/io/package gone they can only run further sandboxed
 // Lua, not escape. (Kai's netplay code review, CR-7.)
+/* setmetatable, minus finalizers. Lua runs __gc with debug hooks off
+ * (lgc.c, GCTM), so a finalizer escapes the instruction budget: an object
+ * whose __gc loops, or resurrects itself, stalls the game with nothing to stop
+ * it. A __gc field is fixed when setmetatable runs: luaC_checkfinalizer marks
+ * the object only if the metatable holds a non-nil __gc at that moment, and a
+ * __gc added to the metatable later is never looked at for that object. Any
+ * non-nil value is refused, false included, because false already marks the
+ * object and a function stored over it later would then run.
+ *
+ * __close is left alone: it runs through an ordinary call with hooks on, and
+ * once the budget is spent the hook fires on every instruction, so a looping
+ * __close is stopped like any other code. */
+static int l_safe_setmetatable(lua_State *L)
+{
+	if (lua_type(L, 2) == LUA_TTABLE) {
+		lua_pushliteral(L, "__gc");
+		if (lua_rawget(L, 2) != LUA_TNIL) {
+			return luaL_error(L, "setmetatable: __gc finalizers are not allowed in AI scripts");
+		}
+		lua_pop(L, 1);
+	}
+
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 1);
+	lua_call(L, lua_gettop(L) - 1, 1);
+	return 1;
+}
+
 static void luaai_open_safe_libs(lua_State *L)
 {
 	static const luaL_Reg libs[] = {
@@ -433,6 +461,10 @@ static void luaai_open_safe_libs(lua_State *L)
 		lua_pushnil(L);
 		lua_setglobal(L, *g);
 	}
+
+	lua_getglobal(L, "setmetatable");
+	lua_pushcclosure(L, l_safe_setmetatable, 1);
+	lua_setglobal(L, "setmetatable");
 }
 
 static int luaai_ensure_state(void)

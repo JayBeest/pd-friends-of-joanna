@@ -434,8 +434,13 @@ s32 chraiLuaPlayerSlip(f32 push, f32 pitchdeg)
 {
 	struct player *pl;
 
-	if (apLuaPlayerChr() == NULL) {
+	if (apLuaPlayerChr() == NULL || !isfinite(push)) {
 		return 0;
+	}
+	if (push > 1000.0f) {
+		push = 1000.0f;
+	} else if (push < -1000.0f) {
+		push = -1000.0f;
 	}
 	pl = g_Vars.currentplayer;
 	pl->crouchpos = CROUCHPOS_SQUAT;
@@ -459,8 +464,14 @@ s32 chraiLuaPlayerPush(f32 mag)
 {
 	struct player *pl;
 
-	if (apLuaPlayerChr() == NULL) {
+	// a NaN or inf would stay in bondshotspeed for good
+	if (apLuaPlayerChr() == NULL || !isfinite(mag)) {
 		return 0;
+	}
+	if (mag > 1000.0f) {
+		mag = 1000.0f;
+	} else if (mag < -1000.0f) {
+		mag = -1000.0f;
 	}
 	pl = g_Vars.currentplayer;
 	pl->bondshotspeed.x += -pl->vv_sintheta * mag;
@@ -743,6 +754,10 @@ s32 chraiLuaSensBoost(f32 mult)
 {
 	if (isnan(mult)) {
 		mult = 1.0f;
+	}
+	// inputAxisScale converts the scaled axis back to an int
+	if (mult > 100.0f) {
+		mult = 100.0f;
 	}
 	inputSetChaosSensMult(mult);
 	return 1;

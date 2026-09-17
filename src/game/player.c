@@ -3681,7 +3681,7 @@ void playerConfigureVi(void)
 }
 
 /**
- * Camera Tilt: lean the view the way the head would.
+ * Camera Tilt: move the view the way the head would.
  *
  * A sidestep rolls the picture into the direction of travel, and a look up
  * or down leans the camera a little further that way for as long as the
@@ -3689,12 +3689,27 @@ void playerConfigureVi(void)
  * tap of the strafe key is a nod and not a jolt, and both come back to level
  * on their own when the input stops.
  *
- * Only the copies the camera matrix is built from are rotated. bond2's basis
- * vectors, which the gun aims and the walk traces along, are left as they
+ * Camera Bob, a setting of its own beside the tilt, bobs the eye up and down
+ * with the steps. It is Quake's V_CalcBob: a sine on a fixed cycle, six
+ * tenths of a second per step, whose height follows the ground speed, so it
+ * fades in over the first strides and out over the last, with the height
+ * itself eased so a wall does not stop it dead. Quake lifts the eye more than
+ * it drops it, three parts up to seven of swing, and that is kept - a bob
+ * that dipped as far as it rose read as the floor moving rather than the
+ * walker. The speed is the distance the player actually covered this tick,
+ * from bondprevpos, not the stick, so walking into a wall does not bob, and a
+ * fall does not either. Six units of lift at a full run at 1, about half of
+ * Quake's in a world where the eye stands 159 units up; 2 is Quake as shipped.
+ *
+ * Only the copies the camera is built from are moved. bond2's basis vectors
+ * and eye, which the gun aims and the walk traces along, are left as they
  * were: the roll is about the look axis, so the centre of the screen still
- * points where it did, and the lean is a degree or two that is gone by the
- * time the look settles. The gun is drawn in screen space and comes with the
- * picture.
+ * points where it did, the lean is a degree or two that is gone by the time
+ * the look settles, and the bob is a few centimetres straight up. The gun is
+ * drawn in screen space and comes with the picture. This runs after the
+ * third person pull-back, so in third person the bob lifts the camera where
+ * the pull-back left it; the volume clearance keeps 20 units under a ceiling,
+ * which is more than the bob asks for below a setting of 3.
  *
  * The right vector is look cross up. Strafing right is a positive sideways
  * speed, and the world's right hand is where that cross product points, so a
@@ -3708,13 +3723,19 @@ void playerConfigureVi(void)
 #define CAMTILT_ROLL_DEGREES  2.0f  // at a full sidestep, times the setting
 #define CAMTILT_PITCH_DEGREES 1.5f  // at full look speed, times the setting
 #define CAMTILT_RATE          0.15f // of the remaining distance, per 60Hz tick
+#define CAMTILT_BOB_UNITS     6.0f  // peak lift at a full run, times the bob setting
+#define CAMTILT_BOB_CYCLE     36.0f // 60Hz ticks per step, Quake's cl_bobcycle
+#define CAMTILT_RUN_SPEED     10.0f // units per 60Hz tick, bwalk's full stick
+#define CAMTILT_TELEPORT      100.0f // further than this in a tick is not a step
 
-static void playerTiltCamera(struct coord *camup, struct coord *camlook)
+static void playerTiltCamera(struct coord *campos, struct coord *camup, struct coord *camlook)
 {
 	struct player *player = g_Vars.currentplayer;
 	f32 scale = PLAYER_EXTCFG().cameratilt;
+	f32 bobscale = PLAYER_EXTCFG().camerabob;
 	f32 rolltarget = 0;
 	f32 pitchtarget = 0;
+	f32 bobtarget = 0;
 	f32 rate;
 	f32 roll;
 	f32 pitch;
@@ -3746,6 +3767,23 @@ static void playerTiltCamera(struct coord *camup, struct coord *camlook)
 		pitchtarget = lookspeed * CAMTILT_PITCH_DEGREES * scale;
 	}
 
+	if (bobscale > 0 && !player->isdead && player->bondmovemode == MOVEMODE_WALK
+			&& !player->isfalling && g_Vars.lvupdate60freal > 0) {
+		f32 dx = player->prop->pos.x - player->bondprevpos.x;
+		f32 dz = player->prop->pos.z - player->bondprevpos.z;
+		f32 speed = sqrtf(dx * dx + dz * dz);
+
+		if (speed < CAMTILT_TELEPORT) {
+			speed /= g_Vars.lvupdate60freal * CAMTILT_RUN_SPEED;
+
+			if (speed > 1) {
+				speed = 1;
+			}
+
+			bobtarget = speed * CAMTILT_BOB_UNITS * bobscale;
+		}
+	}
+
 	rate = CAMTILT_RATE * g_Vars.lvupdate60freal;
 
 	if (rate > 1) {
@@ -3754,6 +3792,19 @@ static void playerTiltCamera(struct coord *camup, struct coord *camlook)
 
 	player->camtiltroll += (rolltarget - player->camtiltroll) * rate;
 	player->camtiltpitch += (pitchtarget - player->camtiltpitch) * rate;
+	player->camstepamp += (bobtarget - player->camstepamp) * rate;
+
+	player->camstepphase += g_Vars.lvupdate60freal * (M_BADTAU / CAMTILT_BOB_CYCLE);
+
+	if (player->camstepphase > M_BADTAU) {
+		player->camstepphase -= M_BADTAU;
+	}
+
+	if (player->camstepamp > 0.001f) {
+		campos->y += player->camstepamp * (0.3f + 0.7f * sinf(player->camstepphase));
+	} else {
+		player->camstepamp = 0;
+	}
 
 	if (player->camtiltroll > -0.001f && player->camtiltroll < 0.001f
 			&& player->camtiltpitch > -0.001f && player->camtiltpitch < 0.001f) {
@@ -5220,7 +5271,7 @@ void playerTick(bool arg0)
 		}
 
 		// The lean is applied last, to whatever basis the camera ended up with.
-		playerTiltCamera(&camup, &camlook);
+		playerTiltCamera(&spf4, &camup, &camlook);
 
 		player0f0c1840(&spf4,
 				&camup,

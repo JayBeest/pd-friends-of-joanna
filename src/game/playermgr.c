@@ -375,6 +375,8 @@ void playermgrAllocatePlayer(s32 index)
 	g_Vars.players[index]->rolltime60 = 0;
 	g_Vars.players[index]->camtiltroll = 0;
 	g_Vars.players[index]->camtiltpitch = 0;
+	g_Vars.players[index]->camstepphase = 0;
+	g_Vars.players[index]->camstepamp = 0;
 
 	g_Vars.players[index]->autoyaimenabled = true;
 	g_Vars.players[index]->autoaimy = 0;

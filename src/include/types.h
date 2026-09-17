@@ -2972,6 +2972,10 @@ struct player {
   // starting nor stopping is a jolt.
   /*ext*/ f32 camtiltroll;
   /*ext*/ f32 camtiltpitch;
+  // ... and the step bob: where in the walk cycle the eye is, in radians,
+  // and how high it is bobbing, chasing the ground speed.
+  /*ext*/ f32 camstepphase;
+  /*ext*/ f32 camstepamp;
   /*ext*/ f32 codaimfrac; // COD Style Aiming: how far the gun has come up to the sights, 0 to 1
   // The combat roll's push, in world units per tick, and the frame the roll
   // started. Held as a vector rather than a direction and a speed so that
@@ -6451,6 +6455,7 @@ struct extplayerconfig {
   f32 radialmenuspeed;
   f32 crosshairsway;
   f32 cameratilt;
+  f32 camerabob;
   s32 codaiming;
   s32 codaimlock;
   s32 extcontrols;

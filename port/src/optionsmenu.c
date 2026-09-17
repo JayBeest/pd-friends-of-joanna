@@ -1375,6 +1375,26 @@ static MenuItemHandlerResult menuhandlerCameraTilt(s32 operation, struct menuite
 	return 0;
 }
 
+/**
+ * Camera Bob: how high the eye bobs with a step. Its own amount rather than
+ * a part of Camera Tilt, because the lean and the bob are separate motions
+ * and a player may want either without the other. 1 is half of Quake's bob,
+ * 2 is Quake as shipped.
+ */
+static MenuItemHandlerResult menuhandlerCameraBob(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GETSLIDER:
+		data->slider.value = g_PlayerExtCfg[g_ExtMenuPlayer].camerabob * 10.f + 0.5f;
+		break;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].camerabob = (f32)data->slider.value / 10.f;
+		break;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCrosshairEdgeBoundary(s32 operation, struct menuitem* item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1619,6 +1639,14 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		(uintptr_t)"Camera Tilt",
 		40,
 		menuhandlerCameraTilt,
+	},
+	{
+		MENUITEMTYPE_SLIDER,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+		(uintptr_t)"Camera Bob",
+		40,
+		menuhandlerCameraBob,
 	},
 	{
 		MENUITEMTYPE_CHECKBOX,

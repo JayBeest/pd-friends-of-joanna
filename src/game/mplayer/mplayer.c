@@ -214,6 +214,7 @@ struct mpweapon g_MpWeapons[NUM_MPWEAPONS] = {
       .radialmenuspeed = 4.f,                                                  \
       .crosshairsway = 1.f,                                                    \
       .cameratilt = 1.f,                                                       \
+      .camerabob = 0.f,                                                        \
       .codaimlock = true,                                                      \
       .crouchmode = CROUCHMODE_TOGGLE_ANALOG,                                  \
       .extcontrols = true,                                                     \

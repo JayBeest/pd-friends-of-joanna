@@ -6456,6 +6456,7 @@ struct extplayerconfig {
   f32 crosshairsway;
   f32 cameratilt;
   f32 camerabob;
+  s32 gunswaywithbob;
   s32 codaiming;
   s32 codaimlock;
   s32 extcontrols;

@@ -1395,6 +1395,26 @@ static MenuItemHandlerResult menuhandlerCameraBob(s32 operation, struct menuitem
 	return 0;
 }
 
+/**
+ * Gun Sway With Bob: the gun's own step motion scaled up with the bob, by one
+ * more than the bob setting, so the two move as one body. Nothing without
+ * Camera Bob itself.
+ */
+static MenuItemHandlerResult menuhandlerGunSwayWithBob(s32 operation, struct menuitem *item, union handlerdata *data)
+{
+	switch (operation) {
+	case MENUOP_GET:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].gunswaywithbob;
+	case MENUOP_SET:
+		g_PlayerExtCfg[g_ExtMenuPlayer].gunswaywithbob = data->checkbox.value;
+		break;
+	case MENUOP_CHECKDISABLED:
+		return g_PlayerExtCfg[g_ExtMenuPlayer].camerabob <= 0;
+	}
+
+	return 0;
+}
+
 static MenuItemHandlerResult menuhandlerCrosshairEdgeBoundary(s32 operation, struct menuitem* item, union handlerdata *data)
 {
 	switch (operation) {
@@ -1647,6 +1667,14 @@ struct menuitem g_ExtendedGameMenuItems[] = {
 		(uintptr_t)"Camera Bob",
 		40,
 		menuhandlerCameraBob,
+	},
+	{
+		MENUITEMTYPE_CHECKBOX,
+		0,
+		MENUITEMFLAG_LITERAL_TEXT,
+		(uintptr_t)"Gun Sway With Bob",
+		0,
+		menuhandlerGunSwayWithBob,
 	},
 	{
 		MENUITEMTYPE_CHECKBOX,

@@ -3549,6 +3549,18 @@ void bgun0f09d8dc(f32 breathing, f32 arg1, f32 arg2, f32 arg3, f32 arg4)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Gun Sway With Bob: the gun is drawn in screen space and rides with the
+	// picture, so with the step bob up the world bobbed under a gun that
+	// hardly moved, which read as floating. Scale the walking share only -
+	// whatever the speed put above the idle tenth - by one more than the bob
+	// setting. That and the breathing floors below are stock's, so the gun at
+	// rest is the gun at rest.
+	if (PLAYER_EXTCFG().gunswaywithbob && PLAYER_EXTCFG().camerabob > 0) {
+		player->gunposamplitude = 0.1f + (player->gunposamplitude - 0.1f) * (1.0f + PLAYER_EXTCFG().camerabob);
+	}
+#endif
+
 	if (bmoveGetCrouchPos() != CROUCHPOS_SQUAT) {
 		if (player->gunposamplitude < 0.3f * g_Vars.currentplayer->bondbreathing) {
 			player->gunposamplitude = 0.3f * g_Vars.currentplayer->bondbreathing;

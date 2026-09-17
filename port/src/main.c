@@ -294,6 +294,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairSway", i), &g_PlayerExtCfg[j].crosshairsway, 0.f, 10.f);
 		configRegisterFloat(strFmt("Game.Player%d.CameraTilt", i), &g_PlayerExtCfg[j].cameratilt, 0.f, 4.f);
 		configRegisterFloat(strFmt("Game.Player%d.CameraBob", i), &g_PlayerExtCfg[j].camerabob, 0.f, 4.f);
+		configRegisterInt(strFmt("Game.Player%d.GunSwayWithBob", i), &g_PlayerExtCfg[j].gunswaywithbob, 0, 1);
 		configRegisterInt(strFmt("Game.Player%d.CodAiming", i), &g_PlayerExtCfg[j].codaiming, 0, 1);
 		configRegisterInt(strFmt("Game.Player%d.CodAimLock", i), &g_PlayerExtCfg[j].codaimlock, 0, 1);
 		configRegisterFloat(strFmt("Game.Player%d.CrosshairEdgeBoundary", i), &g_PlayerExtCfg[j].crosshairedgeboundary, 0.0f, 1.0f);

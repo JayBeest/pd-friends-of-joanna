@@ -25,6 +25,7 @@
 #include "utils.h"
 #include "game/mplayer/setup.h"
 #include "ext_tex.h"
+#include "game/luaai.h"
 
 u32 g_OsMemSize = 0;
 s32 g_OsMemSizeMb = 256;
@@ -51,6 +52,10 @@ char g_DefaultProfile[64] = "";
 char g_DefaultReality[64] = "";
 
 s32 g_FileAutoSelect = -1;
+
+// Game.LuaAi. Kept apart from g_LuaAiEnabled, which --lua-ai sets for one run
+// and a Lua error clears; neither should be written back to pd.ini.
+static s32 g_LuaAiConfig = 0;
 
 bool g_DebugEndscreen = false;
 bool g_DebugMenu = false;
@@ -188,6 +193,11 @@ int main(int argc, const char **argv)
 	// stage loads, and the headless runs that want this cannot press one at all.
 	g_ModSpectateStart = sysArgCheck("--spectate");
 
+	g_LuaAiEnabled = (g_LuaAiConfig || sysArgCheck("--lua-ai")) ? 1 : 0;
+	if (g_LuaAiEnabled) {
+		sysLogPrintf(LOG_NOTE, "lua ai enabled");
+	}
+
 	g_StageNum = sysArgGetInt("--boot-stage", STAGE_TITLE);
 
 	if (g_StageNum == STAGE_TITLE && (sysArgCheck("--skip-intro") || g_SkipIntro)) {
@@ -230,6 +240,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
+	configRegisterInt("Game.LuaAi", &g_LuaAiConfig, 0, 1);
 
 	// The audio pool sizes Rare picked for a 1999 cartridge. Every default is 0
 	// or the original number, so leaving these alone changes nothing. They are

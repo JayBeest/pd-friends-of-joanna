@@ -715,7 +715,12 @@ static void chraiWarnNoHandler(s32 type)
 }
 #endif
 
-void chraiExecute(void *entity, s32 proptype)
+// Resolve the entity, load its ailist into g_Vars and apply the shot /
+// dodge / darkroom list switches. Afterwards g_Vars.ailist and
+// g_Vars.aioffset describe the list to run (ailist may be NULL). This is the
+// first half of what chraiExecute always did, split out unchanged so the Lua
+// layer (luaai.c) can prepare a chr and then drive the list itself.
+void chraiPrepare(void *entity, s32 proptype)
 {
 	g_Vars.chrdata = NULL;
 	g_Vars.truck = NULL;
@@ -820,74 +825,106 @@ void chraiExecute(void *entity, s32 proptype)
 		} else {
 			// empty
 		}
+	}
+}
 
-		// Iterate and execute the ailist
+// Run the bytecode dispatch loop from the state chraiPrepare left in g_Vars.
+// The second half of what chraiExecute always did, split out unchanged; it is
+// also luaai.c's fallback when Lua is unavailable or a chunk fails.
+void chraiRunLoop(void)
+{
+	// Iterate and execute the ailist
 #ifndef PLATFORM_N64
-		// A list that never yields would spin here forever - a bad jump, a
-		// corrupt list, or an opcode outside g_CommandPointers falling into
-		// the advance-by-one branch below. Decompiled loops hang, they don't
-		// crash. 100k is far past any legitimate list; hitting the cap yields
-		// rather than aborting the game.
-		s32 iterations = 0;
+	// A list that never yields would spin here forever - a bad jump, a
+	// corrupt list, or an opcode outside g_CommandPointers falling into
+	// the advance-by-one branch below. Decompiled loops hang, they don't
+	// crash. 100k is far past any legitimate list; hitting the cap yields
+	// rather than aborting the game.
+	s32 iterations = 0;
 #endif
 
-		while (g_Vars.ailist) {
-			u8 *cmd = g_Vars.aioffset + g_Vars.ailist;
-			s32 type = (cmd[0] << 8) + cmd[1];
+	while (g_Vars.ailist) {
+		u8 *cmd = g_Vars.aioffset + g_Vars.ailist;
+		s32 type = (cmd[0] << 8) + cmd[1];
 
 #ifndef PLATFORM_N64
-			if (++iterations >= 100000) {
-				static s32 s_NextWarn60 = 0;
+		if (++iterations >= 100000) {
+			static s32 s_NextWarn60 = 0;
 
-				if (g_Vars.lvframe60 >= s_NextWarn60) {
-					bool isglobal = false;
+			if (g_Vars.lvframe60 >= s_NextWarn60) {
+				bool isglobal = false;
 
-					s_NextWarn60 = g_Vars.lvframe60 + 60;
-					sysLogPrintf(LOG_WARNING,
-							"chrai: runaway ailist (100000 iterations without yield) - yielding; chr %d list %d offset 0x%x",
-							g_Vars.chrdata ? g_Vars.chrdata->chrnum : -1,
-							chraiGetListIdByList(g_Vars.ailist, &isglobal),
-							g_Vars.aioffset);
-				}
-
-				break;
+				s_NextWarn60 = g_Vars.lvframe60 + 60;
+				sysLogPrintf(LOG_WARNING,
+						"chrai: runaway ailist (100000 iterations without yield) - yielding; chr %d list %d offset 0x%x",
+						g_Vars.chrdata ? g_Vars.chrdata->chrnum : -1,
+						chraiGetListIdByList(g_Vars.ailist, &isglobal),
+						g_Vars.aioffset);
 			}
+
+			break;
+		}
 #endif
 
-			if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
+		if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
 #ifndef PLATFORM_N64
-				// 40 in-range slots are NULL - opcodes the table reserves but
-				// does not implement. Calling one is a jump through a null
-				// pointer, so treat it exactly like an out-of-range opcode.
-				if (!g_CommandPointers[type]) {
-					chraiWarnNoHandler(type);
-					break;
-				}
-#endif
-
-				// TODO: Consider adding a check for the chrnummach mode here.
-				// Ensure that commands are used to reset it to the default state if necessary.
-				if (g_CommandPointers[type]()) {
-					break;
-				}
-			} else {
-#ifndef PLATFORM_N64
-				// An opcode the table cannot service cannot be stepped over
-				// either: g_CommandLengths has no meaningful entry for a
-				// command that does not exist, so advancing by it lands in the
-				// middle of the next one and every byte after it is garbage.
-				// Yield the list instead of walking off into it.
+			// 40 in-range slots are NULL - opcodes the table reserves but
+			// does not implement. Calling one is a jump through a null
+			// pointer, so treat it exactly like an out-of-range opcode.
+			if (!g_CommandPointers[type]) {
 				chraiWarnNoHandler(type);
 				break;
-#else
-				// This is attempting to handle situations where the command
-				// type is invalid by passing over them and continuing
-				// execution. This would very likely result in a crash though.
-				g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
-#endif
 			}
+#endif
+
+			// TODO: Consider adding a check for the chrnummach mode here.
+			// Ensure that commands are used to reset it to the default state if necessary.
+			if (g_CommandPointers[type]()) {
+				break;
+			}
+		} else {
+#ifndef PLATFORM_N64
+			// An opcode the table cannot service cannot be stepped over
+			// either: g_CommandLengths has no meaningful entry for a
+			// command that does not exist, so advancing by it lands in the
+			// middle of the next one and every byte after it is garbage.
+			// Yield the list instead of walking off into it.
+			chraiWarnNoHandler(type);
+			break;
+#else
+			// This is attempting to handle situations where the command
+			// type is invalid by passing over them and continuing
+			// execution. This would very likely result in a crash though.
+			g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
+#endif
 		}
 	}
+}
+
+// The original interpreter: prepare the entity, then run its list in C.
+void chraiExecuteBytecode(void *entity, s32 proptype)
+{
+	chraiPrepare(entity, proptype);
+	chraiRunLoop();
+}
+
+#ifndef PLATFORM_N64
+static s32 s_LuaSteps = 0;
+#endif
+
+void chraiExecute(void *entity, s32 proptype)
+{
+#ifndef PLATFORM_N64
+	// g_LuaAiEnabled is off unless Game.LuaAi or --lua-ai turns it on (see
+	// port/src/main.c). With it off this is exactly chraiExecuteBytecode.
+	if (g_LuaAiEnabled) {
+		s_LuaSteps = 0;
+		luaaiExecute(entity, proptype);
+		return;
+	}
+#endif
+
+	chraiExecuteBytecode(entity, proptype);
 }
 
 u32 chraiGetCommandLength(u8 *ailist, u32 aioffset)
@@ -945,13 +982,9 @@ u32 chraiGetAilistLength(u8* list)
 // plus one synthetic-command entry point. Ported from pd-kai's chrai.c
 // (DabDavis's tree is not involved here). KAI phase 0 intake, second slice.
 //
-// NOTHING IN THIS TREE CALLS ANY OF IT YET. `luaai.c` is what will, and it
-// needs these to exist first - it references ten of them - so they land on
-// their own, inert, rather than arriving inside a 6.5k-line drop. The
-// dispatch hook that would route a chr through Lua (KAI's
-// `chraiExecuteBytecode` / `chraiExecute` split) is deliberately NOT here:
-// that is the change that alters behaviour, and it comes with the layer that
-// can service it.
+// `luaai.c` is the only caller, and only while g_LuaAiEnabled is set:
+// chraiExecute hands the entity to luaaiExecute, which drives the list
+// one command at a time through chraiLuaStep.
 // ---------------------------------------------------------------------------
 
 s32 chraiLuaStep(u32 off)
@@ -964,17 +997,53 @@ s32 chraiLuaStep(u32 off)
 	// O(1). See docs/netplay-code-review-2026.md (CR-8).
 	static u8 *s_lenlist = NULL;
 	static u32 s_listlen = 0;
+#ifndef PLATFORM_N64
+	// Setup lists are reloaded at stage load and a new list can land at an
+	// old list's address, so the cache is keyed on the stage too. A stale
+	// short length would make every step below report out of range.
+	static s32 s_lenstage = -1;
+#endif
 	u8 *cmd;
 	s32 type;
 
+#ifndef PLATFORM_N64
+	// The same 100k runaway cap chraiRunLoop has. A transpiled chunk is a
+	// `while true` over ctx:exec, so a list that never yields spins in Lua
+	// instead of in C. chraiExecute zeroes the count per entity.
+	if (++s_LuaSteps >= 100000) {
+		static s32 s_NextWarn60 = 0;
+
+		if (g_Vars.lvframe60 >= s_NextWarn60) {
+			bool isglobal = false;
+
+			s_NextWarn60 = g_Vars.lvframe60 + 60;
+			sysLogPrintf(LOG_WARNING,
+					"chrai: runaway ailist via lua (100000 steps without yield) - yielding; chr %d list %d offset 0x%x",
+					g_Vars.chrdata ? g_Vars.chrdata->chrnum : -1,
+					chraiGetListIdByList(g_Vars.ailist, &isglobal),
+					g_Vars.aioffset);
+		}
+
+		return 1;
+	}
+
+	if (g_Vars.ailist != s_lenlist || g_Vars.stagenum != s_lenstage) {
+		s_lenstage = g_Vars.stagenum;
+#else
 	if (g_Vars.ailist != s_lenlist) {
+#endif
 		s_lenlist = g_Vars.ailist;
 		s_listlen = chraiGetAilistLength(g_Vars.ailist);
 	}
 	if (!g_Vars.ailist || off + 1 >= s_listlen) {
-		// Out of range: don't switch the list and report no-yield, which
-		// l_ctx_exec maps to LUAAI_TERMINAL so the offending list just ends.
+#ifndef PLATFORM_N64
+		// Out of range. Only a hand-written override can pass such an
+		// offset. A 0 here would tell the chunk to continue from an
+		// unchanged pc and spin, so yield instead.
+		return g_Vars.ailist ? 1 : 0;
+#else
 		return 0;
+#endif
 	}
 
 	g_Vars.aioffset = off;
@@ -982,11 +1051,24 @@ s32 chraiLuaStep(u32 off)
 	type = (cmd[0] << 8) + cmd[1];
 
 	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
+#ifndef PLATFORM_N64
+		// Same as chraiRunLoop: a NULL slot is not callable, so yield.
+		if (!g_CommandPointers[type]) {
+			chraiWarnNoHandler(type);
+			return 1;
+		}
+#endif
 		return g_CommandPointers[type]() ? 1 : 0;
 	}
 
+#ifndef PLATFORM_N64
+	// Same as chraiRunLoop: an opcode past the table cannot be stepped over.
+	chraiWarnNoHandler(type);
+	return 1;
+#else
 	g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
 	return 0;
+#endif
 }
 
 u32 chraiLuaGetOffset(void)

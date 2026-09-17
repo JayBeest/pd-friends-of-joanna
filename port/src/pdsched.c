@@ -18,6 +18,7 @@
 #include "lib/lib_48150.h"
 #include "lib/vi.h"
 #include "lib/joy.h"
+#include "game/luaai.h"
 #include "data.h"
 #include "types.h"
 
@@ -289,6 +290,7 @@ void schedEndFrame(OSSched *sc)
 	}
 
 	inputUpdate();
+	luaTick(); // Lua per-frame tick; returns at once when Lua is off
 
 	joyStartReadData(&g_PiMesgQueue);
 	joyReadData();

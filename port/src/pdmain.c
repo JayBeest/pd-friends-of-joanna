@@ -17,6 +17,7 @@
 #include "game/game_1a78b0.h"
 #include "game/gfxmemory.h"
 #include "game/lang.h"
+#include "game/luaai.h"
 #include "game/lv.h"
 #include "game/mplayer/mplayer.h"
 #include "game/mplayer/setup.h"
@@ -659,6 +660,8 @@ void mainTick(void) {
       if (debugGetProfileMode() >= 2) {
         gdl = profileRender(gdl);
       }
+
+      gdl = luaHudRender(gdl); // Lua overlays; returns at once when Lua is off
 
       gDPFullSync(gdl++);
       gSPEndDisplayList(gdl++);

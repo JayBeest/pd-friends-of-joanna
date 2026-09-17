@@ -653,6 +653,11 @@ static s32 extImageDirs(char dirs[][FS_MAXPATH + 1], s32 max)
 	return n;
 }
 
+// Biggest script-named image extImageLoad will decode. MAXPIXELS caps the
+// RGBA8888 buffer at 16 MB; MAXDIM stops a 1 x 4000000 strip.
+#define EXT_IMAGE_MAXDIM 2048
+#define EXT_IMAGE_MAXPIXELS (4 * 1024 * 1024)
+
 // Load an image by file name into a fresh RGBA8888 buffer the caller frees
 // with extImageFree. Returns NULL on failure (logged).
 u8 *extImageLoad(const char *name, u32 *width, u32 *height)
@@ -676,6 +681,24 @@ u8 *extImageLoad(const char *name, u32 *width, u32 *height)
 		snprintf(path, sizeof(path), "%s/%s", dirs[i], name);
 		if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
 			continue;
+		}
+
+		// A script names the file (pd.load_image, pd.tex_override), so the
+		// dimensions in its header decide how much stbi_load allocates: a
+		// 30000x30000 PNG is a few hundred KB on disk and 3.6 GB decoded.
+		// Ask the header first and refuse before anything is allocated.
+		// EXT_IMAGE_MAXDIM/MAXPIXELS are far past anything this game draws
+		// (pd.load_image is only reliable to 64x64).
+		if (!stbi_info(path, &w, &h, &channels)) {
+			sysLogPrintf(LOG_WARNING, "extImageLoad: can't read '%s': %s", path, stbi_failure_reason());
+			return NULL;
+		}
+
+		if (w <= 0 || h <= 0 || w > EXT_IMAGE_MAXDIM || h > EXT_IMAGE_MAXDIM
+				|| (s64)w * (s64)h > EXT_IMAGE_MAXPIXELS) {
+			sysLogPrintf(LOG_WARNING, "extImageLoad: '%s' is %dx%d, past the %dx%d / %d pixel cap",
+					path, w, h, EXT_IMAGE_MAXDIM, EXT_IMAGE_MAXDIM, EXT_IMAGE_MAXPIXELS);
+			return NULL;
 		}
 
 		data = stbi_load(path, &w, &h, &channels, 4);

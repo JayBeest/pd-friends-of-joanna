@@ -192,9 +192,14 @@ local steps = {
 			local cwd = pd.load_image("cwd.png")
 			local bad = pd.load_image("../smoke")
 			local missing = pd.load_image("no_such_image")
-			return math.type(img) == "integer" and math.type(cwd) == "integer" and bad == nil and missing == nil,
-				string.format("smoke=%s cwd=%s bad=%s missing=%s", tostring(img), tostring(cwd),
-					tostring(bad), tostring(missing))
+			-- a script names the file, so extImageLoad reads the PNG header
+			-- and refuses anything past its dimension/pixel cap before
+			-- stbi_load allocates for it (huge.png is 8192x8192)
+			local huge = pd.load_image("huge")
+			return math.type(img) == "integer" and math.type(cwd) == "integer" and bad == nil
+					and missing == nil and huge == nil,
+				string.format("smoke=%s cwd=%s bad=%s missing=%s huge=%s", tostring(img), tostring(cwd),
+					tostring(bad), tostring(missing), tostring(huge))
 		end,
 		function() return true end },
 	{ "draw_image", function()

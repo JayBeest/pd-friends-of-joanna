@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/inv.h"
 #include "game/bondgun.h"
@@ -15,6 +16,56 @@
 #include "bss.h"
 #include "data.h"
 #include "types.h"
+
+#ifndef PLATFORM_N64
+// Chaos ammo swap (pd.ammo_swap, Kai be46717): while g_ChaosAmmoSwapWeapon >= 0,
+// every held gun fires this weapon's shot ("Everything Rockets"), but keeps its
+// OWN animation, fire rate, and hand behaviour. The swap is applied at SHOT
+// CREATION only: gsetPopulateFromCurrentPlayer presents the swap weapon for
+// hitscan shots + firing noise, and the projectile path
+// (bgunCreateFiredProjectile, driven from prop.c when the swap weapon is a
+// projectile launcher) spawns rockets/grenades. Held gun-range weapons only
+// (FALCON2..CROSSBOW, knife excluded); target validated at set time.
+//
+// True when the swap is active, applies to this held weapon, and the swap
+// weapon is a projectile LAUNCHER (rocket/grenade) — so the hitscan shot
+// should be replaced by a fired projectile. prop.c calls this at the SHOOT
+// dispatch.
+bool chaosAmmoSwapProjectile(s32 heldweaponnum)
+{
+	struct weaponfunc *func;
+
+	if (g_ChaosAmmoSwapWeapon < 0 || g_Vars.currentplayer == NULL) {
+		return false;
+	}
+	if (heldweaponnum < WEAPON_FALCON2 || heldweaponnum > WEAPON_CROSSBOW
+			|| heldweaponnum == WEAPON_COMBATKNIFE
+			|| heldweaponnum == g_ChaosAmmoSwapWeapon) {
+		return false;
+	}
+	func = weaponGetFunctionById(g_ChaosAmmoSwapWeapon, FUNC_PRIMARY);
+	return func != NULL && (func->type & 0xff00) == (INVENTORYFUNCTYPE_SHOOT_PROJECTILE & 0xff00);
+}
+
+// Chaos zoom scale (pd.zoom_scale): multiplies every weapon's aim-zoom FOV
+// (g_ChaosZoomMult). > 1 = "negative zoom" (aiming zooms OUT); clamped so the
+// result stays a renderable FOV. 1.0 = off.
+static f32 chaosApplyZoomMult(f32 fov)
+{
+	if (g_ChaosZoomMult > 0.0f && g_ChaosZoomMult != 1.0f && fov > 0.0f) {
+		fov *= g_ChaosZoomMult;
+
+		if (fov > 120.0f) {
+			fov = 120.0f;
+		}
+		if (fov < 2.0f) {
+			fov = 2.0f;
+		}
+	}
+
+	return fov;
+}
+#endif
 
 struct weapon *weaponFindById(s32 itemid)
 {
@@ -208,14 +259,30 @@ f32 currentPlayerGetGunZoomFov(void)
 	}
 
 	if (index >= 0) {
+#ifndef PLATFORM_N64
+		return chaosApplyZoomMult(g_Vars.currentplayer->gunzoomfovs[index]);
+#else
 		return g_Vars.currentplayer->gunzoomfovs[index];
+#endif
 	}
 
 	weapon = weaponFindById(bgunGetWeaponNum2(0));
 
 	if (weapon) {
 		f32 fov = weapon->aimsettings->zoomfov;
+#ifndef PLATFORM_N64
+		// Chaos zoom (pd.zoom_scale): a weapon with no zoom of its own gains a
+		// synthetic 0.5x aim zoom (vanilla-linear X = 60/fov, the hudmsg
+		// readout convention) while the effect runs, feeding the SAME pipeline
+		// as a real zoom gun — so the multiplier turns it into the
+		// vanilla-looking negative zoom a MagSec gets.
+		if (g_ChaosZoomMult > 0.0f && g_ChaosZoomMult != 1.0f && fov <= 0.0f) {
+			fov = 60.0f / 0.5f;
+		}
+		return chaosApplyZoomMult(ADJUST_ZOOM_FOV(fov));
+#else
 		return ADJUST_ZOOM_FOV(fov);
+#endif
 	}
 
 	return 0;
@@ -467,6 +534,27 @@ void gsetPopulateFromCurrentPlayer(s32 handnum, struct gset *gset)
 	gset->unk063a = g_Vars.currentplayer->hands[handnum].gset.unk063a;
 	gset->unk0639 = g_Vars.currentplayer->hands[handnum].gset.unk0639;
 
+#ifndef PLATFORM_N64
+	// Chaos "Everything Rockets" / ammo-swap (pd.ammo_swap): shot creation and
+	// noise run off a POPULATED COPY like this one, so present the swap weapon
+	// here for hitscan swaps (Farsight/Tranq/etc.).
+	if (g_ChaosAmmoSwapWeapon >= 0
+			&& gset->weaponnum >= WEAPON_FALCON2 && gset->weaponnum <= WEAPON_CROSSBOW
+			&& gset->weaponnum != WEAPON_COMBATKNIFE
+			&& gset->weaponnum != g_ChaosAmmoSwapWeapon) {
+		// Shoot-class live functions only: a THROW function (Dragon proxy,
+		// Laptop deploy) dispatches HANDATTACKTYPE_THROWPROJECTILE, and the
+		// throw path casts the gset's function to weaponfunc_throw — presenting
+		// the LX primary there reads a float as projectilemodelnum and crashes.
+		struct weaponfunc *livefunc = gsetGetWeaponFunction(gset);
+
+		if (livefunc != NULL && (livefunc->type & 0x00ff) == INVENTORYFUNCTYPE_SHOOT) {
+			gset->weaponnum = g_ChaosAmmoSwapWeapon;
+			gset->weaponfunc = FUNC_PRIMARY;
+		}
+	}
+#endif
+
 	if (gset->weaponnum == WEAPON_MAULER) {
 		gset->unk063a = g_Vars.currentplayer->hands[handnum].matmot1 * 10.0f;
 	}
@@ -596,6 +684,16 @@ u16 gsetGetSingleShootSound(struct gset *gset)
 
 	if (func && (func->type & 0xff) == INVENTORYFUNCTYPE_SHOOT) {
 		struct weaponfunc_shoot *funcshoot = (struct weaponfunc_shoot *)func;
+#ifndef PLATFORM_N64
+		// Chaos gun-sound override (pd.gun_sound): while > 0, every weapon's
+		// fire sound resolves to this SFX. This function is the single
+		// chokepoint every fire-sound consumer reads (player hands in
+		// bondgun.c, NPC fire in chrUpdateFireslot), so one hook covers them
+		// all. Weapons with NO shoot sound stay silent.
+		if (g_ChaosGunSfxOverride > 0 && funcshoot->shootsound != 0) {
+			return (u16)g_ChaosGunSfxOverride;
+		}
+#endif
 		return funcshoot->shootsound;
 	}
 

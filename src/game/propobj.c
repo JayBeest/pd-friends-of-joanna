@@ -1826,7 +1826,13 @@ void func0f069850(struct defaultobj *obj, struct coord *pos, f32 rot[3][3], stru
 		// walk/sight/shoot at full size while rendering small. Scale the
 		// radius by extrascale — stage objects carry 256 (= x1.0) and are
 		// byte-identical. (Kai be46717.)
-		cyl->radius = 90.0f * (obj->extrascale * (1.0f / 256.0f));
+		// Only for the Lua bike: Kai scaled every GEOCYL object, which changes
+		// any setup or mod object whose extrascale isn't 256.
+		extern bool chaosObjIsLuaBike(struct defaultobj *obj);
+
+		if (chaosObjIsLuaBike(obj)) {
+			cyl->radius = 90.0f * (obj->extrascale * (1.0f / 256.0f));
+		}
 #endif
 	} else {
 		if (rodata19 != NULL) {

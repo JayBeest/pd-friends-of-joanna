@@ -515,6 +515,12 @@ static u8  g_ChaosCivilWarTeam[CHAOS_CIVILWAR_MAX];
 static struct hoverbikeobj g_ChaosBike;
 static s32 g_ChaosBikeSpawned = 0;
 
+// propobj.c scales the geo cylinder by extrascale for this object only.
+bool chaosObjIsLuaBike(struct defaultobj *obj)
+{
+	return obj == &g_ChaosBike.base;
+}
+
 
 // Chaos "Sentries Out": free-standing hostile laptop sentry guns. Storage is our
 // own pool (the engine's g_ThrownLaptops is per-player and slot-limited), so we

@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/dlights.h"
 #include "game/chr.h"
 #include "game/game_0b0fd0.h"
@@ -213,6 +214,14 @@ bool chrIsUsingPaintball(struct chrdata *chr)
 {
 	s32 prevplayernum = g_Vars.currentplayernum;
 	bool paintball;
+
+#ifndef PLATFORM_N64
+	// pd.paintball: force paintball visuals for everyone regardless of the
+	// per-player Combat Sim option.
+	if (g_ChaosPaintball) {
+		return true;
+	}
+#endif
 
 	if (chr && chr->prop && chr->prop->type == PROPTYPE_PLAYER) {
 		setCurrentPlayerNum(playermgrGetPlayerNumByProp(chr->prop));

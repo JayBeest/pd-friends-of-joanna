@@ -54,7 +54,7 @@ char g_DefaultReality[64] = "";
 s32 g_FileAutoSelect = -1;
 
 // Game.LuaAi. Kept apart from g_LuaAiEnabled, which --lua-ai sets for one run
-// and a Lua error clears; neither should be written back to pd.ini.
+// and which must not be written back to pd.ini.
 static s32 g_LuaAiConfig = 0;
 
 bool g_DebugEndscreen = false;

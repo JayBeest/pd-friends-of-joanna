@@ -991,8 +991,8 @@ u32 chraiGetAilistLength(u8* list)
 
 // ---------------------------------------------------------------------------
 // The Lua bridge: read-only accessors over the ailist interpreter's state,
-// plus one synthetic-command entry point. Ported from pd-kai's chrai.c
-// (DabDavis's tree is not involved here). KAI phase 0 intake, second slice.
+// plus one synthetic-command entry point. Ported from Kai's chrai.c.
+// KAI phase 0 intake, second slice.
 //
 // `luaai.c` is the only caller, and only while g_LuaAiEnabled is set:
 // chraiExecute hands the entity to luaaiExecute, which drives the list
@@ -1004,7 +1004,7 @@ u32 chraiGetAilistLength(u8* list)
 // indexed ailist[off] with it we'd read the opcode (and the handler's
 // operands) out of bounds. The length is computed once per list (the pointer
 // is constant for the duration of a list's dispatch) so the hot path stays
-// O(1). See docs/netplay-code-review-2026.md (CR-8).
+// O(1). (Kai's netplay code review, CR-8.)
 static u8 *s_LuaLenList = NULL;
 static u32 s_LuaListLen = 0;
 #ifndef PLATFORM_N64

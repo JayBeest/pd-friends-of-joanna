@@ -4,8 +4,9 @@
 #
 # The command length table and chraiGetCommandLength() are lifted from
 # src/game/chrai.c at build time, so the test walks lists with the same
-# lengths the game does, including the port-only and mod opcodes. Build products go to $OUT (default: a temp dir), never
-# into the tree.
+# lengths the game does, including the port-only and mod opcodes.
+#
+# Build products go to $OUT (default: a temp dir), never into the tree.
 set -e
 cd "$(dirname "$0")"
 CC="${CC:-cc}"

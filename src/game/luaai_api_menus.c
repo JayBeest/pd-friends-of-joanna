@@ -1,15 +1,20 @@
 /**
  * pd.* API, menus group: the Lua Director registry (pd.menu_add and
- * friends) and the mid-mission menu drivers (pd.menu_lore, pd.game_over).
+ * friends), the mid-mission menu drivers (pd.menu_lore, pd.game_over), the
+ * fps/mem readout and the entry points of the overlay's Lua section.
  *
  * From the Perfect Dark Kai fork (be46717), where the whole API was one file,
- * src/game/luaai_api.c. The
+ * src/game/luaai_api.c, and the console commands lived at its end. The
  * Director dialog that renders the registry is in mainmenu.c, as in Kai.
  * Kai's registry and menu drivers are ported as they were; the differences:
  *  - callbacks into Lua (menu actions, checkbox/slider get/set) run under the
  *    AI instruction budget (luaaiPcall), so a looping menu action cannot hang
  *    the menu;
- *  - there is no netplay, so the menu drivers drop Kai's net client test.
+ *  - there is no netplay, so the menu drivers drop Kai's net client test;
+ *  - Kai's /fps and /mem console toggles and scripts/perf_overlay.lua become
+ *    the overlay's Lua section and luaMenusHudRender;
+ *  - Kai's /lua console command becomes luaMenusRunString, budgeted, with the
+ *    result or error handed back to the caller instead of the console.
  */
 
 #include <ultra64.h>
@@ -551,6 +556,197 @@ static int l_pd_game_over(lua_State *L)
 #endif
 	lua_pushboolean(L, 0);
 	return 1;
+}
+
+/* ------------------------------------------------------------------------- *
+ * fps / mem readout (Kai's scripts/perf_overlay.lua, drawn from C)
+ *
+ * Kai drew these from Lua, toggled by its /fps and /mem console commands.
+ * This build toggles g_LuaShowFps / g_LuaShowMem from the overlay's Lua
+ * section and draws them here; luaHudRender calls it. pd.perf() still
+ * reports both flags, so a script can draw its own instead.
+ * ------------------------------------------------------------------------- */
+
+#define LUA_PERF_X     230 /* right column, clear of the X-ray (left column) */
+#define LUA_PERF_Y_FPS 80
+#define LUA_PERF_Y_MEM 88
+
+#define LUA_PERF_WHITE 0xffffffff
+#define LUA_PERF_GREEN 0x40ff40ff
+#define LUA_PERF_YELL  0xffe040ff
+#define LUA_PERF_RED   0xff5050ff
+
+Gfx *luaMenusHudRender(Gfx *gdl)
+{
+#ifndef PLATFORM_N64
+	char buf[64];
+	s32 x, y;
+
+	if (!g_LuaShowFps && !g_LuaShowMem) {
+		return gdl;
+	}
+	if (!g_FontHandelGothicXs || !g_CharsHandelGothicXs) {
+		return gdl;
+	}
+
+	gdl = text0f153628(gdl);
+
+	if (g_LuaShowFps) {
+		f32 fps = videoGetAverageFPS();
+		f32 ms = fps > 0.0f ? 1000.0f / fps : 0.0f;
+		// colour by frame time: green < 17ms (60fps), yellow < 33ms, red otherwise
+		u32 c = ms < 17.0f ? LUA_PERF_GREEN : ms < 33.0f ? LUA_PERF_YELL : LUA_PERF_RED;
+
+		snprintf(buf, sizeof(buf), "%.0ffps %.1fms", fps, ms);
+		x = LUA_PERF_X;
+		y = LUA_PERF_Y_FPS;
+		gdl = textRenderProjected(gdl, &x, &y, buf, g_CharsHandelGothicXs, g_FontHandelGothicXs,
+				(s32)c, viGetWidth(), viGetHeight(), 0, 0);
+	}
+
+	if (g_LuaShowMem) {
+		u32 total = gfxGetVtxPoolSize();
+		u32 freev = gfxGetFreeVtx();
+		u32 used = freev <= total ? total - freev : total;
+		f32 pct = total > 0 ? 100.0f * (f32)used / (f32)total : 0.0f;
+		u32 c = pct < 75.0f ? LUA_PERF_WHITE : pct < 90.0f ? LUA_PERF_YELL : LUA_PERF_RED;
+
+		snprintf(buf, sizeof(buf), "vtx %.0f/%.0fK", (f32)used / 1024.0f, (f32)total / 1024.0f);
+		x = LUA_PERF_X;
+		y = LUA_PERF_Y_MEM;
+		gdl = textRenderProjected(gdl, &x, &y, buf, g_CharsHandelGothicXs, g_FontHandelGothicXs,
+				(s32)c, viGetWidth(), viGetHeight(), 0, 0);
+	}
+
+	gdl = text0f153780(gdl);
+#endif
+	return gdl;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Reload and run-a-string (Kai's /lua console command)
+ *
+ * Kai ran these from its in-game console. Here the overlay's Lua section
+ * calls them, after it has drawn, which is between two game frames: no Lua
+ * call and no AI tick is on the stack.
+ * ------------------------------------------------------------------------- */
+
+/* Reload scripts now: close the state and build a new one, which re-runs
+ * scripts/init.lua. Effects the old scripts left on stay on, as in Kai; the
+ * next stage load clears them. */
+void luaaiReload(void)
+{
+	if (!g_LuaAiEnabled) {
+		luaApiLog("reload: lua is off");
+		return;
+	}
+	luaaiReset();
+	luaaiEnsureState();
+	luaApiLog("reloaded scripts/init.lua");
+}
+
+/* Protected: [source] -> result text. Tries the source as an expression
+ * first ("return <src>") so "pd.stage()" shows its value, then as a
+ * statement block. Runs the chunk and joins its results with spaces. */
+static int luaMenusRunStringP(lua_State *L)
+{
+	size_t len;
+	const char *src = lua_tolstring(L, 1, &len);
+	luaL_Buffer b;
+	int base, n, i;
+
+	lua_pushfstring(L, "return %s", src);
+	if (luaL_loadbuffer(L, lua_tostring(L, -1), lua_rawlen(L, -1), "=overlay") != LUA_OK) {
+		lua_pop(L, 2); /* the error, the prefixed source */
+		if (luaL_loadbuffer(L, src, len, "=overlay") != LUA_OK) {
+			return lua_error(L);
+		}
+	} else {
+		lua_remove(L, -2); /* the prefixed source */
+	}
+
+	base = lua_gettop(L) - 1;
+	lua_call(L, 0, LUA_MULTRET);
+	n = lua_gettop(L) - base;
+
+	luaL_buffinit(L, &b);
+	if (n == 0) {
+		luaL_addstring(&b, "ok");
+	}
+	for (i = 1; i <= n; i++) {
+		if (i > 1) {
+			luaL_addchar(&b, ' ');
+		}
+		luaL_tolstring(L, base + i, NULL);
+		luaL_addvalue(&b);
+	}
+	luaL_pushresult(&b);
+	return 1;
+}
+
+/* Run src in the live state under the instruction budget. Writes the result
+ * (or the error) to out and returns 1 on success, 0 on error. Also logged. */
+s32 luaMenusRunString(const char *src, char *out, u32 outlen)
+{
+	lua_State *L;
+	s32 ok;
+	const char *msg;
+
+	if (out && outlen) {
+		out[0] = '\0';
+	}
+
+	if (!src || !*src) {
+		return 0;
+	}
+
+	if (!g_LuaAiEnabled) {
+		msg = "lua is off";
+		ok = 0;
+	} else if (!luaaiEnsureState() || (L = luaaiGetState()) == NULL) {
+		msg = "no lua state";
+		ok = 0;
+	} else {
+		lua_pushcfunction(L, luaMenusRunStringP);
+		lua_pushstring(L, src);
+		ok = luaaiPcall(L, 1, 1) == LUA_OK;
+		msg = ok ? lua_tostring(L, -1) : luaaiErrStr(L, -1);
+		if (!msg) {
+			msg = "?";
+		}
+		if (out && outlen) {
+			snprintf(out, outlen, "%s", msg);
+		}
+		luaApiLog2(ok ? "run: " : "run error: ", msg);
+		lua_pop(L, 1);
+		return ok;
+	}
+
+	if (out && outlen) {
+		snprintf(out, outlen, "%s", msg);
+	}
+	luaApiLog2("run error: ", msg);
+	return ok;
+}
+
+/* Run a Lua string now; logs the result or error. */
+void luaaiDoString(const char *expr)
+{
+	if (!expr || !*expr) {
+		luaApiLog("usage: reload | <lua>");
+		return;
+	}
+	luaMenusRunString(expr, NULL, 0);
+}
+
+/* Kai's "/lua reload" and "/lua <expr>". */
+void luaaiConsoleCommand(const char *args)
+{
+	if (args && strncmp(args, "reload", 6) == 0) {
+		luaaiReload();
+	} else {
+		luaaiDoString(args);
+	}
 }
 
 /* ------------------------------------------------------------------------- *

@@ -1883,6 +1883,14 @@ s32 chraiLuaChrGiveWeapon(s32 chrnum, s32 weaponnum, s32 dual)
 		return 0;
 	}
 
+	// The bot inventory and bot.c's preference tables index by weaponnum
+	// unchecked
+	if (weaponnum != WEAPON_NONE
+			&& (weaponnum < WEAPON_UNARMED || weaponnum > WEAPON_SUICIDEPILL
+				|| weaponFindById(weaponnum) == NULL)) {
+		return 0;
+	}
+
 	if (chr->aibot) {
 		if (weaponnum != WEAPON_UNARMED && weaponnum != WEAPON_NONE) {
 			botinvGiveSingleWeapon(chr, weaponnum);

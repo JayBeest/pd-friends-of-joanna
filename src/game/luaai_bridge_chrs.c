@@ -848,6 +848,11 @@ s32 chraiLuaSpawnBody(s32 bodynum, s32 weaponnum, f32 dx, f32 dz, s32 sunglasses
 		headnum = g_Vars.currentplayer->prop->chr->headnum;
 	}
 
+	// g_HeadsAndBodies is sized at runtime and nothing downstream bounds it
+	if (bodynum < 0 || bodynum >= g_NumHeadsAndBodies) {
+		return -1;
+	}
+
 	// Force-load the body's model file if it isn't resident on this stage.
 	// The spawn path only loads on demand and bails silently if the file
 	// isn't in memory — which is why the full-size Skedar (BODY_SKEDAR /
@@ -2388,6 +2393,10 @@ s32 chraiLuaChrSetBody(s32 chrnum, s32 bodynum, s32 headnum)
 	if (g_Vars.normmplayerisrunning) {
 		return 0; // Combat Sim: not supported (no runtime bodynum sync)
 	}
+	// g_HeadsAndBodies is sized at runtime and nothing downstream bounds it
+	if (bodynum < 0 || bodynum >= g_NumHeadsAndBodies || headnum >= g_NumHeadsAndBodies) {
+		return 0;
+	}
 	chr = (chrnum < 0) ? NULL : chrFindByLiteralId(chrnum);
 	if (chr == NULL || chr->prop == NULL || chr->model == NULL) {
 		return 0;
@@ -2581,6 +2590,9 @@ s32 chraiLuaPossessSpawn(s32 bodynum)
 
 	if (bodynum < 0) {
 		bodynum = BODY_EYESPY;
+	}
+	if (bodynum >= g_NumHeadsAndBodies) {
+		return -1;
 	}
 
 	model = bodyAllocateModel(bodynum, bodyChooseHead(bodynum), 0);

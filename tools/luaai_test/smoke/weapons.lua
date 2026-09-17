@@ -1,4 +1,5 @@
 -- Smoke test for the weapons group of pd.* (src/game/luaai_api_weapons.c).
+-- The pd.* API it exercises is ported from Kai (be46717).
 --
 -- Run it as scripts/init.lua (relative to the game's working directory) and
 -- load a stage. Once the player holds a gun (the hands are in use, so any

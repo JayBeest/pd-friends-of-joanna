@@ -1,4 +1,5 @@
 -- Smoke test for the fx pd.* functions (src/game/luaai_api_fx.c).
+-- The pd.* API it exercises is ported from Kai (be46717).
 --
 -- Run it as scripts/init.lua (relative to the game's working directory) and
 -- load a stage. Once a player is live, the "draw" handler walks a list of

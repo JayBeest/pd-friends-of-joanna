@@ -1,4 +1,5 @@
 -- Smoke test for the menus pd.* functions (src/game/luaai_api_menus.c).
+-- The pd.* API it exercises is ported from Kai (be46717).
 --
 -- Run it as scripts/init.lua (relative to the game's working directory) and
 -- load a solo stage. Once a player is live it calls every menus function from

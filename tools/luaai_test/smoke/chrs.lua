@@ -1,5 +1,6 @@
 -- Smoke test for the chrs pd.* functions (src/game/luaai_api_chrs.c): chr
 -- mutators, spawns and explosions.
+-- The pd.* API it exercises is ported from Kai (be46717).
 --
 -- Run it as scripts/init.lua (relative to the game's working directory) and
 -- load a solo stage with guards. Once a player is live the "tick" handler

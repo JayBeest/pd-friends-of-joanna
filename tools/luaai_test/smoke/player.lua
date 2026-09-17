@@ -1,5 +1,6 @@
 -- Smoke test for the player group of the pd.* API
 -- (src/game/luaai_api_player.c): player, devices, input, cheats, models.
+-- The pd.* API it exercises is ported from Kai (be46717).
 --
 -- Run it as scripts/init.lua (relative to the game's working directory) and
 -- load a solo stage. Once the player is live and the stage is ticking, a tick

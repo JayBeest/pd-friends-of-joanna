@@ -579,5 +579,37 @@ void chaosStateResetPerStage(void)
 	g_ChaosTemuMag = 0;
 	g_ChaosHeadshotBoost = 0;
 	g_ChaosGangstaForce = 0;
+
+	// Not in Kai, which only ever reset what lvResetChaos touched. Everything
+	// below is a chaos effect a script can leave latched: restarting a failed
+	// mission used to keep the player frozen, the guns silent, the screen
+	// stretched or every drop suppressed, with no script left running to turn
+	// any of it off. Effects whose engine side re-reads the global every tick
+	// (the FOV and aspect multipliers) self-restore once it is back to 1.
+	g_ChaosPlayerFreeze = 0;
+	g_ChaosGormless = 0;
+	g_ChaosChrFreeze = 0;
+	g_ChaosChrSpeedMult = 1.0f;
+	g_ChaosDamageScale = 1.0f;
+	g_ChaosOnePunch = 0;
+	g_ChaosNoDrops = 0;
+	g_ChaosBackfire = 0;
+	g_ChaosPinball = 0;
+	g_ChaosAmmoSwapWeapon = -1;
+	g_ChaosZoomMult = 1.0f;
+	g_ChaosGunSfxOverride = 0;
+	g_ChaosFovMult = 1.0f;
+	g_ChaosAspectMult = 1.0f;
+	g_ChaosPaintball = 0;
+	g_ChaosTPose = 0;
+	g_ChaosSfxShuffle = 0;
+	g_ChaosSfxReplaceFrom = -1;
+	g_ChaosSfxReplaceTo = -1;
+	g_ChaosInstrumentShuffle = 0;
+	g_ChaosRoomTintOn = 0;
+
+	for (i = 0; i < ARRAYCOUNT(g_ChaosRoomTintFrac); i++) {
+		g_ChaosRoomTintFrac[i] = 1.0f;
+	}
 }
 #endif

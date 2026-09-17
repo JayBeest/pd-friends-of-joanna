@@ -187,6 +187,218 @@ static s32 g_NumImportedAssets = 0;
 		return ret; \
 	}
 
+/*
+ * Unknown keys, and why they are survivable.
+ *
+ * A modconfig is read by whatever build the player happens to be running, and
+ * a key can be newer than the loader reading it. Every unknown key used to
+ * return NULL all the way up to modConfigLoad, which broke out of its loop -
+ * so one key nobody recognised threw away the entire file: heads, bodies,
+ * stage claims, model states, the lot, and the mod loaded as though it had no
+ * modconfig at all. Nothing reads modConfigLoad's return value, so the harm
+ * was never the `success = false`; it was the `break` that came with it.
+ *
+ * That is the wrong trade. A config written for a newer loader should lose
+ * the feature it asked for, not the mod. So an unknown key is now stepped
+ * over and counted.
+ *
+ * Everything else stays fatal. A bad value for a key we DO know means the
+ * file is not what it claims, and an unbalanced brace means every token after
+ * it is misattributed; neither can be guessed past without corrupting what
+ * has already been read.
+ */
+
+/*
+ * True when nothing but whitespace, or a comment that owns the rest of its
+ * line, stands between p and the next line.
+ *
+ * strParseToken treats '\n' as ordinary whitespace, so the token stream has
+ * no line structure at all and the shape of an unknown key's value - a bare
+ * word, a quoted string (one token, quotes included), three floats like
+ * weather's constant_wind, a bracket list, a brace block - cannot be known
+ * from the grammar. The files are line-oriented even though the grammar is
+ * not: every key in every modconfig on disk and in PD_AIO_March_2026 is
+ * written one per line. That convention is the only honest boundary there
+ * is, so it is the one the skip uses.
+ */
+static bool modConfigAtLineEnd(const char *p)
+{
+	if (!p) {
+		return true;
+	}
+
+	while (*p) {
+		if (*p == '\n') {
+			return true;
+		}
+		if ((u8)*p <= ' ') {
+			++p;
+			continue;
+		}
+		if (*p == ';' || *p == '#' || (p[0] == '/' && p[1] == '/')) {
+			return true;
+		}
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Unknown keys are reported once per distinct name per config file, not once
+ * per occurrence. A roster of seventeen stage blocks that all carry the same
+ * key written for a newer loader is one fact about this build, not seventeen
+ * about the config, and seventeen identical lines bury the warnings that are
+ * about one place each. The tally printed at the end of modConfigLoad keeps
+ * the counts the repeats would have carried.
+ */
+#define MODCONFIG_MAX_UNKNOWN_NAMES 8
+
+static struct { char name[32]; s32 count; } g_UnknownKeys[MODCONFIG_MAX_UNKNOWN_NAMES];
+static s32 g_NumUnknownKeyNames = 0;
+static s32 g_NumUnknownKeyNamesDropped = 0;
+static s32 g_NumUnknownKeysSkipped = 0;
+
+static void modConfigUnknownKeysReset(void)
+{
+	memset(g_UnknownKeys, 0, sizeof(g_UnknownKeys));
+	g_NumUnknownKeyNames = 0;
+	g_NumUnknownKeyNamesDropped = 0;
+	g_NumUnknownKeysSkipped = 0;
+}
+
+// Counts the sighting and answers whether this name has been seen before in
+// this file. Past the table a new name is counted but not named; a config
+// with more than MODCONFIG_MAX_UNKNOWN_NAMES distinct unknown keys is telling
+// us one thing, not eight more.
+static bool modConfigUnknownKeyFirstSighting(const char *key)
+{
+	++g_NumUnknownKeysSkipped;
+
+	for (s32 i = 0; i < g_NumUnknownKeyNames; ++i) {
+		if (!strcmp(g_UnknownKeys[i].name, key)) {
+			++g_UnknownKeys[i].count;
+			return false;
+		}
+	}
+
+	if (g_NumUnknownKeyNames >= MODCONFIG_MAX_UNKNOWN_NAMES) {
+		++g_NumUnknownKeyNamesDropped;
+		return false;
+	}
+
+	strncpy(g_UnknownKeys[g_NumUnknownKeyNames].name, key, sizeof(g_UnknownKeys[0].name) - 1);
+	g_UnknownKeys[g_NumUnknownKeyNames].name[sizeof(g_UnknownKeys[0].name) - 1] = '\0';
+	g_UnknownKeys[g_NumUnknownKeyNames].count = 1;
+	++g_NumUnknownKeyNames;
+
+	return true;
+}
+
+static void modConfigUnknownKeysReport(const char *fname, const char *modname)
+{
+	if (!g_NumUnknownKeysSkipped) {
+		return;
+	}
+
+	char list[256];
+	s32 len = 0;
+
+	list[0] = '\0';
+
+	for (s32 i = 0; i < g_NumUnknownKeyNames; ++i) {
+		const s32 n = snprintf(list + len, sizeof(list) - len, "%s%s x%d",
+				len ? ", " : "", g_UnknownKeys[i].name, g_UnknownKeys[i].count);
+		if (n < 0 || n >= (s32)(sizeof(list) - len)) {
+			break;
+		}
+		len += n;
+	}
+
+	if (g_NumUnknownKeyNamesDropped) {
+		snprintf(list + len, sizeof(list) - len, ", and %d more name(s)", g_NumUnknownKeyNamesDropped);
+	}
+
+	sysLogPrintf(LOG_WARNING,
+			"modconfig: '%s' (mod '%s'): skipped %d key(s) this build does not know: %s. "
+			"The rest of the config loaded; whatever those keys asked for did not happen.",
+			fname, modname, g_NumUnknownKeysSkipped, list);
+}
+
+/*
+ * Step over an unknown key and whatever was written as its value.
+ *
+ * Peek one token without consuming it. A brace opens a block, so step over
+ * the whole balanced block - that is how a newer loader's new section
+ * survives. Otherwise take every token still on the key's own line, which
+ * covers a word, a quoted string, a multi-value key and a one-line bracket
+ * list, and stop short of any brace, so a block written on one line keeps the
+ * closing brace the loop above is waiting for. A key with no value at all,
+ * like weather's cutscene_only, consumes nothing, because the next token is
+ * already on the next line.
+ *
+ * What this cannot do is follow a braceless value that wraps across lines:
+ * its tail lands in the next iteration, is reported as another unknown key,
+ * and is skipped in turn. No config in the tree writes one. The line is the
+ * honest boundary and that is what it costs.
+ */
+static char *modConfigSkipUnknownKey(char *p, const char *where, const char *key)
+{
+	if (modConfigUnknownKeyFirstSighting(key)) {
+		sysLogPrintf(LOG_WARNING,
+				"modconfig: %s: unknown key '%s' - skipped; the rest of the config still loads",
+				where, key);
+	}
+
+	if (!p || modConfigAtLineEnd(p)) {
+		return p;
+	}
+
+	char peek[UTIL_MAX_TOKEN + 1];
+	peek[0] = '\0';
+
+	char *after = strParseToken(p, peek, NULL);
+	if (!after || !peek[0]) {
+		return p;
+	}
+
+	if (peek[0] == '{' && peek[1] == '\0') {
+		s32 depth = 1;
+		p = after;
+		while (p && depth > 0) {
+			p = strParseToken(p, peek, NULL);
+			if (!p || !peek[0]) {
+				break;
+			}
+			if (peek[0] == '{' && peek[1] == '\0') {
+				++depth;
+			} else if (peek[0] == '}' && peek[1] == '\0') {
+				--depth;
+			}
+		}
+		return p;
+	}
+
+	// a closer belongs to whoever opened it
+	if ((peek[0] == '}' || peek[0] == ']' || peek[0] == ')') && peek[1] == '\0') {
+		return p;
+	}
+
+	p = after;
+	while (!modConfigAtLineEnd(p)) {
+		after = strParseToken(p, peek, NULL);
+		if (!after || !peek[0]) {
+			break;
+		}
+		if ((peek[0] == '{' || peek[0] == '}') && peek[1] == '\0') {
+			break;
+		}
+		p = after;
+	}
+
+	return p;
+}
+
 static inline char *modConfigParseStringValue(char *p, char *token, char *value){
 	p = strParseToken(p, token, NULL);
 	if (!p) {
@@ -286,8 +498,9 @@ static char *modConfigParseStageMusic(char *p, char *token, s32 stagenum)
 			PARSE_STAGE_INT("music:", "xtrack", tmp, 0, 128);
 			smus->xtrack = tmp;
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: music: invalid key: %s", stagenum, token);
-			return NULL;
+			char where[40];
+			snprintf(where, sizeof(where), "stage 0x%02x: music", stagenum);
+			p = modConfigSkipUnknownKey(p, where, token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -415,8 +628,9 @@ static char *modConfigParseStageWeather(char *p, char *token, s32 stagenum)
 			PARSE_STAGE_FLOAT("weather:", "zmax", tmpf, -65536.f, 65536.f);
 			wcfg->zmax = tmpf;
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: weather: invalid key: %s", stagenum, token);
-			return NULL;
+			char where[40];
+			snprintf(where, sizeof(where), "stage 0x%02x: weather", stagenum);
+			p = modConfigSkipUnknownKey(p, where, token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -572,8 +786,9 @@ struct modconfigslotinfo {
 };
 
 // Returns updated p. Sets *skipEntry=1 if the entry should be discarded
-// (e.g. file not found). On hard parse failure (unknown key, malformed
-// value), returns NULL with *skipEntry left as 0.
+// (e.g. file not found). On hard parse failure (a malformed value for a key
+// we know), returns NULL with *skipEntry left as 0. An unknown key is not a
+// hard failure; it is skipped and the rest of the entry is kept.
 static char *modConfigParseHeadOrBodyEntry(char *p, char *token, struct headorbody *item, s32 modNum, char *nameOut, struct modconfigslotinfo *slotInfo, s32 *skipEntry)
 {
 	s32 tmp = 0;
@@ -662,8 +877,7 @@ static char *modConfigParseHeadOrBodyEntry(char *p, char *token, struct headorbo
 				nameOut[63] = '\0';
 			}
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: HeadsAndBodies: invalid key: %s", token);
-			return NULL;
+			p = modConfigSkipUnknownKey(p, "HeadsAndBodies", token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -725,8 +939,9 @@ static char *modConfigParseModelStates(char *p, char *token, s32 modNum)
 					modelId, scale, fixedScale, g_ModelStatesOriginal[modelId].scale);
 				numParsed++;
 			} else {
-				sysLogPrintf(LOG_ERROR, "modconfig: ModelStates: unknown key: %s", token);
-				return NULL;
+				char where[48];
+				snprintf(where, sizeof(where), "ModelStates: model 0x%04x", modelId);
+				p = modConfigSkipUnknownKey(p, where, token);
 			}
 			p = strParseToken(p, token, NULL);
 		}
@@ -817,8 +1032,9 @@ static char *modConfigParseExplosionTypes(char *p, char *token, s32 modNum)
 
 				g_PropExplosionTypes[modelId] = expType;
 			} else {
-				sysLogPrintf(LOG_ERROR, "modconfig: ExplosionTypes: unknown key: %s", token);
-				return NULL;
+				char where[48];
+				snprintf(where, sizeof(where), "ExplosionTypes: model 0x%04x", modelId);
+				p = modConfigSkipUnknownKey(p, where, token);
 			}
 			p = strParseToken(p, token, NULL);
 		}
@@ -1367,8 +1583,7 @@ static char *modConfigParseMpHeads(char *p, char *token)
 			PARSE_INT("MpHeads", "requirefeature", tmp, 0, 255, NULL);
 			item->requirefeature = tmp;
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: MpHeads: invalid key: %s", token);
-			return NULL;
+			p = modConfigSkipUnknownKey(p, "MpHeads", token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -1415,8 +1630,7 @@ static char *modConfigParseMpBodies(char *p, char *token)
 			PARSE_INT("MpBodies", "requirefeature", tmp, 0, 255, NULL);
 			item->requirefeature = tmp;
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: MpBodies: invalid key: %s", token);
-			return NULL;
+			p = modConfigSkipUnknownKey(p, "MpBodies", token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -1615,8 +1829,7 @@ static char *modConfigParseMpArena(char *p, char *token)
 			p = strParseToken(p, token, NULL);
 			if (!p) return NULL;
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: MpArena: invalid key: %s", token);
-			return NULL;
+			p = modConfigSkipUnknownKey(p, "MpArena", token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -1771,8 +1984,9 @@ static char *modConfigParseStage(char *p, char *token, s32 modnum)
 			PARSE_STAGE_INT("", "force_vanilla", tmp, 0, 1);
 			sysLogPrintf(LOG_WARNING, "modconfig: stage 0x%02x: 'force_vanilla' is retired and ignored", stagenum);
 		} else {
-			sysLogPrintf(LOG_ERROR, "modconfig: stage 0x%02x: invalid key: %s", stagenum, token);
-			return NULL;
+			char where[32];
+			snprintf(where, sizeof(where), "stage 0x%02x", stagenum);
+			p = modConfigSkipUnknownKey(p, where, token);
 		}
 		p = strParseToken(p, token, NULL);
 	}
@@ -2027,6 +2241,7 @@ s32 modConfigLoad(const char *fname)
 	}
 
 	s32 success = true;
+	modConfigUnknownKeysReset();
 	char token[UTIL_MAX_TOKEN + 1] = { 0 };
 	char *end = data + dataLen;
 	char *p = strParseToken(data, token, NULL);
@@ -2153,13 +2368,24 @@ s32 modConfigLoad(const char *fname)
 				break;
 			}
 		} else {
-			// garbage
-			sysLogPrintf(LOG_ERROR, "modconfig: unexpected %s at offset %d", token[0] ? token : "end of file", p - data);
-			success = false;
-			break;
+			// An unknown key at the top level, which is the same version-skew
+			// story as one inside a block and can be a whole section a newer
+			// loader writes - so the skip peeks for a brace before deciding.
+			// It also catches actual garbage, which the grammar cannot tell
+			// apart from a key it has not heard of; the loop advances a token
+			// either way, so junk costs a warning rather than the file.
+			char where[80];
+			snprintf(where, sizeof(where), "%s: offset %d", fname, (s32)(p - data));
+			p = modConfigSkipUnknownKey(p, where, token[0] ? token : "end of file");
 		}
 		p = strParseToken(p, token, NULL);
 	}
+
+	// Named again rather than reusing activeModName from the top: a mod's
+	// own `modname` key is read by the loop above, so on the first pass the
+	// name only exists once the file has been parsed.
+	modConfigUnknownKeysReport(fname,
+			(modnum >= 0 && modnum < 64 && g_ModNames[modnum][0]) ? g_ModNames[modnum] : activeModName);
 
 	sysMemFree(data);
 	return success;

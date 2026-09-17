@@ -369,8 +369,20 @@ char *endscreenMenuTextAccuracy(struct menuitem *item)
 	return g_StringPointer;
 }
 
+#ifndef PLATFORM_N64
+#include "game/chaosstate.h"
+#endif
+
 char *endscreenMenuTextMissionStatus(struct menuitem *item)
 {
+#ifndef PLATFORM_N64
+	// pd.game_over (Kai, be46717): while its mid-mission failed screen is up,
+	// Mission Status reads "Unknown". No effect on the real endscreen.
+	if (g_ChaosGameOverStatus) {
+		return langGet(L_MPWEAPONS_062); // "Unknown"
+	}
+#endif
+
 	if (g_CheatsActiveBank0 || g_CheatsActiveBank1) {
 		return langGet(L_MPWEAPONS_135); // "Cheated"
 	}
@@ -443,6 +455,13 @@ char *endscreenMenuTextMissionStatus(struct menuitem *item)
 
 char *endscreenMenuTextAgentStatus(struct menuitem *item)
 {
+#ifndef PLATFORM_N64
+	// pd.game_over: Agent Status reads "Missing" while its screen is up
+	if (g_ChaosGameOverStatus) {
+		return langGet(L_MPWEAPONS_063); // "Missing"
+	}
+#endif
+
 	if (g_CheatsActiveBank0 || g_CheatsActiveBank1) {
 		return langGet(L_MPWEAPONS_134); // "Dishonored"
 	}

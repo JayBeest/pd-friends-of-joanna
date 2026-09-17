@@ -20,7 +20,8 @@
  * chunk for a given list.
  */
 
-/* Non-zero when action blocks should be executed via Lua. Defaults to 0. */
+/* Non-zero when action blocks should be executed via Lua. port/src/main.c
+ * sets it at startup: on when luaaiScriptDetected(), unless forced. */
 extern s32 g_LuaAiEnabled;
 
 /**

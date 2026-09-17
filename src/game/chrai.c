@@ -922,7 +922,8 @@ static s32 s_LuaSteps = 0;
 void chraiExecute(void *entity, s32 proptype)
 {
 #ifndef PLATFORM_N64
-	// g_LuaAiEnabled is off unless Game.LuaAi or --lua-ai turns it on (see
+	// g_LuaAiEnabled is set once at startup: on when a Lua script is
+	// present, unless Game.LuaAi or --lua-ai / --no-lua-ai force it (see
 	// port/src/main.c). With it off this is exactly chraiExecuteBytecode.
 	if (g_LuaAiEnabled) {
 		s_LuaSteps = 0;

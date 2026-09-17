@@ -16,8 +16,8 @@
  *
  * Taken from the Perfect Dark Kai fork (be46717). Differences: messages go
  * through sysLogPrintf (pd.log + stdout/stderr) because this tree has no
- * in-game console, g_LuaAiEnabled defaults to 0, and a list error quarantines
- * that list instead of clearing g_LuaAiEnabled.
+ * in-game console, g_LuaAiEnabled is on only when a script is present, and a
+ * list error quarantines that list instead of clearing g_LuaAiEnabled.
  */
 
 #include <ultra64.h>
@@ -34,8 +34,9 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
-/* Off by default: nothing routes an ailist through Lua unless this is set.
- * Kai defaults it to 1. The layer never clears it: when no Lua state can be
+/* Nothing routes an ailist through Lua unless this is set. port/src/main.c
+ * sets it at startup, on when a script is detected; Kai sets it to 1
+ * unconditionally. The layer never clears it: when no Lua state can be
  * created, or the quarantine table overflows, it suspends itself until the
  * next luaaiReset instead, and every list runs as bytecode meanwhile. */
 s32 g_LuaAiEnabled = 0;

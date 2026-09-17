@@ -46,10 +46,16 @@ def read_fbx(path):
 
 def fit(pos, box):
     """Uniform scale to the target head height, then translate y onto it."""
+    if not pos:
+        raise ValueError("the mesh has no vertices")
     ys = [p[1] for p in pos]
-    k = (box[3] - box[2]) / (max(ys) - min(ys))
-    yoff = box[2] - min(ys) * k
-    return k, yoff
+    span = max(ys) - min(ys)
+    if span <= 0:
+        raise ValueError("every vertex sits at y=%g, so the mesh has no height to "
+                         "scale onto the hit box. The exporter probably used a "
+                         "different up axis." % ys[0])
+    k = (box[3] - box[2]) / span
+    return k, box[2] - min(ys) * k
 
 # ── display list ─────────────────────────────────────────────────────
 
@@ -121,6 +127,10 @@ def build(pos, tris, uv, uvi, mat, matmap, texsize, box, scale, hitpart=8,
     k, yoff = fit(pos, box)
     vtx, opadl, order = build_geometry(pos, tris, uv, uvi, mat, matmap, texsize, k, yoff)
     numvertices = len(vtx) // 12
+    if numvertices > 0x7fff:
+        raise ValueError("%d vertices, but the model header stores the count in a "
+                         "signed 16-bit field. This mesh has to be decimated or "
+                         "split; shipped heads are under 600." % numvertices)
     colours = struct.pack('>4B', 255, 255, 255, 255) * NUM_COLOURS
     stub = genddl()
 

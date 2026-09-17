@@ -3,6 +3,9 @@
 
   pdhead info       <file>                        what it is, and what is in it
   pdhead untemplate <template> -o <out.Z>         strip the prefix, emit a *Z
+  pdhead textures   <file> -o <dir>               write the embedded textures as PNGs
+  pdhead reindex    <file> -o <out.Z> [...]       move its texture ids out of the way
+  pdhead install    <file> --mod <d> --name <n>   reindex, install, drop the PNGs
   pdhead build      <mesh.fbx> -o <out.Z> [...]   author a head from a mesh
 
 A *template* is an editor artefact: a fixed-size prefix of metadata followed by
@@ -14,6 +17,15 @@ and a 0x1173-compressed *Z are all the same input here.
   --from-template <file>   take the hit box, model scale and node-tree shape
                            from that file instead of this tool's defaults.
                            Accepts a template, a raw model or a *Z.
+
+What this tool refuses, and why: everything here reads structures the tool did
+not write, so a file that is not what it claims can send it walking a vertex
+array as display-list commands and writing into whatever it finds. Rather than
+guess, `reindex`, `install` and `textures` stop with a sentence when the model
+holds texconfig pointers instead of texture ids (the vanilla ROM form — the
+pointers would be overwritten with small integers), when it holds a node type
+whose display list lives at an offset this tool does not read, or when a display
+list has no ENDDL where one is due. `info` never refuses: it reports.
 
 stdlib only.
 """
@@ -30,7 +42,30 @@ NODETYPES = {0x01: "CHRINFO", 0x02: "POSITION", 0x04: "GUNDL", 0x05: "05",
              0x12: "TOGGLE", 0x15: "POSITIONHELD", 0x16: "STARGUNFIRE",
              0x17: "HEADSPOT", 0x18: "DL"}
 
+# Nodes whose rodata begins with the pair (Gfx *opagdl, Gfx *xlugdl). That is
+# the only shape this tool knows how to find a display list in: modelrodata_dl
+# (0x18) and modelrodata_gundl (0x04) are bit-identical in those two fields.
+DL_NODETYPES = (0x04, 0x18)
+
+# Nodes that carry a display list somewhere else. STARGUNFIRE (0x16) keeps a
+# single Gfx* at offset 0x08, behind an s32 and a Vtx*, so reading 0x00 as a
+# gdl pair would walk a vertex array as if it were commands. Refuse instead.
+DL_ELSEWHERE = {0x16: "STARGUNFIRE"}
+
+# A display list this tool walks has to end. The longest in the models to hand
+# is 243 commands; an order of magnitude past that means the bytes being walked
+# are not a display list at all, and writing into them would corrupt the file.
+MAX_DL_COMMANDS = 2048
+MAX_TREE_DEPTH = 64
+
 def die(m): sys.exit("pdhead: " + m)
+
+def need(d, off, n, what):
+    """Bounds-check a read, so a malformed file gets a sentence and not a
+    struct.error traceback from somewhere three calls down."""
+    if off < 0 or off + n > len(d):
+        die("%s at 0x%x runs past the end of the file (%d bytes) — this file is "
+            "truncated, or it is not the model it looks like" % (what, off, len(d)))
 
 # ── loading ──────────────────────────────────────────────────────────
 
@@ -64,8 +99,8 @@ def plausible_modeldef(d, o):
         return False
     if not (0.0 < scale < 1e5):
         return False
-    if o + (root & 0xffffff) + 2 > len(d):
-        return False
+    if o + (root & 0xffffff) + 0x18 > len(d):
+        return False                          # the whole node, not just its type
     if struct.unpack_from(">H", d, o + (root & 0xffffff))[0] not in NODETYPES:
         return False
     for i in range(numtex):                   # every texconfig must be sane
@@ -111,6 +146,7 @@ def texconfigs(d, n):
     out = []
     for i in range(n):
         p = base + i * 12
+        need(d, p, 12, "texconfig %d" % i)
         v = struct.unpack_from(">I", d, p)[0]
         # the field is a union: a texture id, or a segment-5 pointer to
         # texture data embedded in this file (vanilla ROM models use both)
@@ -119,25 +155,75 @@ def texconfigs(d, n):
     return out
 
 def node(d, o):
+    need(d, o, 0x18, "node")
     t, = struct.unpack_from(">H", d, o)
     ro, par, nxt, prv, ch = [x & 0xffffff for x in struct.unpack_from(">IIIII", d, o + 4)]
     return dict(off=o, type=t, name=NODETYPES.get(t, "%02x" % t),
                 rodata=ro, next=nxt, child=ch)
 
-def walk(d, o, depth=0, out=None):
+def walk(d, o, depth=0, out=None, seen=None):
+    """Every node in the tree, depth-first.
+
+    A node tree is data we did not write, so it can point anywhere: at itself,
+    at a sibling already visited, or past the end of the file. Each of those is
+    a hang or a traceback without the three guards here.
+    """
     out = [] if out is None else out
+    seen = set() if seen is None else seen
+    if depth > MAX_TREE_DEPTH:
+        die("node tree is more than %d deep — it is cyclic or corrupt" % MAX_TREE_DEPTH)
     while o:
+        if o in seen:
+            die("node tree returns to 0x%x — it is cyclic, so it cannot be walked" % o)
+        seen.add(o)
         n = node(d, o)
         n["depth"] = depth
         out.append(n)
         if n["child"]:
-            walk(d, n["child"], depth + 1, out)
+            walk(d, n["child"], depth + 1, out, seen)
         o = n["next"]
     return out
+
+def gdl_nodes(d, md):
+    """The nodes whose rodata starts with (Gfx *opagdl, Gfx *xlugdl).
+
+    Refuses the whole model if the tree holds a node that keeps its display
+    list in some other shape, rather than walking whatever sits at rodata+0.
+    """
+    nodes = walk(d, md["root"])
+    for n in nodes:
+        if n["type"] in DL_ELSEWHERE:
+            die("this model has a %s(0x%02x) node at 0x%x, which keeps its display "
+                "list at a different offset than DL and GUNDL do. Refusing to touch it."
+                % (DL_ELSEWHERE[n["type"]], n["type"], n["off"]))
+    return [n for n in nodes if n["type"] in DL_NODETYPES]
+
+def scan_gdl(d, base, limit=MAX_DL_COMMANDS):
+    """Offsets of every command in the display list at `base`, ENDDL included.
+
+    An unterminated list is refused rather than truncated: reaching the cap or
+    the end of the file means these bytes are not a display list, and the
+    callers of this function write into what it returns.
+    """
+    if not base:
+        return []
+    offs, o = [], base
+    while True:
+        if o + 8 > len(d):
+            die("display list at 0x%x runs off the end of the file without an ENDDL" % base)
+        if len(offs) >= limit:
+            die("display list at 0x%x has no ENDDL in %d commands — these bytes are "
+                "not a display list" % (base, limit))
+        offs.append(o)
+        c = d[o]
+        o += 8
+        if c == 0xb8:
+            return offs
 
 def bbox_of(d):
     for n in walk(d, modeldef(d)["root"]):
         if n["type"] == 0x0a:
+            need(d, n["rodata"], 0x1c, "bbox rodata")
             hit, = struct.unpack_from(">i", d, n["rodata"])
             return (hit,) + struct.unpack_from(">6f", d, n["rodata"] + 4)
     return None
@@ -145,6 +231,7 @@ def bbox_of(d):
 def dl_of(d):
     for n in walk(d, modeldef(d)["root"]):
         if n["type"] == 0x18:
+            need(d, n["rodata"], 0x18, "display-list rodata")
             opa, xlu, col, vtx = [x & 0xffffff for x in struct.unpack_from(">IIII", d, n["rodata"])]
             nv, mc, rw, nc = struct.unpack_from(">hhHH", d, n["rodata"] + 16)
             return dict(opagdl=opa, vertices=vtx, numvertices=nv, numcolours=nc, mcount=mc)
@@ -183,16 +270,12 @@ def core_end(m):
     works on a raw model or a *Z too.
     """
     end = 0
-    for n in walk(m, modeldef(m)["root"]):
-        if n["type"] != 0x18:
-            continue
+    for n in gdl_nodes(m, modeldef(m)):
+        need(m, n["rodata"], 8, "display-list rodata")
         for base in [x & 0xffffff for x in struct.unpack_from(">II", m, n["rodata"])]:
-            o = base
-            while base and o + 8 <= len(m):
-                c = m[o]; o += 8
-                if c == 0xb8:
-                    break
-            end = max(end, o)
+            offs = scan_gdl(m, base)
+            if offs:
+                end = max(end, offs[-1] + 8)
     return end
 
 def extract_textures(m):
@@ -214,8 +297,18 @@ def extract_textures(m):
     """
     md = modeldef(m)
     tail = core_end(m)
+    if not tail:
+        die("no display list found, so there is no way to tell where the model ends "
+            "and a texture payload would begin")
     out = []
-    for t in texconfigs(m, md["numtex"]):
+    for i, t in enumerate(texconfigs(m, md["numtex"])):
+        if t["pointer"]:
+            # the union holds a pointer to texture data already inside the file,
+            # not an id — searching the tail for it would match arbitrary bytes
+            sys.stderr.write("pdhead: texconfig %d points at inline texture data "
+                             "(%08x) rather than naming an id; skipping it\n"
+                             % (i, t["texid"]))
+            continue
         e = m.find(struct.pack(">I", t["texid"]), tail)
         if e < 0:
             continue
@@ -256,14 +349,19 @@ def extract_textures(m):
 
 def cmd_textures(a):
     kind, hdr, m = load(a.file)
-    remap = {}
-    if a.remap:
-        for pair in a.remap.split(","):
-            k, v = pair.split("=")
-            remap[int(k, 0)] = int(v, 0)
+    remap = check_mapping(parse_map(a.remap, "--remap"), "--remap") if a.remap else {}
     tex = extract_textures(m)
     if not tex:
         die("%s carries no embedded texture payload" % a.file)
+    # a remapped id can also collide with one that was left alone, which
+    # check_mapping cannot see; settle every name before writing any file
+    names = {}
+    for t in tex:
+        tid = remap.get(t["texid"], t["texid"])
+        if tid in names:
+            die("0x%04x and 0x%04x would both be written as %04x.png; nothing written"
+                % (names[tid], t["texid"], tid))
+        names[tid] = t["texid"]
     os.makedirs(a.out, exist_ok=True)
     for t in tex:
         tid = remap.get(t["texid"], t["texid"])
@@ -272,12 +370,15 @@ def cmd_textures(a):
         print("  0x%04x -> %s  %dx%d  palette shift %+d%s"
               % (t["texid"], os.path.basename(path), t["width"], t["height"],
                  t["shift"], "" if not t["bad"] else "  WARNING %d odd indices" % t["bad"]))
-    print("pdhead: wrote %d textures to %s" % (len(tex), a.out))
+    print("pdhead: wrote %d textures to %s" % (len(names), a.out))
     return 0
 
 # ── install ──────────────────────────────────────────────────────────
 
 def cmd_install(a):
+    if a.keep_texids and a.base is not None:
+        die("--base and --keep-texids ask for opposite things: one picks new ids, "
+            "the other leaves them alone")
     kind, hdr, m = load(a.file)
     md = modeldef(m)
     old = [t["texid"] for t in texconfigs(m, md["numtex"])]
@@ -292,7 +393,7 @@ def cmd_install(a):
     remap = {}
     if not a.keep_texids:
         base = next_free_texid(a.mod) if a.base is None else int(a.base, 0)
-        remap = {t: base + i for i, t in enumerate(old)}
+        remap = default_remap(old, base)
         m, ntab, ndl = rewrite_texids(m, remap)
         for t in old:
             print("  0x%04x -> 0x%04x" % (t, remap[t]))
@@ -347,6 +448,54 @@ def next_free_texid(moddir, floor=0x0db7):
                     pass
     return hi + 1
 
+def parse_map(text, flag):
+    """`old=new,old=new` in any base python understands."""
+    out = {}
+    for pair in text.split(","):
+        if pair.count("=") != 1:
+            die("%s: %r is not old=new" % (flag, pair))
+        k, v = pair.split("=")
+        try:
+            k, v = int(k.strip(), 0), int(v.strip(), 0)
+        except ValueError:
+            die("%s: %r is not a pair of numbers" % (flag, pair))
+        if k in out and out[k] != v:
+            die("%s: 0x%04x is given two different destinations" % (flag, k))
+        out[k] = v
+    return out
+
+def check_mapping(mapping, source):
+    """Every new id fits the 12 bits a display list carries, and no two old ids
+    land on the same new one.
+
+    The collision half is deliberately stricter than it has to be. Consolidating
+    several textures onto one id is a real thing to want, but done silently here
+    it is indistinguishable from a typo, and the result — a table with two
+    entries naming one texture — renders without complaint. Ask for it as its
+    own edit.
+    """
+    for v in sorted(mapping.values()):
+        if not (0 < v <= 0xfff):
+            die("%s: texture id 0x%x does not fit the 12 bits a display list carries"
+                % (source, v))
+    seen = {}
+    for k in sorted(mapping):
+        v = mapping[k]
+        if v in seen:
+            die("%s: 0x%04x and 0x%04x both map to 0x%04x. Refusing — a merge has "
+                "to be asked for on its own." % (source, seen[v], k, v))
+        seen[v] = k
+    return mapping
+
+def default_remap(old, base):
+    """base, base+1, ... across the texconfig table in table order."""
+    if len(old) != len(set(old)):
+        dup = sorted({t for t in old if old.count(t) > 1})
+        die("the texconfig table names %s more than once, so numbering the entries "
+            "in order would send one old id to two new ones. Pass --map to say what "
+            "you want." % ", ".join("0x%04x" % t for t in dup))
+    return {t: base + i for i, t in enumerate(old)}
+
 def rewrite_texids(m, mapping):
     """Remap texture ids in the texconfig table AND in every display list.
 
@@ -355,39 +504,45 @@ def rewrite_texids(m, mapping):
     12-23 when the subcommand is 1. Changing one and not the other silently
     ships a model whose table and geometry disagree.
     """
-    for v in mapping.values():
-        if not (0 < v <= 0xfff):
-            die("texture id 0x%x does not fit the 12 bits a display list carries" % v)
+    check_mapping(mapping, "remap")
     d = bytearray(m)
     md = modeldef(d)
+
+    # The texconfig's first u32 is a union: an id, or a segment-5 pointer to
+    # texture data held inside this same file. Writing a small integer over a
+    # pointer loses the texture and nothing downstream notices, so this is
+    # checked before any byte is touched — the display-list walk included.
+    ptr = [i for i, t in enumerate(texconfigs(d, md["numtex"])) if t["pointer"]]
+    if ptr:
+        die("texconfig %s hold segment-5 pointers to texture data inside this file "
+            "rather than naming ids — this is a model whose textures travel with it, "
+            "not a mod head. Reindexing would overwrite those pointers. Refusing."
+            % ", ".join("#%d" % i for i in ptr))
+
     tex_off = struct.unpack_from(">I", d, 0x18)[0] & 0xffffff
     ntab = 0
     for i in range(md["numtex"]):
         q = tex_off + i * 12
+        need(d, q, 12, "texconfig %d" % i)
         old = struct.unpack_from(">I", d, q)[0]
         if old in mapping:
             struct.pack_into(">I", d, q, mapping[old]); ntab += 1
     ndl = 0
-    for n in walk(d, md["root"]):
-        if n["type"] != 0x18:
-            continue
+    for n in gdl_nodes(d, md):
+        need(d, n["rodata"], 8, "display-list rodata")
         for base in [x & 0xffffff for x in struct.unpack_from(">II", d, n["rodata"])]:
-            o = base
-            while base and o + 8 <= len(d):
-                cmd = d[o]
-                if cmd == 0xc0:
-                    w0, w1 = struct.unpack_from(">II", d, o)
-                    t0 = w1 & 0xfff
-                    if t0 in mapping:
-                        w1 = (w1 & ~0xfff) | (mapping[t0] & 0xfff); ndl += 1
-                    if (w0 & 0xff) == 1:
-                        t1 = (w1 >> 12) & 0xfff
-                        if t1 in mapping:
-                            w1 = (w1 & ~(0xfff << 12)) | ((mapping[t1] & 0xfff) << 12); ndl += 1
-                    struct.pack_into(">I", d, o + 4, w1)
-                o += 8
-                if cmd == 0xb8:
-                    break
+            for o in scan_gdl(d, base):
+                if d[o] != 0xc0:
+                    continue
+                w0, w1 = struct.unpack_from(">II", d, o)
+                t0 = w1 & 0xfff
+                if t0 in mapping:
+                    w1 = (w1 & ~0xfff) | (mapping[t0] & 0xfff); ndl += 1
+                if (w0 & 0xff) == 1:
+                    t1 = (w1 >> 12) & 0xfff
+                    if t1 in mapping:
+                        w1 = (w1 & ~(0xfff << 12)) | ((mapping[t1] & 0xfff) << 12); ndl += 1
+                struct.pack_into(">I", d, o + 4, w1)
     return bytes(d), ntab, ndl
 
 def cmd_reindex(a):
@@ -395,13 +550,13 @@ def cmd_reindex(a):
     md = modeldef(m)
     old = [t["texid"] for t in texconfigs(m, md["numtex"])]
     if a.map:
-        mapping = {}
-        for pair in a.map.split(","):
-            k, v = pair.split("=")
-            mapping[int(k, 0)] = int(v, 0)
+        if a.base is not None:
+            die("--map and --base ask for opposite things: one gives the mapping, "
+                "the other asks for one to be made up")
+        mapping = check_mapping(parse_map(a.map, "--map"), "--map")
     else:
         base = next_free_texid(a.mods) if a.base is None else int(a.base, 0)
-        mapping = {t: base + i for i, t in enumerate(old)}
+        mapping = default_remap(old, base)
     new, ntab, ndl = rewrite_texids(m, mapping)
     M.write_out(a.out, M.rarezip(new))
     for t in old:
@@ -420,7 +575,8 @@ def cmd_info(a):
     print("  skel %d  nummatrices %d  numparts %d  scale %.4f  rwdatalen %d  texconfigs %d"
           % (md["skel"], md["nummatrices"], md["numparts"], md["scale"],
              md["rwdatalen"], md["numtex"]))
-    for i, t in enumerate(texconfigs(m, md["numtex"])):
+    tcs = texconfigs(m, md["numtex"])
+    for i, t in enumerate(tcs):
         ref = ("ptr %08x" % t["texid"]) if t["pointer"] else ("id  0x%04x" % t["texid"])
         print("    tex %-2d %s  %dx%d  level %d  format %d  depth %d"
               % (i, ref, t["width"], t["height"], t["level"], t["format"], t["depth"]))
@@ -431,8 +587,18 @@ def cmd_info(a):
     if d:
         print("  dl  %d vertices  %d colours  mcount %d" % (d["numvertices"], d["numcolours"], d["mcount"]))
     print("  tree:")
-    for n in walk(m, md["root"]):
+    nodes = walk(m, md["root"])
+    for n in nodes:
         print("    " + "  " * n["depth"] + "%s(0x%02x) @%04x" % (n["name"], n["type"], n["off"]))
+    odd = sorted({n["type"] for n in nodes if n["type"] in DL_ELSEWHERE})
+    if odd:
+        print("  note: holds %s, which keeps its display list somewhere this tool "
+              "does not read; reindex and textures will refuse this model"
+              % ", ".join("%s(0x%02x)" % (DL_ELSEWHERE[t], t) for t in odd))
+    if any(t["pointer"] for t in tcs):
+        print("  note: texconfigs point at texture data inside this file instead of "
+              "naming ids; reindex will refuse this model, and textures will skip "
+              "those entries")
     if hdr:
         nz = [(i, hdr[i]) for i in range(len(hdr)) if hdr[i]]
         print("  prefix: %d bytes, %d non-zero: %s" % (len(hdr), len(nz),
@@ -449,13 +615,31 @@ def cmd_untemplate(a):
     return 0
 
 def cmd_build(a):
+    # head_texturePresets.txt: one "HEXID some name.bmp" per line. The editor
+    # writes XXXX for a slot that was never assigned a texture, and a mesh that
+    # uses that slot cannot be built — say so instead of raising.
     presets = {}
-    for line in open(a.textures):
-        if line.strip():
-            tid, name = line.split(None, 1)
+    for ln, line in enumerate(open(a.textures), 1):
+        if not line.strip():
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            die("%s line %d: expected `HEXID name`, got %r"
+                % (a.textures, ln, line.strip()))
+        tid, name = parts
+        try:
             presets[name.strip().rsplit(".", 1)[0]] = int(tid, 16)
+        except ValueError:
+            die("%s line %d: %r is not a hex texture id%s"
+                % (a.textures, ln, tid,
+                   " — the editor writes XXXX for a slot it never filled in, so "
+                   "that texture has to be given an id by hand" if set(tid.upper()) == {"X"} else ""))
 
     pos, tris, uv, uvi, mat, mat_png = fbxlib.read_mesh(a.mesh)
+    missing = sorted({p for p in mat_png if p.rsplit(".", 1)[0] not in presets})
+    if missing:
+        die("the mesh uses %s, which %s does not give an id for"
+            % (", ".join(missing), a.textures))
     matmap = [presets[p.rsplit(".", 1)[0]] for p in mat_png]
     texsize = {t: (a.texwidth, a.texheight) for t in presets.values()}
 
@@ -468,8 +652,11 @@ def cmd_build(a):
                  " ".join("%.0f" % v for v in box), scale,
                  "with toggle" if toggle else "no toggle"))
 
-    raw, info = M.build(pos, tris, uv, uvi, mat, matmap, texsize, box, scale,
-                        with_toggle=toggle)
+    try:
+        raw, info = M.build(pos, tris, uv, uvi, mat, matmap, texsize, box, scale,
+                            with_toggle=toggle)
+    except ValueError as e:
+        die(str(e))
     M.write_out(a.out, M.rarezip(raw))
     print("pdhead: wrote %s — %d vertices, %d bytes raw, %d compressed, texids %s"
           % (a.out, info["numvertices"], len(raw), os.path.getsize(a.out),

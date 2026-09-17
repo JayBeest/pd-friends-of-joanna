@@ -53,9 +53,15 @@ char g_DefaultReality[64] = "";
 
 s32 g_FileAutoSelect = -1;
 
-// Game.LuaAi. Kept apart from g_LuaAiEnabled, which --lua-ai sets for one run
-// and a Lua error clears; neither should be written back to pd.ini.
-static s32 g_LuaAiConfig = 0;
+// Game.LuaAiMode: 0 = off, 1 = on, 2 = auto, on exactly when a Lua script
+// is detected. Not Game.LuaAi: builds that had that key wrote LuaAi=0 as
+// their default, which would now read as forced off. Kept apart from
+// g_LuaAiEnabled, which --lua-ai / --no-lua-ai force for one run and which
+// must not be written back to pd.ini.
+#define LUA_AI_CONFIG_OFF  0
+#define LUA_AI_CONFIG_ON   1
+#define LUA_AI_CONFIG_AUTO 2
+static s32 g_LuaAiConfig = LUA_AI_CONFIG_AUTO;
 
 bool g_DebugEndscreen = false;
 bool g_DebugMenu = false;
@@ -193,9 +199,34 @@ int main(int argc, const char **argv)
 	// stage loads, and the headless runs that want this cannot press one at all.
 	g_ModSpectateStart = sysArgCheck("--spectate");
 
-	g_LuaAiEnabled = (g_LuaAiConfig || sysArgCheck("--lua-ai")) ? 1 : 0;
-	if (g_LuaAiEnabled) {
-		sysLogPrintf(LOG_NOTE, "lua ai enabled");
+	// The Lua AI path is on when there is a script for it and off otherwise,
+	// unless forced. The command line beats pd.ini, and --no-lua-ai beats
+	// --lua-ai. Decided once here; plan item 0.3 re-decides when the set of
+	// loaded mods changes.
+	{
+		const char *why;
+
+		if (sysArgCheck("--no-lua-ai")) {
+			g_LuaAiEnabled = 0;
+			why = "lua ai forced off: --no-lua-ai";
+		} else if (sysArgCheck("--lua-ai")) {
+			g_LuaAiEnabled = 1;
+			why = "lua ai forced on: --lua-ai";
+		} else if (g_LuaAiConfig == LUA_AI_CONFIG_OFF) {
+			g_LuaAiEnabled = 0;
+			why = "lua ai forced off: Game.LuaAiMode=0";
+		} else if (g_LuaAiConfig == LUA_AI_CONFIG_ON) {
+			g_LuaAiEnabled = 1;
+			why = "lua ai forced on: Game.LuaAiMode=1";
+		} else if (luaaiScriptDetected()) {
+			g_LuaAiEnabled = 1;
+			why = "lua ai on: script detected";
+		} else {
+			g_LuaAiEnabled = 0;
+			why = "lua ai off: no script";
+		}
+
+		sysLogPrintf(LOG_NOTE, "%s", why);
 	}
 
 	g_StageNum = sysArgGetInt("--boot-stage", STAGE_TITLE);
@@ -240,7 +271,7 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Game.DisableMpDeathMusic", &g_MusicDisableMpDeath, 0, 1);
 	configRegisterInt("Game.MeleeCombos", &g_MeleeCombosEnabled, 0, 1);
 	configRegisterFloat("Game.SpectatorSpeed", &g_ModSpectateSpeed, 1.f, 200.f);
-	configRegisterInt("Game.LuaAi", &g_LuaAiConfig, 0, 1);
+	configRegisterInt("Game.LuaAiMode", &g_LuaAiConfig, LUA_AI_CONFIG_OFF, LUA_AI_CONFIG_AUTO);
 
 	// The audio pool sizes Rare picked for a 1999 cartridge. Every default is 0
 	// or the original number, so leaving these alone changes nothing. They are

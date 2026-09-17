@@ -922,7 +922,8 @@ static s32 s_LuaSteps = 0;
 void chraiExecute(void *entity, s32 proptype)
 {
 #ifndef PLATFORM_N64
-	// g_LuaAiEnabled is off unless Game.LuaAi or --lua-ai turns it on (see
+	// g_LuaAiEnabled is set once at startup: on when a Lua script is
+	// present, unless Game.LuaAiMode or --lua-ai / --no-lua-ai force it (see
 	// port/src/main.c). With it off this is exactly chraiExecuteBytecode.
 	if (g_LuaAiEnabled) {
 		s_LuaSteps = 0;
@@ -991,30 +992,58 @@ u32 chraiGetAilistLength(u8* list)
 
 // ---------------------------------------------------------------------------
 // The Lua bridge: read-only accessors over the ailist interpreter's state,
-// plus one synthetic-command entry point. Ported from pd-kai's chrai.c
-// (DabDavis's tree is not involved here). KAI phase 0 intake, second slice.
+// plus one synthetic-command entry point. Ported from Kai's chrai.c.
+// KAI phase 0 intake, second slice.
 //
 // `luaai.c` is the only caller, and only while g_LuaAiEnabled is set:
 // chraiExecute hands the entity to luaaiExecute, which drives the list
 // one command at a time through chraiLuaStep.
 // ---------------------------------------------------------------------------
 
+// Per-list length cache. Transpiler-emitted ctx:exec offsets are always in
+// range, but a hand-written Lua override can pass an arbitrary integer; if we
+// indexed ailist[off] with it we'd read the opcode (and the handler's
+// operands) out of bounds. The length is computed once per list (the pointer
+// is constant for the duration of a list's dispatch) so the hot path stays
+// O(1). (Kai's netplay code review, CR-8.)
+static u8 *s_LuaLenList = NULL;
+static u32 s_LuaListLen = 0;
+#ifndef PLATFORM_N64
+// Setup lists are reloaded at stage load and a new list can land at an old
+// list's address. luaaiReset, called from the stage load, drops the cache;
+// keying it on the stage too is a backstop. A stale short length would make
+// every step report out of range.
+static s32 s_LuaLenStage = -1;
+#endif
+
+void chraiLuaInvalidateListLength(void)
+{
+	s_LuaLenList = NULL;
+	s_LuaListLen = 0;
+#ifndef PLATFORM_N64
+	s_LuaLenStage = -1;
+#endif
+}
+
+// Length of g_Vars.ailist, 0 for none.
+static u32 chraiLuaListLength(void)
+{
+#ifndef PLATFORM_N64
+	if (g_Vars.ailist != s_LuaLenList || g_Vars.stagenum != s_LuaLenStage) {
+		s_LuaLenStage = g_Vars.stagenum;
+#else
+	if (g_Vars.ailist != s_LuaLenList) {
+#endif
+		s_LuaLenList = g_Vars.ailist;
+		s_LuaListLen = chraiGetAilistLength(g_Vars.ailist);
+	}
+
+	return s_LuaListLen;
+}
+
 s32 chraiLuaStep(u32 off)
 {
-	// Per-list length cache. Transpiler-emitted ctx:exec offsets are always in
-	// range, but a hand-written Lua override can pass an arbitrary integer; if we
-	// indexed ailist[off] with it we'd read the opcode (and the handler's
-	// operands) out of bounds. The length is computed once per list (the pointer
-	// is constant for the duration of a list's dispatch) so the hot path stays
-	// O(1). See docs/netplay-code-review-2026.md (CR-8).
-	static u8 *s_lenlist = NULL;
-	static u32 s_listlen = 0;
-#ifndef PLATFORM_N64
-	// Setup lists are reloaded at stage load and a new list can land at an
-	// old list's address, so the cache is keyed on the stage too. A stale
-	// short length would make every step below report out of range.
-	static s32 s_lenstage = -1;
-#endif
+	u32 listlen;
 	u8 *cmd;
 	s32 type;
 
@@ -1038,19 +1067,13 @@ s32 chraiLuaStep(u32 off)
 
 		return 1;
 	}
-
-	if (g_Vars.ailist != s_lenlist || g_Vars.stagenum != s_lenstage) {
-		s_lenstage = g_Vars.stagenum;
-#else
-	if (g_Vars.ailist != s_lenlist) {
 #endif
-		s_lenlist = g_Vars.ailist;
-		s_listlen = chraiGetAilistLength(g_Vars.ailist);
-	}
+
+	listlen = chraiLuaListLength();
+
 	// Two opcode bytes must fit. Written so it cannot wrap: off + 1 overflows
 	// for off = 0xffffffff and would pass.
-	if (!g_Vars.ailist || off >= s_listlen || s_listlen - off < 2) {
-
+	if (!g_Vars.ailist || off >= listlen || listlen - off < 2) {
 #ifndef PLATFORM_N64
 		// Out of range. Only a hand-written override can pass such an
 		// offset. A 0 here would tell the chunk to continue from an
@@ -1084,6 +1107,17 @@ s32 chraiLuaStep(u32 off)
 	g_Vars.aioffset += chraiGetCommandLength(g_Vars.ailist, g_Vars.aioffset);
 	return 0;
 #endif
+}
+
+s32 chraiLuaGetOpcode(u32 off)
+{
+	u32 listlen = chraiLuaListLength();
+
+	if (!g_Vars.ailist || off >= listlen || listlen - off < 2) {
+		return -1;
+	}
+
+	return (g_Vars.ailist[off] << 8) + g_Vars.ailist[off + 1];
 }
 
 u32 chraiLuaGetOffset(void)
@@ -1245,6 +1279,62 @@ s32 chraiLuaGetPlayerCount(void)
 	return (s32)PLAYERCOUNT();
 }
 
+#ifndef PLATFORM_N64
+// The list position the current entity resumes from next frame. aiYield
+// writes it; the entity types disagree on the offset's width.
+struct chrailuasaved {
+	u8 *ailist;
+	u32 aioffset;
+};
+
+static void chraiLuaGetSaved(struct chrailuasaved *out)
+{
+	out->ailist = NULL;
+	out->aioffset = 0;
+
+	if (g_Vars.chrdata) {
+		out->ailist = g_Vars.chrdata->ailist;
+		out->aioffset = g_Vars.chrdata->aioffset;
+	} else if (g_Vars.truck) {
+		out->ailist = g_Vars.truck->ailist;
+		out->aioffset = g_Vars.truck->aioffset;
+	} else if (g_Vars.heli) {
+		out->ailist = g_Vars.heli->ailist;
+		out->aioffset = g_Vars.heli->aioffset;
+	} else if (g_Vars.hovercar) {
+		out->ailist = g_Vars.hovercar->ailist;
+		out->aioffset = g_Vars.hovercar->aioffset;
+	}
+}
+
+static void chraiLuaSetSaved(const struct chrailuasaved *in)
+{
+	if (g_Vars.chrdata) {
+		g_Vars.chrdata->ailist = in->ailist;
+		g_Vars.chrdata->aioffset = in->aioffset;
+	} else if (g_Vars.truck) {
+		g_Vars.truck->ailist = in->ailist;
+		g_Vars.truck->aioffset = in->aioffset;
+	} else if (g_Vars.heli) {
+		g_Vars.heli->ailist = in->ailist;
+		g_Vars.heli->aioffset = in->aioffset;
+	} else if (g_Vars.hovercar) {
+		g_Vars.hovercar->ailist = in->ailist;
+		g_Vars.hovercar->aioffset = in->aioffset;
+	}
+}
+
+static bool chraiLuaInBuf(const u8 *p, const u8 *buf, u32 len)
+{
+	return (uintptr_t)p >= (uintptr_t)buf && (uintptr_t)p < (uintptr_t)buf + len;
+}
+#endif
+
+// Run one command built from Lua values. Returns the handler's break flag.
+// On return g_Vars.ailist is either the list the script was running, with its
+// offset untouched, or the list the handler switched to (possibly NULL), with
+// the offset the handler set. The caller tells the two apart by comparing
+// g_Vars.ailist, as it does for chraiLuaStep.
 s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 {
 	// Zero-initialised so a handler that reads more operand bytes than the Lua
@@ -1255,6 +1345,10 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 	s32 type = (s32)(opcode & 0xffff);
 	s32 ret = 0;
 	u32 i;
+#ifndef PLATFORM_N64
+	struct chrailuasaved saved;
+	struct chrailuasaved now;
+#endif
 
 	if (n > 60) {
 		n = 60;
@@ -1293,9 +1387,34 @@ s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	chraiLuaGetSaved(&saved);
+#endif
+
 	if (type >= 0 && type < ARRAYCOUNT(g_CommandPointers)) {
 		ret = g_CommandPointers[type]() ? 1 : 0;
 	}
+
+#ifndef PLATFORM_N64
+	// A handler that saves the resume position (aiYield) has just saved buf,
+	// which is gone once this returns, and the entity would run stack garbage
+	// next frame. A synthetic command is not a place in the entity's list, so
+	// put back what was saved before. Checked for every opcode rather than by
+	// a list of saving verbs, which mod verbs would outgrow.
+	chraiLuaGetSaved(&now);
+
+	if (chraiLuaInBuf(now.ailist, buf, sizeof(buf))) {
+		chraiLuaSetSaved(&saved);
+	}
+
+	// A handler that switched lists (set_ailist on self, return) left a real
+	// list, or NULL, in g_Vars. Keep it: that is what the same command does
+	// through chraiLuaStep, and ctx:run then reports 2 like ctx:exec. Only a
+	// g_Vars.ailist still inside buf is the script's own list to restore.
+	if (!chraiLuaInBuf(g_Vars.ailist, buf, sizeof(buf))) {
+		return ret;
+	}
+#endif
 
 	g_Vars.ailist = savelist;
 	g_Vars.aioffset = saveoff;

@@ -20,8 +20,16 @@
  * chunk for a given list.
  */
 
-/* Non-zero when action blocks should be executed via Lua. Defaults to 0. */
+/* Non-zero when action blocks should be executed via Lua. port/src/main.c
+ * sets it at startup: on when luaaiScriptDetected(), unless forced. */
 extern s32 g_LuaAiEnabled;
+
+/**
+ * Non-zero when a Lua script for the AI layer is present: today
+ * scripts/init.lua, relative to the working directory. Startup turns the
+ * layer on from this unless pd.ini or the command line forces it.
+ */
+s32 luaaiScriptDetected(void);
 
 /**
  * Execute the current action block for the given entity via the Lua layer.
@@ -30,9 +38,11 @@ extern s32 g_LuaAiEnabled;
 void luaaiExecute(void *entity, s32 proptype);
 
 /**
- * Reset all cached Lua state. Should be called when a new stage is loaded so
- * that transpiled chunks and registered overrides from the previous stage do
- * not leak into the next one.
+ * Reset all cached Lua state. Called from lvReset before the stage's setup
+ * files are loaded, restarts of the same stage included, so that transpiled
+ * chunks, overrides and quarantine entries keyed on list pointers from the
+ * previous load do not leak into the next one. luaaiExecute also resets when
+ * it sees the stage number change, as a backstop.
  */
 void luaaiReset(void);
 
@@ -84,6 +94,15 @@ void chraiRunLoop(void);
  */
 s32 chraiLuaStep(u32 off);
 
+/**
+ * Forget chraiLuaStep's cached list length. luaaiReset calls it, because a
+ * reloaded list can land at an old list's address.
+ */
+void chraiLuaInvalidateListLength(void);
+
+/** Opcode at off in the current list, or -1 if off is not inside it. */
+s32 chraiLuaGetOpcode(u32 off);
+
 /** Current program counter (g_Vars.aioffset). */
 u32 chraiLuaGetOffset(void);
 
@@ -109,6 +128,11 @@ s32 chraiLuaOverridesAllowed(void);
  * handler. Intended for hand-written Lua scripts that want to invoke engine
  * commands directly. Returns the handler's break flag (0/1). Note: control
  * flow commands (labels, gotos) are not meaningful in synthetic mode.
+ *
+ * A resume position the handler saves into the entity (yield) is undone, since
+ * it would point at the temporary command buffer. A list switch the handler
+ * makes (set_ailist on self, return) is kept, with its offset, and shows as a
+ * change of g_Vars.ailist.
  */
 s32 chraiLuaRunSynthetic(u32 opcode, const u8 *operands, u32 n);
 

@@ -38,6 +38,10 @@ s32 chraiSetModCommandLength(s32 op, u32 len);
 // Forget every mod-local length, before loading the next mod's declarations.
 void chraiClearModLocalCommandLengths(void);
 
+// Forget which unknown opcodes have been logged, so the next stage reports
+// its own. Called at stage load.
+void chraiResetModCommandLengthWarnings(void);
+
 // Length of an opcode beyond g_CommandLengths. An opcode with no registered
 // length keeps the old behaviour, length 1, and is logged once.
 u32 chraiGetModCommandLength(s32 op);

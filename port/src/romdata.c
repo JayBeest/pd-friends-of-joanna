@@ -4,6 +4,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <dirent.h> // model-swap overlay ROM folder scan
+#include <sys/stat.h>
 #include <PR/ultratypes.h>
 #include "gbiex.h"
 #include "lib/rzip.h"
@@ -1685,6 +1686,61 @@ static u8 *romdataModelRomRedirect(s32 rawFileNum, const char *name, u32 *outSiz
 	return NULL;
 }
 
+// Largest overlay ROM a script may load: a 512 Mbit cartridge.
+#define ROMDATA_MODELROM_MAXSIZE (64 * 1024 * 1024)
+
+// pd.load_model_rom takes its path from a script, so it only reaches the
+// game's own folders: a relative path, or one starting with `$B/`, `$S/` or
+// `$M/`. No absolute paths, no other `$` prefixes, no `.` or `..` components,
+// no backslashes or colons.
+static s32 romdataModelRomPathIsSafe(const char *path)
+{
+	const char *p = path;
+
+	if (strlen(path) >= FS_MAXPATH - 2 || fsPathIsAbsolute(path)) {
+		return 0;
+	}
+
+	if (strchr(path, '\\') || strchr(path, ':')) {
+		return 0;
+	}
+
+	if (path[0] == '$') {
+		if ((path[1] != 'B' && path[1] != 'S' && path[1] != 'M') || path[2] != '/') {
+			return 0;
+		}
+		p = path + 3;
+	}
+
+	while (*p) {
+		const char *slash = strchr(p, '/');
+		size_t n = slash ? (size_t)(slash - p) : strlen(p);
+
+		if (n == 0 || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.')) {
+			return 0;
+		}
+
+		p += n;
+
+		if (*p == '/') {
+			p++;
+		}
+	}
+
+	return 1;
+}
+
+// A file the overlay loader may read whole: a regular file, ROM-sized, and no
+// bigger than a cart. `path` is already resolved (no `$` prefix).
+static s32 romdataModelRomSizeOk(const char *path)
+{
+	struct stat st;
+
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode)
+		&& (long long)st.st_size >= (long long)ROMDATA_ROM_SIZE
+		&& (long long)st.st_size <= (long long)ROMDATA_MODELROM_MAXSIZE;
+}
+
 // Load a model-swap overlay ROM at runtime. `path` may be a ROM FILE or a
 // DIRECTORY (scanned for the first ROM-sized file, so a script can point at a
 // folder and the user drops any-named z64 in it). A bare relative path is
@@ -1701,15 +1757,23 @@ s32 romdataLoadModelRom(const char *path)
 	if (!path || !path[0]) {
 		return 0;
 	}
+	if (!romdataModelRomPathIsSafe(path)) {
+		sysLogPrintf(LOG_WARNING, "romdataLoadModelRom: refusing path %s", path);
+		return 0;
+	}
 
 	const char *base = path;
 	char anchored[FS_MAXPATH + 1];
-	if (!fsPathIsAbsolute(path) && path[0] != '.' && path[0] != '$') {
+	if (path[0] == '$') {
+		// opendir and stat don't know fs.c's prefixes
+		snprintf(anchored, sizeof(anchored), "%s", fsFullPath(path));
+		base = anchored;
+	} else if (!fsPathIsAbsolute(path) && path[0] != '.') {
 		snprintf(anchored, sizeof(anchored), "./%s", path);
 		base = anchored;
 	}
 
-	if (fsFileSize(base) >= (s32)ROMDATA_ROM_SIZE) {
+	if (romdataModelRomSizeOk(base)) {
 		snprintf(filepath, sizeof(filepath), "%s", base);
 	} else {
 		DIR *dr = opendir(base);
@@ -1726,7 +1790,7 @@ s32 romdataLoadModelRom(const char *path)
 				continue;
 			}
 			snprintf(cand, sizeof(cand), "%s/%s", base, de->d_name);
-			if (fsFileSize(cand) >= (s32)ROMDATA_ROM_SIZE) {
+			if (romdataModelRomSizeOk(cand)) {
 				snprintf(filepath, sizeof(filepath), "%s", cand);
 				break;
 			}

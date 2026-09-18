@@ -1,0 +1,186 @@
+#ifndef GFX_RETRO_COMMON_H
+#define GFX_RETRO_COMMON_H
+
+/**
+ * Chaos retro/post filter — the fragment BODY shared by both backends
+ * (Perfect Dark Kai fork, be46717: docs/PORT_CHAOS.md). Declaration-free GLSL: each backend prepends its own
+ * prelude declaring vUV / oCol / uColor and the uniforms below (loose
+ * uniforms on GL 130+, one std140 UBO on SDL_GPU 450 — member names must
+ * match exactly):
+ *
+ *   vec2  uGrid    pixelation grid (e.g. 160x120); x <= 0 = no snap
+ *   float uLevels  greyscale level count for uMode 1
+ *   int   uMode    0 keep colours, 1 grey-N, 2 RGB332, 3 invert,
+ *                  4 Game Boy DMG greens, 5 thermal palette,
+ *                  6 Virtual Boy reds (4 shades, black -> bright red),
+ *                  7 hue rotate (animated by uTime — the whole frame's hue
+ *                  cycles continuously, luminance preserved: "Rainbow World")
+ *                  8 hue field (like 7, but the rotation RATE + DIRECTION vary
+ *                  as a smooth screen-space field — regions cycle at different
+ *                  speeds and some run backwards: "Prismatic")
+ *   int   uFx      bitmask: 1 scanlines, 2 RGB aperture grille, 4 CRT
+ *                  curvature, 8 vignette, 16 VHS, 32 underwater wobble,
+ *                  64 rotate 180 (Chaos "Australia mode" — flips the whole
+ *                  finished frame incl. HUD, so UI rotates with the world),
+ *                  128/256/512 drunk ghosts (Chaos "One too many"): blend a
+ *                  rotated ghost of the frame over the normal one — 128 = 180,
+ *                  256 = 90, 512 = 270; whichever are set are averaged then
+ *                  mixed in at 0.6. 90/270 rotate in raw UV (aspect-stretched,
+ *                  which suits a drunk ghost) and stay in [0,1]. NOTE: 90 and
+ *                  270 are NOT orientation-symmetric (GL bottom-up vs SDL_GPU
+ *                  top-down swaps them), but "One too many" sets BOTH, and the
+ *                  set {90,270} is symmetric, so the result matches on both.
+ *                  1024 = side-by-side eyes (Chaos "Virtual Boy"): the frame
+ *                  is duplicated into two half-width panels at the ORIGINAL
+ *                  aspect ratio — each eye is the whole scene uniformly
+ *                  scaled to 50%, letterboxed with black above and below
+ *                  (image occupies the middle half of the screen height).
+ *                  2048 = black the LEFT half of the screen top-to-bottom,
+ *                  4096 = black the RIGHT half (Chaos "Pirate" eyepatch). Both
+ *                  key on the RAW screen UV (vUV.x) before any warp so the
+ *                  masked half is fixed in screen space, and — a post-process
+ *                  over the finished frame — cover the HUD too. x is unaffected
+ *                  by the GL/SDL_GPU y-flip, so left is left in both backends.
+ *                  8192 = mirror the LEFT half onto the right (Chaos "PERREP
+ *                  DAAD"), 16384 = mirror the RIGHT half onto the left
+ *                  ("FECTTCEF RKKR"): the finished frame (HUD included) is
+ *                  reflected about the vertical centre line, kaleidoscope
+ *                  style. Keys on the raw screen UV like the pirate bits, so
+ *                  the seam is fixed in screen space and left is left in both
+ *                  backends. Both set = the halves swap (each side mirrors
+ *                  back past the axis) — the Lua helper only ever sets one.
+ *   float uWarp    fisheye lens strength (0 = off; CRT adds its own +0.12)
+ *   float uAspect  framebuffer w/h (for circular radial warp)
+ *   float uTime    seconds, for the animated effects (VHS jitter, wobble)
+ *
+ * Order: lens warp -> wobble -> VHS line jitter -> out-of-bounds black ->
+ * pixel snap -> sample (VHS adds chroma shift + noise) -> colour mode ->
+ * scanlines / grille / vignette. Raster-space looks (scanlines, vignette)
+ * use the pre-snap uv so they curve with the tube and stay per-line under
+ * pixelation. Everything is orientation-symmetric, so GL's bottom-up and
+ * SDL_GPU's top-down storage need no special-casing.
+ */
+#define RETRO_GLSL_BODY \
+    "void main() {\n" \
+    "    vec2 uv = vUV;\n" \
+    "    if ((uFx & 2048) != 0 && vUV.x < 0.5) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }\n" \
+    "    if ((uFx & 4096) != 0 && vUV.x >= 0.5) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }\n" \
+    "    if ((uFx & 32768) != 0 && vUV.x >= 0.2875 && vUV.x < 0.7125) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }\n" \
+    "    if ((uFx & 65536) != 0 && (vUV.x < 0.2875 || vUV.x >= 0.7125)) { oCol = vec4(0.0, 0.0, 0.0, 1.0); return; }\n" \
+    "    if ((uFx & 8192) != 0 && uv.x > 0.5) { uv.x = 1.0 - uv.x; }\n" \
+    "    if ((uFx & 16384) != 0 && uv.x < 0.5) { uv.x = 1.0 - uv.x; }\n" \
+    "    if ((uFx & 64) != 0) { uv = vec2(1.0) - uv; }\n" \
+    "    if ((uFx & 1024) != 0) {\n" \
+    "        if (uv.y < 0.25 || uv.y > 0.75) {\n" \
+    "            oCol = vec4(0.0, 0.0, 0.0, 1.0);\n" \
+    "            return;\n" \
+    "        }\n" \
+    "        uv = vec2(fract(uv.x * 2.0), (uv.y - 0.25) * 2.0);\n" \
+    "    }\n" \
+    "    float k = uWarp + (((uFx & 4) != 0) ? 0.12 : 0.0);\n" \
+    "    if (k != 0.0) {\n" \
+    "        vec2 d = uv - 0.5;\n" \
+    "        d.x *= uAspect;\n" \
+    "        float rmax2 = 0.25 * (uAspect * uAspect + 1.0);\n" \
+    "        float f = (1.0 + k * dot(d, d)) / (1.0 + k * rmax2);\n" \
+    "        d *= f;\n" \
+    "        d.x /= uAspect;\n" \
+    "        uv = d + 0.5;\n" \
+    "    }\n" \
+    "    if ((uFx & 32) != 0) {\n" \
+    "        uv.x += sin(uv.y * 24.0 + uTime * 2.3) * 0.006;\n" \
+    "        uv.y += cos(uv.x * 21.0 + uTime * 1.7) * 0.006;\n" \
+    "    }\n" \
+    "    vec2 suv = uv;\n" \
+    "    if ((uFx & 16) != 0) {\n" \
+    "        float ln = floor(suv.y * 240.0);\n" \
+    "        float h = fract(sin(ln * 12.9898 + floor(uTime * 30.0) * 78.233) * 43758.5453);\n" \
+    "        float jitter = (h - 0.5) * 0.003;\n" \
+    "        if (fract(suv.y * 0.7 + uTime * 0.11) > 0.965) {\n" \
+    "            jitter += (h - 0.5) * 0.06;\n" \
+    "        }\n" \
+    "        uv.x += jitter;\n" \
+    "    }\n" \
+    "    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {\n" \
+    "        oCol = vec4(0.0, 0.0, 0.0, 1.0);\n" \
+    "        return;\n" \
+    "    }\n" \
+    "    if (uGrid.x > 0.5) {\n" \
+    "        uv = (floor(uv * uGrid) + 0.5) / uGrid;\n" \
+    "    }\n" \
+    "    vec3 c;\n" \
+    "    if ((uFx & 16) != 0) {\n" \
+    "        c.r = texture(uColor, vec2(min(uv.x + 0.0022, 1.0), uv.y)).r;\n" \
+    "        c.g = texture(uColor, uv).g;\n" \
+    "        c.b = texture(uColor, vec2(max(uv.x - 0.0022, 0.0), uv.y)).b;\n" \
+    "        float n = fract(sin(dot(suv * 917.0, vec2(12.9898, 78.233)) + uTime * 61.0) * 43758.5453);\n" \
+    "        c += vec3((n - 0.5) * 0.07);\n" \
+    "    } else {\n" \
+    "        c = texture(uColor, uv).rgb;\n" \
+    "    }\n" \
+    "    vec3 g = vec3(0.0);\n" \
+    "    float gw = 0.0;\n" \
+    "    if ((uFx & 128) != 0) { g += texture(uColor, vec2(1.0) - uv).rgb; gw += 1.0; }\n" \
+    "    if ((uFx & 256) != 0) { g += texture(uColor, vec2(uv.y, 1.0 - uv.x)).rgb; gw += 1.0; }\n" \
+    "    if ((uFx & 512) != 0) { g += texture(uColor, vec2(1.0 - uv.y, uv.x)).rgb; gw += 1.0; }\n" \
+    "    if (gw > 0.0) { c = mix(c, g / gw, 0.6); }\n" \
+    "    if (uMode == 1) {\n" \
+    "        float l = dot(c, vec3(0.299, 0.587, 0.114));\n" \
+    "        l = floor(min(l, 0.9999) * uLevels) / (uLevels - 1.0);\n" \
+    "        c = vec3(l);\n" \
+    "    } else if (uMode == 2) {\n" \
+    "        vec3 q = vec3(8.0, 8.0, 4.0);\n" \
+    "        c = floor(min(c, vec3(0.9999)) * q) / (q - vec3(1.0));\n" \
+    "    } else if (uMode == 3) {\n" \
+    "        c = vec3(1.0) - c;\n" \
+    "    } else if (uMode == 4) {\n" \
+    "        float l = dot(c, vec3(0.299, 0.587, 0.114));\n" \
+    "        float q4 = floor(min(l, 0.9999) * 4.0);\n" \
+    "        c = q4 < 1.0 ? vec3(0.06, 0.22, 0.06)\n" \
+    "          : (q4 < 2.0 ? vec3(0.19, 0.38, 0.19)\n" \
+    "          : (q4 < 3.0 ? vec3(0.55, 0.67, 0.06) : vec3(0.61, 0.74, 0.06)));\n" \
+    "    } else if (uMode == 6) {\n" \
+    "        float l = dot(c, vec3(0.299, 0.587, 0.114));\n" \
+    "        float q4 = floor(min(l, 0.9999) * 4.0);\n" \
+    "        c = q4 < 1.0 ? vec3(0.0, 0.0, 0.0)\n" \
+    "          : (q4 < 2.0 ? vec3(0.35, 0.0, 0.0)\n" \
+    "          : (q4 < 3.0 ? vec3(0.72, 0.0, 0.0) : vec3(1.0, 0.06, 0.06)));\n" \
+    "    } else if (uMode == 7) {\n" \
+    "        float a = uTime * 1.7;\n" \
+    "        vec3 kk = vec3(0.5773502692);\n" \
+    "        float ca = cos(a);\n" \
+    "        c = c * ca + cross(kk, c) * sin(a) + kk * dot(kk, c) * (1.0 - ca);\n" \
+    "        c = clamp(c, 0.0, 1.0);\n" \
+    "    } else if (uMode == 8) {\n" \
+    "        vec2 pp = gl_FragCoord.xy * 0.008;\n" \
+    "        float f = sin(pp.x) + sin(pp.y * 1.3 + 1.7) + sin((pp.x + pp.y) * 0.6 + 0.5);\n" \
+    "        float a = uTime * (0.9 * f);\n" \
+    "        vec3 kk = vec3(0.5773502692);\n" \
+    "        float ca = cos(a);\n" \
+    "        c = c * ca + cross(kk, c) * sin(a) + kk * dot(kk, c) * (1.0 - ca);\n" \
+    "        c = clamp(c, 0.0, 1.0);\n" \
+    "    } else if (uMode == 5) {\n" \
+    "        float l = dot(c, vec3(0.299, 0.587, 0.114));\n" \
+    "        if (l < 0.25) c = mix(vec3(0.0, 0.0, 0.25), vec3(0.3, 0.0, 0.65), l * 4.0);\n" \
+    "        else if (l < 0.5) c = mix(vec3(0.3, 0.0, 0.65), vec3(0.9, 0.25, 0.0), (l - 0.25) * 4.0);\n" \
+    "        else if (l < 0.75) c = mix(vec3(0.9, 0.25, 0.0), vec3(1.0, 0.85, 0.0), (l - 0.5) * 4.0);\n" \
+    "        else c = mix(vec3(1.0, 0.85, 0.0), vec3(1.0, 1.0, 1.0), (l - 0.75) * 4.0);\n" \
+    "    }\n" \
+    "    if ((uFx & 1) != 0) {\n" \
+    "        float lines = uGrid.y > 0.5 ? uGrid.y : 480.0;\n" \
+    "        c *= 0.78 + 0.22 * cos(suv.y * lines * 6.2831853);\n" \
+    "    }\n" \
+    "    if ((uFx & 2) != 0) {\n" \
+    "        float px = mod(gl_FragCoord.x, 3.0);\n" \
+    "        vec3 m = px < 1.0 ? vec3(1.0, 0.62, 0.62)\n" \
+    "          : (px < 2.0 ? vec3(0.62, 1.0, 0.62) : vec3(0.62, 0.62, 1.0));\n" \
+    "        c *= m * 1.25;\n" \
+    "    }\n" \
+    "    if ((uFx & 8) != 0) {\n" \
+    "        vec2 v = suv - 0.5;\n" \
+    "        c *= 1.0 - 0.45 * smoothstep(0.35, 0.72, length(v));\n" \
+    "    }\n" \
+    "    oCol = vec4(c, 1.0);\n" \
+    "}\n"
+
+#endif

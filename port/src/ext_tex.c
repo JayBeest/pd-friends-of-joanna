@@ -606,6 +606,178 @@ u8 *extTexLoad(u8 type, u16 id, s32 texnum, u32 *width, u32 *height)
 	return tex->texdata;
 }
 
+// ---------------------------------------------------------------------------
+// General-purpose image loading for the Lua API (pd.load_image,
+// pd.tex_override, pd.list_images). From the Perfect Dark Kai fork (be46717),
+// where the images are opened CWD-relative from scripts/chaos/images/.
+//
+// Here a name resolves through the fs layer instead, first hit wins:
+//   1. <moddir>/scripts/chaos/images/<name> for each loaded mod dir, in order
+//   2. <basedir>/scripts/chaos/images/<name>
+//   3. ./scripts/chaos/images/<name> (the working directory, where the Lua
+//      loader finds scripts/init.lua today, i.e. Kai's layout)
+// Names are plain file names: no path separators, no "..".
+// ---------------------------------------------------------------------------
+
+#define EXT_IMAGE_SUBDIR "scripts/chaos/images"
+#define EXT_IMAGE_MAXDIRS 66
+
+static s32 extImageNameIsSafe(const char *name)
+{
+	if (!name || !name[0] || strlen(name) >= 128) {
+		return 0;
+	}
+	if (strchr(name, '/') || strchr(name, '\\') || strchr(name, ':') || strstr(name, "..")) {
+		return 0;
+	}
+	return 1;
+}
+
+// Fill dirs[] with the image directories in lookup order; returns the count.
+static s32 extImageDirs(char dirs[][FS_MAXPATH + 1], s32 max)
+{
+	s32 n = 0;
+	const char *base = fsGetBaseDir();
+
+	for (u32 i = 0; i < g_NumModDirs && n < max - 2; ++i) {
+		if (modDirs[i][0]) {
+			snprintf(dirs[n++], FS_MAXPATH + 1, "%s/" EXT_IMAGE_SUBDIR, modDirs[i]);
+		}
+	}
+	if (base && base[0] && n < max) {
+		snprintf(dirs[n++], FS_MAXPATH + 1, "%s/" EXT_IMAGE_SUBDIR, base);
+	}
+	if (n < max) {
+		snprintf(dirs[n++], FS_MAXPATH + 1, "./" EXT_IMAGE_SUBDIR);
+	}
+	return n;
+}
+
+// Biggest script-named image extImageLoad will decode. MAXPIXELS caps the
+// RGBA8888 buffer at 16 MB; MAXDIM stops a 1 x 4000000 strip.
+#define EXT_IMAGE_MAXDIM 2048
+#define EXT_IMAGE_MAXPIXELS (4 * 1024 * 1024)
+
+// Load an image by file name into a fresh RGBA8888 buffer the caller frees
+// with extImageFree. Returns NULL on failure (logged).
+u8 *extImageLoad(const char *name, u32 *width, u32 *height)
+{
+	static char dirs[EXT_IMAGE_MAXDIRS][FS_MAXPATH + 1];
+	char path[FS_MAXPATH + 1];
+	struct stat st;
+	s32 ndirs;
+
+	if (!extImageNameIsSafe(name)) {
+		sysLogPrintf(LOG_WARNING, "extImageLoad: bad image name '%s'", name ? name : "(null)");
+		return NULL;
+	}
+
+	ndirs = extImageDirs(dirs, EXT_IMAGE_MAXDIRS);
+
+	for (s32 i = 0; i < ndirs; ++i) {
+		int w = 0, h = 0, channels = 0;
+		u8 *data;
+
+		snprintf(path, sizeof(path), "%s/%s", dirs[i], name);
+		if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+			continue;
+		}
+
+		// A script names the file (pd.load_image, pd.tex_override), so the
+		// dimensions in its header decide how much stbi_load allocates: a
+		// 30000x30000 PNG is a few hundred KB on disk and 3.6 GB decoded.
+		// Ask the header first and refuse before anything is allocated.
+		// EXT_IMAGE_MAXDIM/MAXPIXELS are far past anything this game draws
+		// (pd.load_image is only reliable to 64x64).
+		if (!stbi_info(path, &w, &h, &channels)) {
+			sysLogPrintf(LOG_WARNING, "extImageLoad: can't read '%s': %s", path, stbi_failure_reason());
+			return NULL;
+		}
+
+		if (w <= 0 || h <= 0 || w > EXT_IMAGE_MAXDIM || h > EXT_IMAGE_MAXDIM
+				|| (s64)w * (s64)h > EXT_IMAGE_MAXPIXELS) {
+			sysLogPrintf(LOG_WARNING, "extImageLoad: '%s' is %dx%d, past the %dx%d / %d pixel cap",
+					path, w, h, EXT_IMAGE_MAXDIM, EXT_IMAGE_MAXDIM, EXT_IMAGE_MAXPIXELS);
+			return NULL;
+		}
+
+		data = stbi_load(path, &w, &h, &channels, 4);
+		if (data) {
+			if (width) *width = (u32)w;
+			if (height) *height = (u32)h;
+		} else {
+			sysLogPrintf(LOG_WARNING, "extImageLoad: can't load '%s': %s", path, stbi_failure_reason());
+		}
+		return data;
+	}
+
+	sysLogPrintf(LOG_WARNING, "extImageLoad: '%s' not found in any " EXT_IMAGE_SUBDIR " dir", name);
+	return NULL;
+}
+
+void extImageFree(u8 *data)
+{
+	if (data) {
+		stbi_image_free(data);
+	}
+}
+
+// List .png basenames (without the extension) across the image dirs into
+// out[], up to maxout entries, first occurrence of a name only; returns the
+// count written. Backs pd.list_images.
+s32 extImageList(char out[][64], s32 maxout)
+{
+	static char dirs[EXT_IMAGE_MAXDIRS][FS_MAXPATH + 1];
+	s32 ndirs = extImageDirs(dirs, EXT_IMAGE_MAXDIRS);
+	s32 count = 0;
+
+	for (s32 d = 0; d < ndirs && count < maxout; ++d) {
+		DIR *dr = opendir(dirs[d]);
+		struct dirent *de;
+
+		if (!dr) {
+			continue;
+		}
+
+		while ((de = readdir(dr)) != NULL && count < maxout) {
+			const char *name = de->d_name;
+			size_t len = strlen(name);
+			size_t base;
+			s32 dup = 0;
+
+			// accept *.png only, case-insensitive on the extension
+			if (len < 5 || len - 4 >= 64) {
+				continue;
+			}
+			if (name[len - 4] != '.'
+					|| (name[len - 3] != 'p' && name[len - 3] != 'P')
+					|| (name[len - 2] != 'n' && name[len - 2] != 'N')
+					|| (name[len - 1] != 'g' && name[len - 1] != 'G')) {
+				continue;
+			}
+
+			base = len - 4;
+			for (s32 j = 0; j < count; ++j) {
+				if (strncmp(out[j], name, base) == 0 && out[j][base] == '\0') {
+					dup = 1;
+					break;
+				}
+			}
+			if (dup) {
+				continue;
+			}
+
+			memcpy(out[count], name, base);
+			out[count][base] = '\0';
+			count++;
+		}
+
+		closedir(dr);
+	}
+
+	return count;
+}
+
 u8 extTexFontID(struct font *font) {
 	if (font == g_FontHandelGothicSm)
 		return FONT_HANDELGOTHICSM;

@@ -369,8 +369,20 @@ char *endscreenMenuTextAccuracy(struct menuitem *item)
 	return g_StringPointer;
 }
 
+#ifndef PLATFORM_N64
+#include "game/chaosstate.h"
+#endif
+
 char *endscreenMenuTextMissionStatus(struct menuitem *item)
 {
+#ifndef PLATFORM_N64
+	// pd.game_over (Kai, be46717): while its mid-mission failed screen is up,
+	// Mission Status reads "Unknown". No effect on the real endscreen.
+	if (g_ChaosGameOverStatus) {
+		return langGet(L_MPWEAPONS_062); // "Unknown"
+	}
+#endif
+
 	if (g_CheatsActiveBank0 || g_CheatsActiveBank1) {
 		return langGet(L_MPWEAPONS_135); // "Cheated"
 	}
@@ -443,6 +455,13 @@ char *endscreenMenuTextMissionStatus(struct menuitem *item)
 
 char *endscreenMenuTextAgentStatus(struct menuitem *item)
 {
+#ifndef PLATFORM_N64
+	// pd.game_over: Agent Status reads "Missing" while its screen is up
+	if (g_ChaosGameOverStatus) {
+		return langGet(L_MPWEAPONS_063); // "Missing"
+	}
+#endif
+
 	if (g_CheatsActiveBank0 || g_CheatsActiveBank1) {
 		return langGet(L_MPWEAPONS_134); // "Dishonored"
 	}
@@ -1718,6 +1737,14 @@ void endscreenPrepare(void)
 		} else {
 			menuPushRootDialog(&g_SoloMissionEndscreenCompletedMenuDialog, MENUROOT_ENDSCREEN);
 
+#ifndef PLATFORM_N64
+			{
+				// pd.mission_complete: latched on mission success, cleared by lvReset
+				extern s32 g_ChaosMissionComplete;
+				g_ChaosMissionComplete = 1;
+			}
+#endif
+
 			if (g_MissionConfig.isteam){
 				endscreenSetCoopCompleted();
 			}
@@ -1808,6 +1835,16 @@ void endscreenPrepare(void)
 				if (secs < prevbest || prevbest == 0) {
 					g_GameFile.besttimes[g_MissionConfig.stageindex][g_MissionConfig.difficulty] = secs;
 				}
+
+#ifndef PLATFORM_N64
+				{
+					// A legit mission completion (this branch is gated on
+					// objectives-complete + no active cheats above).
+					extern void luaEmitMissionComplete(s32 stageindex, s32 difficulty, s32 secs, s32 cheated);
+					luaEmitMissionComplete(g_MissionConfig.stageindex,
+							g_MissionConfig.difficulty, secs, 0);
+				}
+#endif
 #else
 				prevbest = g_GameFile.besttimes[g_MissionConfig.stageindex][g_MissionConfig.difficulty];
 
@@ -1838,6 +1875,13 @@ void endscreenPrepare(void)
 
 					if (!timedalreadyunlocked && nowunlocked) {
 						g_Menus[g_MpPlayerNum].endscreen.cheatinfo |= 0x0200;
+#ifndef PLATFORM_N64
+						{
+							// A timed cheat's unlock condition was newly met.
+							extern void luaEmitCheatUnlock(s32 cheatid);
+							luaEmitCheatUnlock(g_Menus[g_MpPlayerNum].endscreen.cheatinfo & 0xff);
+						}
+#endif
 					}
 				}
 
@@ -1846,6 +1890,13 @@ void endscreenPrepare(void)
 
 					if (!complalreadyunlocked && nowunlocked) {
 						g_Menus[g_MpPlayerNum].endscreen.cheatinfo |= 0x0800;
+#ifndef PLATFORM_N64
+						{
+							// A completion cheat's unlock condition was newly met.
+							extern void luaEmitCheatUnlock(s32 cheatid);
+							luaEmitCheatUnlock((g_Menus[g_MpPlayerNum].endscreen.cheatinfo >> 16) & 0xff);
+						}
+#endif
 					}
 				}
 
@@ -1942,6 +1993,14 @@ static void chooseEndScreenFailedDialog(bool usevertical){
  * @param usevertical: If true, selects the vertical dialog; otherwise, selects the horizontal dialog.
  */
 static void chooseEndScreenCompletedDialog(bool usevertical){
+#ifndef PLATFORM_N64
+	// pd.mission_complete: the completed dialog on the Bond/co-op side means
+	// the mission was won (on the counter-op side it means the opposite).
+	if (!g_Vars.antiplayers[g_Vars.currentplayernum]) {
+		extern s32 g_ChaosMissionComplete;
+		g_ChaosMissionComplete = 1;
+	}
+#endif
 	if (usevertical) {
 		menuPushRootDialog(&g_2PMissionEndscreenCompletedVMenuDialog, MENUROOT_MPENDSCREEN);
 	} else {

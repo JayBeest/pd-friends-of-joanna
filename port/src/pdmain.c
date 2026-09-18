@@ -17,6 +17,7 @@
 #include "game/game_1a78b0.h"
 #include "game/gfxmemory.h"
 #include "game/lang.h"
+#include "game/luaai.h"
 #include "game/lv.h"
 #include "game/mplayer/mplayer.h"
 #include "game/mplayer/setup.h"
@@ -642,6 +643,10 @@ void mainTick(void) {
       playermgrShuffle();
 
       if (g_StageNum < STAGE_TITLE) {
+        // Lua possession (controllable cube, pd.possess_spawn) freecam input —
+        // once per frame; no-op unless possession is active. (Kai be46717.)
+        luaPossessReadInput();
+
         for (i = 0; i < PLAYERCOUNT(); i++) {
           setCurrentPlayerNum(playermgrGetPlayerAtOrder(i));
 
@@ -655,6 +660,11 @@ void mainTick(void) {
           }
 
           lvTickPlayer();
+
+          // Possession: after the body ticks, override this player's camera to
+          // follow the controllable cube's fly pose. No-op unless possession is
+          // active.
+          luaPossessApplyCamera();
         }
       }
 
@@ -663,6 +673,8 @@ void mainTick(void) {
       if (debugGetProfileMode() >= 2) {
         gdl = profileRender(gdl);
       }
+
+      gdl = luaHudRender(gdl); // Lua overlays; returns at once when Lua is off
 
       gDPFullSync(gdl++);
       gSPEndDisplayList(gdl++);

@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/mainmenu.h"
 #include "game/music.h"
@@ -70,6 +71,13 @@ s32 optionsGetForwardPitch(s32 mpchrnum)
 
 s32 optionsGetAutoAim(s32 mpchrnum)
 {
+#ifndef PLATFORM_N64
+	// Chaos "XBLA mode" (pd.autoaim): force aim assist on regardless of the
+	// player's option. Read-only override — the saved option is untouched.
+	if (g_ChaosAutoAim) {
+		return true;
+	}
+#endif
 	return (g_PlayerConfigsArray[mpchrnum].options & OPTION_AUTOAIM) != 0;
 }
 

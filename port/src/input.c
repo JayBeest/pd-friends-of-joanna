@@ -93,6 +93,10 @@ static f32 mouseSensX = 2.5f;
 static f32 mouseSensY = 2.5f;
 
 static s32 lastKey = 0;
+// Which physical device the player most recently used: 0 = keyboard/mouse,
+// 1 = gamepad. Updated in the event watcher; read by pd.input_source
+// (inputLastSourceWasPad). From Kai (be46717).
+static s32 lastSourceWasPad = 0;
 static char lastChar = 0;
 static s32 textInput = 0;
 
@@ -519,18 +523,25 @@ static int inputEventFilter(void *data, SDL_Event *event)
 			if (!lastKey && mouseWheel) {
 				lastKey = (mouseWheel < 0) + VK_MOUSE_WHEEL_UP;
 			}
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_MOUSEBUTTONDOWN:
 			if (!lastKey) {
 				lastKey = VK_MOUSE_BEGIN - 1 + event->button.button;
 			}
+			lastSourceWasPad = 0;
+			break;
+
+		case SDL_MOUSEMOTION:
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_KEYDOWN:
 			if (!lastKey) {
 				lastKey = VK_KEYBOARD_BEGIN + event->key.keysym.scancode;
 			}
+			lastSourceWasPad = 0;
 			break;
 
 		case SDL_CONTROLLERBUTTONDOWN:
@@ -542,6 +553,7 @@ static int inputEventFilter(void *data, SDL_Event *event)
 					lastKey += idx * INPUT_MAX_CONTROLLER_BUTTONS;
 				}
 			}
+			lastSourceWasPad = 1;
 			break;
 
 		case SDL_CONTROLLERAXISMOTION:
@@ -554,6 +566,11 @@ static int inputEventFilter(void *data, SDL_Event *event)
 						lastKey += idx * INPUT_MAX_CONTROLLER_BUTTONS;
 					}
 				}
+			}
+			// Only a real stick/trigger push flips the source (small idle jitter
+			// past a deadzone shouldn't claim the player picked up the pad).
+			if (event->caxis.value > 8000 || event->caxis.value < -8000) {
+				lastSourceWasPad = 1;
 			}
 			break;
 
@@ -840,8 +857,79 @@ static inline s32 inputBindPressed(const s32 idx, const u32 ck)
 	return 0;
 }
 
-static inline s32 inputAxisScale(s32 x, const s32 deadzone, const f32 scale)
+// Lua effect state for the pd.* input functions, from Kai (be46717).
+//
+// pd.deadzone ("XBLA mode"): a runtime deadzone floor in raw axis units
+// (0..32768). When larger than the user's configured per-axis deadzone it
+// wins; 0 = off.
+static s32 chaosDeadzone = 0;
+
+void inputSetChaosDeadzone(s32 dz)
 {
+	if (dz < 0) {
+		dz = 0;
+	} else if (dz > 31000) {
+		dz = 31000; // never a fully dead stick
+	}
+	chaosDeadzone = dz;
+}
+
+// pd.sens_boost ("Overly sensitive"): multiplies the user's mouse and stick
+// sensitivity WITHOUT touching the config-backed settings (quitting
+// mid-effect must never persist a maxed slider to pd.ini). Applied at the two
+// read sites: inputAxisScale (every stick axis, movement included) and
+// inputMouseGetScaledDelta. The Abs variant (crosshair/menu speed) is
+// deliberately left alone so menus stay navigable.
+static f32 chaosSensMult = 1.0f;
+
+void inputSetChaosSensMult(f32 mult)
+{
+	chaosSensMult = (mult > 0.0f) ? mult : 1.0f;
+}
+
+// pd.input_delay ("Stadia Mode"): buffer each pad's state and return it N
+// frames late. A zeroed OSContPad is neutral, so the first N frames replay
+// stillness. Mouse look deltas are delayed too, but at their per-frame source
+// (inputUpdateMouse), because the downstream getter runs more than once per
+// frame and can't ring safely.
+#define CHAOS_DELAY_RING 64
+static s32 chaosInputDelay = 0; // frames, 0 = off
+static OSContPad chaosDelayRing[INPUT_MAX_CONTROLLERS][CHAOS_DELAY_RING];
+static u32 chaosDelayHead[INPUT_MAX_CONTROLLERS];
+static s32 chaosMouseRingX[CHAOS_DELAY_RING], chaosMouseRingY[CHAOS_DELAY_RING];
+static u32 chaosMouseHead;
+
+void inputSetChaosInputDelay(s32 frames)
+{
+	if (frames < 0) {
+		frames = 0;
+	} else if (frames > CHAOS_DELAY_RING - 1) {
+		frames = CHAOS_DELAY_RING - 1;
+	}
+	if (frames && !chaosInputDelay) {
+		memset(chaosDelayRing, 0, sizeof(chaosDelayRing));
+		memset(chaosMouseRingX, 0, sizeof(chaosMouseRingX));
+		memset(chaosMouseRingY, 0, sizeof(chaosMouseRingY));
+	}
+	chaosInputDelay = frames;
+}
+
+static void inputChaosDelayApply(s32 idx, OSContPad *npad)
+{
+	if (chaosInputDelay <= 0) {
+		return;
+	}
+	chaosDelayRing[idx][chaosDelayHead[idx] % CHAOS_DELAY_RING] = *npad;
+	*npad = chaosDelayRing[idx][(chaosDelayHead[idx] + CHAOS_DELAY_RING - (u32)chaosInputDelay) % CHAOS_DELAY_RING];
+	chaosDelayHead[idx]++;
+}
+
+static inline s32 inputAxisScale(s32 x, s32 deadzone, const f32 scale)
+{
+	if (chaosDeadzone > deadzone) {
+		deadzone = chaosDeadzone;
+	}
+
 	if (abs(x) < deadzone) {
 		return 0;
 	} else {
@@ -852,8 +940,8 @@ static inline s32 inputAxisScale(s32 x, const s32 deadzone, const f32 scale)
 			x -= deadzone;
 		}
 		x = x * 32768 / (32768 - deadzone);
-		// scale with sensitivity
-		x *= scale;
+		// scale with sensitivity (chaosSensMult: pd.sens_boost, normally 1)
+		x *= scale * chaosSensMult;
 		return (x > 32767) ? 32767 : ((x < -32768) ? -32768 : x);
 	}
 }
@@ -898,6 +986,7 @@ s32 inputReadController(s32 idx, OSContPad *npad)
 	}
 
 	if (!pads[idx]) {
+		inputChaosDelayApply(idx, npad);
 		return 0;
 	}
 
@@ -939,6 +1028,7 @@ s32 inputReadController(s32 idx, OSContPad *npad)
 		}
 	}
 
+	inputChaosDelayApply(idx, npad);
 	return 0;
 }
 
@@ -974,6 +1064,18 @@ static inline void inputUpdateMouse(void)
 	} else {
 		mouseDX = mx - mouseX;
 		mouseDY = my - mouseY;
+	}
+
+	// pd.input_delay: run the per-frame look deltas through the same delay as
+	// the pad ring. Buffered here (once per frame) because the downstream
+	// getter runs several times per frame. Only while mouseLocked (in-game
+	// look), so the menu cursor stays live.
+	if (chaosInputDelay > 0 && mouseLocked) {
+		chaosMouseRingX[chaosMouseHead % CHAOS_DELAY_RING] = mouseDX;
+		chaosMouseRingY[chaosMouseHead % CHAOS_DELAY_RING] = mouseDY;
+		mouseDX = chaosMouseRingX[(chaosMouseHead + CHAOS_DELAY_RING - (u32)chaosInputDelay) % CHAOS_DELAY_RING];
+		mouseDY = chaosMouseRingY[(chaosMouseHead + CHAOS_DELAY_RING - (u32)chaosInputDelay) % CHAOS_DELAY_RING];
+		chaosMouseHead++;
 	}
 
 	mouseX = mx;
@@ -1339,8 +1441,8 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
 {
 	f32 mdx = 0.f, mdy = 0.f;
 	if (mouseLocked) {
-		mdx = mouseDX * (0.022f / 3.5f) * mouseSensX;
-		mdy = mouseDY * (0.022f / 3.5f) * mouseSensY;
+		mdx = chaosSensMult * mouseDX * (0.022f / 3.5f) * mouseSensX;
+		mdy = chaosSensMult * mouseDY * (0.022f / 3.5f) * mouseSensY;
 	}
 	if (dx) *dx = mdx;
 	if (dy) *dy = mdy;
@@ -1487,6 +1589,12 @@ void inputClearLastKey(void)
 s32 inputGetLastKey(void)
 {
 	return lastKey;
+}
+
+// 1 if the player's most recent input came from a gamepad (pd.input_source).
+s32 inputLastSourceWasPad(void)
+{
+	return lastSourceWasPad;
 }
 
 void inputStartTextInput(void)

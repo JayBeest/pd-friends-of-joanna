@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/weather.h"
 #include "bss.h"
 #include "lib/memp.h"
@@ -57,6 +58,122 @@ static void weatherResetRooms(void)
 	}
 }
 
+#endif
+
+#ifndef PLATFORM_N64
+// Chaos weather (pd.weather, Kai fork): force rain/snow on ANY stage. type 0 =
+// off (weatherStop), 1 = rain, 2 = snow; intensity 0..3. Stages without
+// configured weather never allocate g_WeatherData, so this replicates
+// weatherReset's init on demand (MEMPOOL_STAGE — freed with the stage). No
+// weatherproof room flags are set up for unconfigured stages, so it "rains"
+// indoors too — which is the chaos-mode joke, not a bug.
+//
+// MEMPOOL_STAGE is a bump allocator with no free, and scripts toggle weather
+// repeatedly within a stage, so turning it off parks the block in
+// g_ChaosWeatherKeep for the next "on" instead of orphaning ~15.7KB each cycle.
+// Kai kept it in g_WeatherData with g_WeatherActive cleared, but weatherRender
+// is gated on g_WeatherData alone, and the next "on" never set g_WeatherActive
+// again; parking it outside g_WeatherData avoids both. The park is keyed on
+// g_ChaosLoadSerial so a block from an earlier stage's pool is never reused.
+static struct weatherdata *g_ChaosWeatherKeep = NULL;
+static s32 g_ChaosWeatherKeepSerial = -1;
+
+s32 weatherChaosSet(s32 type, s32 intensity)
+{
+	if (intensity < 0) intensity = 0;
+	if (intensity > 3) intensity = 3;
+	// snow only implements intensities 0/1 in weatherSetIntensity (the N64
+	// game never ran snow harder); 2/3 fall through its switch leaving the
+	// particle target (unkd4) at 0 = invisible weather. 1 is already the
+	// 500-particle maximum, so clamp rather than extend the table.
+	if (type == 2 && intensity > 1) {
+		intensity = 1;
+	}
+
+	if (type <= 0) {
+		if (g_WeatherData) {
+			// weatherStop() stops the audio handles and NULLs g_WeatherData.
+			g_ChaosWeatherKeep = g_WeatherData;
+			g_ChaosWeatherKeepSerial = g_ChaosLoadSerial;
+			weatherStop();
+		}
+		g_WeatherActive = false;
+		return 1;
+	}
+
+	if (!g_WeatherData && g_ChaosWeatherKeep && g_ChaosWeatherKeepSerial == g_ChaosLoadSerial) {
+		g_WeatherData = g_ChaosWeatherKeep;
+		g_WeatherData->audiohandles[0] = 0;
+		g_WeatherData->audiohandles[1] = 0;
+		g_WeatherData->audiohandles[2] = 0;
+		g_WeatherData->audiohandles[3] = 0;
+	}
+
+	g_ChaosWeatherKeep = NULL;
+
+	if (!g_WeatherData) {
+		struct weatherdata *data = mempAlloc(sizeof(struct weatherdata), MEMPOOL_STAGE);
+
+		if (!data) {
+			return 0;
+		}
+
+		// weatherAllocateParticles reads g_CurWeatherConfig, which
+		// weatherReset has already pointed at this stage's row (or the
+		// default one).
+		data->particledata[0] = weatherAllocateParticles();
+
+		if (!data->particledata[0]) {
+			// an exhausted stage pool has to be caught here
+			return 0;
+		}
+
+		g_WeatherData = data;
+		g_WeatherData->type = -1;
+		g_WeatherData->windanglerad = 0;
+		g_WeatherData->unk0c = 0;
+		g_WeatherData->unk10 = 1;
+		g_WeatherData->windspeed = 15;
+		g_WeatherData->audiohandles[0] = 0;
+		g_WeatherData->audiohandles[1] = 0;
+		g_WeatherData->audiohandles[2] = 0;
+		g_WeatherData->audiohandles[3] = 0;
+		g_WeatherData->unk44 = 0;
+		g_WeatherData->unk94 = -1;
+		g_WeatherData->unk48 = 1;
+		g_WeatherData->unk4c = 0;
+		g_WeatherData->unk50 = 0;
+		g_WeatherData->unk54 = 0;
+		g_WeatherData->unk58[0].unk00 = 0;
+		g_WeatherData->unk58[1].unk00 = 0;
+		g_WeatherData->unk58[2].unk00 = 0;
+		g_WeatherData->unk58[3].unk00 = 1;
+		g_WeatherData->unk58[0].unk04 = 1;
+		g_WeatherData->unk58[0].unk08 = 0;
+		g_WeatherData->unk58[1].unk08 = 0;
+		g_WeatherData->unk58[2].unk08 = 0;
+		g_WeatherData->unk58[3].unk08 = 0;
+		g_WeatherData->unkb8 = 150;
+		g_WeatherData->unkc0 = 0;
+		g_WeatherData->unkc4 = 0;
+		g_WeatherData->unkc8 = 15;
+		g_WeatherData->unk88 = 1;
+		g_WeatherData->unk90 = 0;
+		g_WeatherData->intensity = 0;
+		g_WeatherData->unkd0 = 0;
+		g_WeatherData->unkd4 = 0;
+	}
+
+	g_WeatherActive = true;
+
+	if (type == 1) {
+		weatherConfigureRain((u32)intensity);
+	} else {
+		weatherConfigureSnow((u32)intensity);
+	}
+
+	return 1;
+}
 #endif
 
 void weatherReset(void)

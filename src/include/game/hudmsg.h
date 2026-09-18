@@ -17,6 +17,9 @@ void hudmsgsReset(void);
 void hudmsgRemoveAll(void);
 s32 hudmsgGetNext(s32 refid);
 void hudmsgCreate(char *text, s32 type);
+#ifndef PLATFORM_N64
+void hudmsgCreateLua(char *text, s32 type);
+#endif
 void hudmsgCreateWithFlags(char *text, s32 type, u32 flags);
 void hudmsgCreateWithColour(char *text, s32 type, u8 colour);
 void hudmsgCreateWithDuration(char *text, s32 type, struct hudmsgtype *config, s32 duration60);

@@ -591,6 +591,30 @@ Gfx *viSetPerspectiveWithFov(Gfx *gdl, f32 fovy, f32 znear, f32 zfar)
 
 	return gdl;
 }
+
+/**
+ * viSetPerspectiveWithFov() MIRRORED vertically: clip Y is negated, so the
+ * image is reflected across the horizontal centre line. From Kai (be46717):
+ * chaos "Quad handed" draws the extra top guns with this so the viewmodel
+ * appears as a mirror reflection hanging from the top of the screen. A
+ * single-axis negate reverses triangle winding, so the caller must disable
+ * back-face culling (CULLMODE_NONE) for that pass.
+ */
+Gfx *viSetPerspectiveWithFovMirrorY(Gfx *gdl, f32 fovy, f32 znear, f32 zfar)
+{
+	u16 scale;
+	Mtxf tmp;
+	Mtx *mtx = gfxAllocateMatrix();
+
+	guPerspectiveF(tmp.m, &scale, fovy, g_ViBackData->aspect, znear, zfar, 1);
+	tmp.m[1][1] = -tmp.m[1][1]; // negate clip Y -> vertical mirror
+	guMtxF2L(tmp.m, mtx);
+
+	gSPMatrix(gdl++, OS_K0_TO_PHYSICAL(mtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+	gSPPerspNormalize(gdl++, scale);
+
+	return gdl;
+}
 #endif
 
 Gfx *vi0000ad5c(Gfx *gdl, Vp *vp)

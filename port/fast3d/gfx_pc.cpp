@@ -250,6 +250,154 @@ bool gfx_framebuffers_enabled = true;
 bool gfx_detail_textures_enabled = true;
 bool gfx_external_textures_enabled = false;
 
+// ---------------------------------------------------------------------------
+// Renderer side of the pd.* fx effects (Lua API). From the Perfect Dark Kai
+// fork (be46717), where they are documented in docs/PORT_CHAOS.md. Every knob
+// defaults to "off"; the game sets them through the chraiLua* fx bridges
+// (src/game/luaai_bridge_fx.c) and lvReset clears them per stage.
+// ---------------------------------------------------------------------------
+
+// "Wireframe enemies": scoped wireframe set by the G_CHRWIREFRAME_EXT bracket
+// around hostile chr models. Read at draw time by the GL backend;
+// force-cleared each frame start so a lost END marker can't leak past one
+// frame.
+bool gfx_wireframe_scope = false;
+float gfx_wireframe_line_width = 1.0f;
+
+// HUDVD: renderer-owned per-element bounce. The game brackets each HUD element
+// with G_HUDOFFSET_EXT (slot index to begin the bracket, -1 to end it). While
+// a bracket is open the renderer (1) offsets every rect by that slot's current
+// pixel position and (2) accumulates the element's actual on-screen bounding
+// box. Once a frame it advances each slot and bounces it off the real 320x220
+// HUD viewport edges - so elements never leave the screen, and each slot has
+// its own direction/speed.
+#define HUDVD_SLOTS 8
+#define HUDVD_VP_W 320.0f
+#define HUDVD_VP_H 220.0f
+struct HudvdSlot {
+    float px, py;             // current offset, pixels
+    float vx, vy;             // velocity, pixels/frame
+    float bx0, by0, bx1, by1; // measured (shifted) bbox this frame, pixels
+    bool has_bbox;
+};
+static HudvdSlot g_HudvdSlots[HUDVD_SLOTS];
+static int g_HudvdActiveSlot = -1;      // open bracket, or -1
+static bool g_HudvdOn = false;
+static int16_t gfx_hud_offset_x = 0;    // U10.2 = active slot px*4 (0 if none)
+static int16_t gfx_hud_offset_y = 0;
+
+// "Vertical Form" 2D squish (gfx_draw_rectangle): 0 = off, else the
+// window-width fraction all HUD/text rects are scaled into (0.425 = the
+// portrait band the pirate-mode-4 pillars leave open).
+float gfx_hud_squish = 0.0f;
+
+extern "C" void gfx_set_hud_squish(float frac) {
+    gfx_hud_squish = frac;
+}
+
+extern "C" void gfx_hudvd_reset(void) {
+    // Distinct diagonal per slot (guaranteed different directions) + a per-slot
+    // speed spread so slots sharing a diagonal still diverge over time.
+    static const float dx[HUDVD_SLOTS] = { 1, -1,  1, -1,  1, -1,  1, -1 };
+    static const float dy[HUDVD_SLOTS] = { 1,  1, -1, -1, -1,  1,  1, -1 };
+    for (int i = 0; i < HUDVD_SLOTS; i++) {
+        g_HudvdSlots[i].px = 0.0f;
+        g_HudvdSlots[i].py = 0.0f;
+        g_HudvdSlots[i].vx = dx[i] * (0.9f + 0.16f * i);
+        g_HudvdSlots[i].vy = dy[i] * (0.7f + 0.12f * i);
+        g_HudvdSlots[i].has_bbox = false;
+    }
+}
+
+extern "C" void gfx_hudvd_set_active(int on) {
+    g_HudvdOn = (on != 0);
+    if (!g_HudvdOn) {
+        g_HudvdActiveSlot = -1;
+        gfx_hud_offset_x = gfx_hud_offset_y = 0;
+    }
+}
+
+// Flat-texture mode: 0 = off; 1 = white out texel RGB (the combiner multiplies
+// TEXEL*SHADE, so this leaves pure vertex shading); 2 = flood texel RGB with
+// the texture's average colour; 3 = texture override (pd.tex_override): every
+// texture's RGB is replaced with gfx_flattex_image, nearest-scaled to the
+// texture's own dimensions. Per-pixel alpha is preserved either way, so font
+// glyphs / HUD icons / cutout textures keep their shapes. Toggling is applied
+// in gfx_start_frame via a texture cache clear, which re-imports everything
+// through gfx_upload_tex_filtered. The mode-3 buffer is owned by the game side
+// (luaai_api_fx.c) and stays valid while the mode is active.
+int gfx_flattex_mode = 0;
+unsigned char *gfx_flattex_image = nullptr;
+int gfx_flattex_image_w = 0;
+int gfx_flattex_image_h = 0;
+// Forced grayscale: drives rdp.grayscale with a neutral colour from
+// gfx_start_frame (the game itself never emits G_SETGRAYSCALE_EXT, so there
+// is no mid-frame contention).
+int gfx_force_grayscale = 0;
+// Forced-shiny mode: 0 = off; 1 = every 3D vertex's texture coords are
+// replaced with a screen-space projection (PS1-style fake chrome - the texture
+// is glued to the screen so it slides over surfaces as the view moves); 2 = the
+// same plus a gold tint via the grayscale shader path. 2D texrects (HUD/text)
+// don't pass through gfx_sp_vertex and are unaffected.
+int gfx_shiny_mode = 0;
+// Screen roll ("Speen"): rotate clip-space X/Y about the screen centre by this
+// many radians. 0 = off. Aspect-corrected so the roll is rigid on screen. A
+// rotation preserves winding, so no cull compensation is needed. While active,
+// 3D scissors are expanded to the viewport (an axis-aligned scissor can't
+// follow rotated geometry). 2D texrects stay upright.
+float gfx_screen_roll = 0.0f;
+// "Jelly" vertex wobble: each vertex is transported to EYE space, displaced
+// along all three axes by sines of its position, then projected - so the whole
+// scene ripples at a coherent world-unit wavelength. amp is in world units,
+// freq in radians per world unit; the phase is advanced from Lua each tick.
+float gfx_vtx_wobble_amp = 0.0f;
+float gfx_vtx_wobble_freq = 0.0f;
+float gfx_vtx_wobble_phase = 0.0f;
+// "Acid Trip" melt: an always-DOWNWARD (eye -Y) undulating droop added on top
+// of the wobble (world units; only while amp != 0).
+float gfx_vtx_wobble_sag = 0.0f;
+// Per-vertex RATE spread (0 = lockstep travelling wave; > 0 = each vertex's
+// phase is scaled and offset by a stable hash of its model position).
+float gfx_vtx_wobble_desync = 0.0f;
+// Near fade: world-unit radius over which the displacement ramps in from zero
+// at the camera to full. 0 = off.
+float gfx_vtx_wobble_nearfade = 0.0f;
+// "Hall of mirrors": skip the per-frame colour clear of the game framebuffer so
+// un-redrawn pixels smear. Depth still clears.
+int gfx_hom_mode = 0;
+// Screen tint (pd.screen_tint): 0x00RRGGBB, 0 = off. Rides the grayscale
+// shader path (luminance * tint) like the gold shiny mode.
+int gfx_screen_tint = 0;
+// Retro post filter (pd.pixelate / pd.crt / pd.lens / pd.screen_fx):
+// pixelate the finished frame to a pixel_w x pixel_h grid, apply a colour mode
+// and fx bits and a fisheye warp. All zero = pass off. Dispatched at gfx_run's
+// tail through the nullable retro_filter rapi entry (gfx_retro.cpp).
+int gfx_retro_pixel_w = 0;
+int gfx_retro_pixel_h = 0;
+int gfx_retro_colors = 0;
+int gfx_retro_fx = 0;
+float gfx_retro_warp = 0.0f;
+// "Australia mode" (pd.upside_down): rotate the whole finished frame 180 via
+// the retro post filter (uFx bit 64), HUD included. 1-byte bool so the C side
+// can't misread it.
+unsigned char gfx_rotate180_mode = 0;
+// "One too many" (pd.double_vision): blend rotated ghosts of the finished frame
+// over the normal frame (retro uFx bits 128/256/512). 1-byte bool.
+unsigned char gfx_doublevision_mode = 0;
+// True internal render resolution (pd.internal_res): when > 0 the whole frame
+// is rasterized into game_framebuffer at this height and upscaled to the
+// window by a NEAREST blit at present time.
+int gfx_internal_res_chaos = 0;
+// "iPod Ad" (silhouette): while on, depth-tested 3D geometry is drawn as a flat
+// fill colour. gfx_silhouette_color is the CURRENT scope colour (set per
+// prop-class by G_FLATFILL_EXT); it resets to gfx_silhouette_wall_color at each
+// gfx_start_frame so unbracketed geometry (walls/sky) takes the wall colour.
+// White wireframe edges are drawn only for the wall scope.
+int gfx_silhouette = 0;
+float gfx_silhouette_wall_color[3] = {0.0f, 0.85f, 0.55f};
+float gfx_silhouette_color[3] = {0.0f, 0.85f, 0.55f};
+int gfx_silhouette_edges = 1;
+
 static bool game_renders_to_framebuffer;
 static int game_framebuffer;
 static int game_framebuffer_msaa_resolved;
@@ -627,6 +775,56 @@ struct TexDims {
     uint32_t width, height;
 };
 
+// Chokepoint for every N64-format texture import: all import_texture_* decode
+// into tex_upload_buffer as RGBA32 and upload from there. When a pd.* fx
+// flat-texture mode is active, munge the buffer in place first (see the
+// gfx_flattex_mode comment for the mode semantics).
+static void gfx_upload_tex_filtered(uint32_t width, uint32_t height) {
+    if (gfx_flattex_mode == 1 || gfx_flattex_mode == 2) {
+        const uint32_t count = width * height;
+        uint8_t* px = tex_upload_buffer;
+        uint8_t fr = 255, fg = 255, fb = 255;
+        if (gfx_flattex_mode == 2) {
+            uint64_t r = 0, g = 0, b = 0, n = 0;
+            for (uint32_t i = 0; i < count; i++, px += 4) {
+                if (px[3]) { // average visible texels only, or glyph RGB drowns in cutout black
+                    r += px[0];
+                    g += px[1];
+                    b += px[2];
+                    n++;
+                }
+            }
+            if (n) {
+                fr = (uint8_t)(r / n);
+                fg = (uint8_t)(g / n);
+                fb = (uint8_t)(b / n);
+            }
+            px = tex_upload_buffer;
+        }
+        for (uint32_t i = 0; i < count; i++, px += 4) {
+            px[0] = fr;
+            px[1] = fg;
+            px[2] = fb;
+        }
+    } else if (gfx_flattex_mode == 3 && gfx_flattex_image != nullptr &&
+               gfx_flattex_image_w > 0 && gfx_flattex_image_h > 0 && width > 0 && height > 0) {
+        // texture override: stamp the external image over the texel RGB
+        // (nearest-neighbour scale to this texture's dimensions)
+        uint8_t* px = tex_upload_buffer;
+        for (uint32_t y = 0; y < height; y++) {
+            const uint32_t sy = y * (uint32_t)gfx_flattex_image_h / height;
+            const unsigned char* row = gfx_flattex_image + (size_t)sy * gfx_flattex_image_w * 4;
+            for (uint32_t x = 0; x < width; x++, px += 4) {
+                const uint32_t sx = x * (uint32_t)gfx_flattex_image_w / width;
+                px[0] = row[sx * 4 + 0];
+                px[1] = row[sx * 4 + 1];
+                px[2] = row[sx * 4 + 2];
+            }
+        }
+    }
+    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+}
+
 static TexDims import_texture_rgba16(int tile, const LoadedTexture& loaded_texture, bool importReplacement) {
     const uint8_t* addr = loaded_texture.addr;
 	const uint32_t width = rdp.texture_tile[tile].width;
@@ -646,7 +844,7 @@ static TexDims import_texture_rgba16(int tile, const LoadedTexture& loaded_textu
         dest[3] = a ? 255 : 0;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -662,7 +860,7 @@ static TexDims import_texture_rgba32(int tile, const LoadedTexture& loaded_textu
         *dest = PD_BE32(*src);
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -685,7 +883,7 @@ static TexDims import_texture_ia4(int tile, const LoadedTexture& loaded_texture,
         dest[3] = alpha ? 255 : 0;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -705,7 +903,7 @@ static TexDims import_texture_ia8(int tile, const LoadedTexture& loaded_texture,
         dest[3] = alpha;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -725,7 +923,7 @@ static TexDims import_texture_ia16(int tile, const LoadedTexture& loaded_texture
         dest[3] = alpha;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -746,7 +944,7 @@ static TexDims import_texture_i4(int tile, const LoadedTexture& loaded_texture, 
         dest[3] = intensity;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -765,7 +963,7 @@ static TexDims import_texture_i8(int tile, const LoadedTexture& loaded_texture, 
         dest[3] = intensity;
     }
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -819,7 +1017,7 @@ static TexDims import_texture_ci4(int tile, const LoadedTexture& loaded_texture,
 		src += line_size;
 	}
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -834,7 +1032,7 @@ static TexDims import_texture_ci8(int tile, const LoadedTexture& loaded_texture,
 		palette_to_rgba32(rdp.palette[idx], tex_upload_buffer + 4 * i);
 	}
 
-    gfx_rapi->upload_texture(tex_upload_buffer, width, height);
+    gfx_upload_tex_filtered(width, height);
     return { width, height };
 }
 
@@ -865,7 +1063,9 @@ static void import_texture(int i, int tile, bool is_rect) {
     SUPPORT_CHECK(orig_addr);
 
     TextureCacheKey key;
-	uint8_t external = loaded_texture.ext_key >> 7*8;
+	// pd.* fx flat-texture modes filter the decoded ROM texture, so skip the
+	// external PNG while one is active (the mode toggle clears the cache).
+	uint8_t external = gfx_flattex_mode ? 0 : (uint8_t)(loaded_texture.ext_key >> 7*8);
 
 	if (!external) {
 		if (fmt == G_IM_FMT_CI) {
@@ -1069,12 +1269,91 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* verti
         const Vtx* v = &vertices[i];
         struct LoadedVertex* d = &rsp.loaded_vertices[dest_index];
 
-        float x = v->v[0] * rsp.MP_matrix[0][0] + v->v[1] * rsp.MP_matrix[1][0] + v->v[2] * rsp.MP_matrix[2][0] + rsp.MP_matrix[3][0];
-        float y = v->v[0] * rsp.MP_matrix[0][1] + v->v[1] * rsp.MP_matrix[1][1] + v->v[2] * rsp.MP_matrix[2][1] + rsp.MP_matrix[3][1];
-        float z = v->v[0] * rsp.MP_matrix[0][2] + v->v[1] * rsp.MP_matrix[1][2] + v->v[2] * rsp.MP_matrix[2][2] + rsp.MP_matrix[3][2];
-        float w = v->v[0] * rsp.MP_matrix[0][3] + v->v[1] * rsp.MP_matrix[1][3] + v->v[2] * rsp.MP_matrix[2][3] + rsp.MP_matrix[3][3];
+        float x, y, z, w;
+
+        // pd.* fx "Jelly" vertex wobble: split the combined model->clip
+        // transform into model->eye (displace) ->clip so the ripple lives in
+        // world-scale eye space. Gated so the normal single-mul path is
+        // untouched when off. UI drawn as 3D geometry (G_NOMIRROR_EXT) is left
+        // rigid.
+        if (gfx_vtx_wobble_amp != 0.0f && rsp.modelview_matrix_stack_size > 0
+                && !(rsp.extra_geometry_mode & G_NOMIRROR_EXT)) {
+            const float (*mv)[4] = rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1];
+            float ex = v->v[0] * mv[0][0] + v->v[1] * mv[1][0] + v->v[2] * mv[2][0] + mv[3][0];
+            float ey = v->v[0] * mv[0][1] + v->v[1] * mv[1][1] + v->v[2] * mv[2][1] + mv[3][1];
+            float ez = v->v[0] * mv[0][2] + v->v[1] * mv[1][2] + v->v[2] * mv[2][2] + mv[3][2];
+            float ew = v->v[0] * mv[0][3] + v->v[1] * mv[1][3] + v->v[2] * mv[2][3] + mv[3][3];
+
+            // each axis ripples on the sines of the OTHER two (computed from the
+            // undistorted eye position so the field stays smooth, not fed back)
+            const float a = gfx_vtx_wobble_amp, f = gfx_vtx_wobble_freq;
+            float p = gfx_vtx_wobble_phase;
+
+            // Per-vertex rate spread: hash the (camera-stable) model position to a
+            // stable [0,1) value and let it scale + offset this vertex's phase.
+            if (gfx_vtx_wobble_desync != 0.0f) {
+                float h = v->v[0] * 12.9898f + v->v[1] * 78.233f + v->v[2] * 37.719f;
+                float r = sinf(h) * 43758.5453f;
+                r -= floorf(r); // [0,1)
+                p = gfx_vtx_wobble_phase * (1.0f + (r - 0.5f) * gfx_vtx_wobble_desync)
+                    + r * 6.2831853f * gfx_vtx_wobble_desync;
+            }
+
+            // Near fade: scale the displacement down as geometry approaches the
+            // camera (radial eye-space distance, smoothstep). 0 = off.
+            float nearscale = 1.0f;
+
+            if (gfx_vtx_wobble_nearfade > 0.0f) {
+                const float d = sqrtf(ex * ex + ey * ey + ez * ez);
+                float t = d / gfx_vtx_wobble_nearfade;
+
+                if (t > 1.0f) {
+                    t = 1.0f;
+                }
+
+                nearscale = t * t * (3.0f - 2.0f * t);
+            }
+
+            const float an = a * nearscale;
+            const float dx = an * sinf(ey * f + p);
+            const float dy = an * sinf(ez * f + p * 1.3f);
+            const float dz = an * sinf(ex * f + p * 0.7f);
+            ex += dx;
+            ey += dy;
+            ez += dz;
+
+            // "Acid Trip" melt: an always-downward (eye -Y) droop, faded with
+            // the same curve.
+            if (gfx_vtx_wobble_sag != 0.0f) {
+                ey -= gfx_vtx_wobble_sag * nearscale * (0.5f + 0.5f * sinf(ex * f * 0.5f + p));
+            }
+
+            const float (*P)[4] = rsp.P_matrix;
+            x = ex * P[0][0] + ey * P[1][0] + ez * P[2][0] + ew * P[3][0];
+            y = ex * P[0][1] + ey * P[1][1] + ez * P[2][1] + ew * P[3][1];
+            z = ex * P[0][2] + ey * P[1][2] + ez * P[2][2] + ew * P[3][2];
+            w = ex * P[0][3] + ey * P[1][3] + ez * P[2][3] + ew * P[3][3];
+        } else {
+            x = v->v[0] * rsp.MP_matrix[0][0] + v->v[1] * rsp.MP_matrix[1][0] + v->v[2] * rsp.MP_matrix[2][0] + rsp.MP_matrix[3][0];
+            y = v->v[0] * rsp.MP_matrix[0][1] + v->v[1] * rsp.MP_matrix[1][1] + v->v[2] * rsp.MP_matrix[2][1] + rsp.MP_matrix[3][1];
+            z = v->v[0] * rsp.MP_matrix[0][2] + v->v[1] * rsp.MP_matrix[1][2] + v->v[2] * rsp.MP_matrix[2][2] + rsp.MP_matrix[3][2];
+            w = v->v[0] * rsp.MP_matrix[0][3] + v->v[1] * rsp.MP_matrix[1][3] + v->v[2] * rsp.MP_matrix[2][3] + rsp.MP_matrix[3][3];
+        }
 
         x = gfx_adjust_x_for_aspect_ratio(x, w);
+
+        // pd.* fx "Speen": roll the view about the screen centre. Pixel-space
+        // rotation expressed in NDC needs the aspect factors (ndc x and y have
+        // different pixel scales); det stays +1 so winding/cull are untouched.
+        if (gfx_screen_roll != 0.0f && !(rsp.extra_geometry_mode & G_NOMIRROR_EXT)) {
+            const float rollc = cosf(gfx_screen_roll);
+            const float rolls = sinf(gfx_screen_roll);
+            const float ar = gfx_current_dimensions.aspect_ratio;
+            const float rx = x;
+            const float ry = y;
+            x = rollc * rx - rolls * ry / ar;
+            y = rolls * rx * ar + rollc * ry;
+        }
 
 		float U = v->s * (rsp.texture_scaling_factor.s + 1)/65536.0f;
 		float V = v->t * (rsp.texture_scaling_factor.t + 1)/65536.0f;
@@ -1155,6 +1434,17 @@ static void gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx* verti
             d->color.r = vcn->r;
             d->color.g = vcn->g;
             d->color.b = vcn->b;
+        }
+
+        // pd.* fx forced-shiny: override the texture coords with a screen-space
+        // projection of the clip-space position (see gfx_shiny_mode). The
+        // (n+1)/4 mapping matches the G_TEXTURE_GEN sphere-map convention above
+        // so the sampled window is the same half-texture range env maps use.
+        if (gfx_shiny_mode && !(rsp.extra_geometry_mode & G_NOMIRROR_EXT) && w != 0.0f) {
+            const float sx = clampf(x / w, -1.0f, 1.0f);
+            const float sy = clampf(y / w, -1.0f, 1.0f);
+            U = (int32_t)((sx + 1.0f) / 4.0f * rsp.texture_scaling_factor.s);
+            V = (int32_t)((sy + 1.0f) / 4.0f * rsp.texture_scaling_factor.t);
         }
 
         d->u = U;
@@ -1292,7 +1582,15 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bo
         }
         if (memcmp(&rdp.scissor, &rendering_state.scissor, sizeof(rdp.scissor)) != 0) {
             gfx_flush();
-            gfx_rapi->set_scissor(rdp.scissor.x, rdp.scissor.y, rdp.scissor.width, rdp.scissor.height);
+            // pd.* fx "Speen": an axis-aligned scissor can't follow rotated
+            // geometry - per-room portal scissors would carve chunks out of the
+            // spinning world. Expand 3D scissors to the whole viewport while the
+            // roll is active (2D rects keep theirs).
+            if (gfx_screen_roll != 0.0f && !is_rect) {
+                gfx_rapi->set_scissor(rdp.viewport.x, rdp.viewport.y, rdp.viewport.width, rdp.viewport.height);
+            } else {
+                gfx_rapi->set_scissor(rdp.scissor.x, rdp.scissor.y, rdp.scissor.width, rdp.scissor.height);
+            }
             rendering_state.scissor = rdp.scissor;
         }
         rdp.viewport_or_scissor_changed = false;
@@ -2080,6 +2378,31 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
     uly += rdp.subpixel_ofs_y;
     lry += rdp.subpixel_ofs_y;
 
+    // pd.* fx HUDVD per-element translate (U10.2 units). 0 outside HUD brackets.
+    ulx += gfx_hud_offset_x;
+    lrx += gfx_hud_offset_x;
+    uly += gfx_hud_offset_y;
+    lry += gfx_hud_offset_y;
+
+    // Measure this element's shifted on-screen bbox so gfx_start_frame can
+    // bounce it off the real viewport edges (pixels = U10.2 / 4).
+    if (g_HudvdActiveSlot >= 0) {
+        HudvdSlot* s = &g_HudvdSlots[g_HudvdActiveSlot];
+        float x0 = (ulx < lrx ? ulx : lrx) * 0.25f;
+        float x1 = (ulx < lrx ? lrx : ulx) * 0.25f;
+        float y0 = (uly < lry ? uly : lry) * 0.25f;
+        float y1 = (uly < lry ? lry : uly) * 0.25f;
+        if (!s->has_bbox) {
+            s->bx0 = x0; s->by0 = y0; s->bx1 = x1; s->by1 = y1;
+            s->has_bbox = true;
+        } else {
+            if (x0 < s->bx0) s->bx0 = x0;
+            if (x1 > s->bx1) s->bx1 = x1;
+            if (y0 < s->by0) s->by0 = y0;
+            if (y1 > s->by1) s->by1 = y1;
+        }
+    }
+
     // U10.2 coordinates
     float ulxf = ulx;
     float ulyf = uly;
@@ -2093,6 +2416,15 @@ static void gfx_draw_rectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lr
 
     ulxf = gfx_adjust_x_for_aspect_ratio(ulxf);
     lrxf = gfx_adjust_x_for_aspect_ratio(lrxf);
+
+    // pd.* fx "Vertical Form": squish every 2D rect toward the horizontal
+    // centre so the HUD/text lives inside the portrait band. Applied in CLIP
+    // space after the aspect adjust, so edge-aligned elements get pulled in
+    // exactly like centred ones.
+    if (gfx_hud_squish > 0.0f) {
+        ulxf *= gfx_hud_squish;
+        lrxf *= gfx_hud_squish;
+    }
 
     struct LoadedVertex* ul = &rsp.loaded_vertices[MAX_VERTICES + 0];
     struct LoadedVertex* ll = &rsp.loaded_vertices[MAX_VERTICES + 1];
@@ -2436,6 +2768,42 @@ static void gfx_run_dl(Gfx* cmd) {
             case G_SETGRAYSCALE_EXT:
                 rdp.grayscale = cmd->words.w1;
                 break;
+            case G_CHRWIREFRAME_EXT:
+                // pd.* fx scoped wireframe ("wireframe enemies"): flush so the
+                // toggle applies exactly at the bracket boundary
+                gfx_flush();
+                gfx_wireframe_scope = cmd->words.w1 != 0;
+                break;
+            case G_FLATFILL_EXT:
+                // pd.* fx "iPod Ad" silhouette: set the flat fill colour scope
+                // (a class bracket - no wireframe edges) or reset to the wall
+                // default (edges on). Flush so it applies at the boundary.
+                gfx_flush();
+                if (cmd->words.w0 & 1) {
+                    gfx_silhouette_color[0] = ((cmd->words.w1 >> 16) & 0xff) / 255.0f;
+                    gfx_silhouette_color[1] = ((cmd->words.w1 >> 8) & 0xff) / 255.0f;
+                    gfx_silhouette_color[2] = (cmd->words.w1 & 0xff) / 255.0f;
+                    gfx_silhouette_edges = 0; // solid silhouette, no wireframe
+                } else {
+                    gfx_silhouette_color[0] = gfx_silhouette_wall_color[0];
+                    gfx_silhouette_color[1] = gfx_silhouette_wall_color[1];
+                    gfx_silhouette_color[2] = gfx_silhouette_wall_color[2];
+                    gfx_silhouette_edges = 1; // walls: white wireframe edges
+                }
+                break;
+            case G_HUDOFFSET_EXT: {
+                // pd.* fx HUDVD: w0 low16 = slot to begin its bracket, or -1 to end.
+                int slot = (int16_t)C0(0, 16);
+                if (!g_HudvdOn || slot < 0 || slot >= HUDVD_SLOTS) {
+                    g_HudvdActiveSlot = -1;
+                    gfx_hud_offset_x = gfx_hud_offset_y = 0;
+                } else {
+                    g_HudvdActiveSlot = slot;
+                    gfx_hud_offset_x = (int16_t)(g_HudvdSlots[slot].px * 4.0f);
+                    gfx_hud_offset_y = (int16_t)(g_HudvdSlots[slot].py * 4.0f);
+                }
+                break;
+            }
             case G_LOADBLOCK:
                 gfx_dp_load_block(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
                 break;
@@ -2669,6 +3037,74 @@ extern "C" struct GfxRenderingAPI* gfx_get_current_rendering_api(void) {
 
 extern "C" void gfx_start_frame(void) {
     gfx_debug_textures.clear();
+
+    // pd.* fx per-frame state. The scoped wireframe bracket never survives a
+    // frame; the iPod Ad fill scope resets to the wall colour so unbracketed
+    // geometry (walls/sky) draws bright with wireframe edges on.
+    gfx_wireframe_scope = false;
+    gfx_silhouette_color[0] = gfx_silhouette_wall_color[0];
+    gfx_silhouette_color[1] = gfx_silhouette_wall_color[1];
+    gfx_silhouette_color[2] = gfx_silhouette_wall_color[2];
+    gfx_silhouette_edges = 1;
+
+    // HUDVD: advance + edge-bounce each slot using last frame's measured bbox,
+    // then clear per-frame state so nothing leaks past a frame.
+    g_HudvdActiveSlot = -1;
+    gfx_hud_offset_x = gfx_hud_offset_y = 0;
+    if (g_HudvdOn) {
+        for (int i = 0; i < HUDVD_SLOTS; i++) {
+            HudvdSlot* s = &g_HudvdSlots[i];
+            if (s->has_bbox) {
+                if (s->bx0 < 0.0f && s->vx < 0.0f) s->vx = -s->vx;
+                if (s->bx1 > HUDVD_VP_W && s->vx > 0.0f) s->vx = -s->vx;
+                if (s->by0 < 0.0f && s->vy < 0.0f) s->vy = -s->vy;
+                if (s->by1 > HUDVD_VP_H && s->vy > 0.0f) s->vy = -s->vy;
+            }
+            s->px += s->vx;
+            s->py += s->vy;
+            s->has_bbox = false;
+        }
+    }
+
+    // Flat-texture toggle: clear the texture cache so everything re-imports
+    // through gfx_upload_tex_filtered.
+    static int flattex_applied = 0;
+    static int grayscale_applied = 0;
+    if (gfx_flattex_mode != flattex_applied) {
+        flattex_applied = gfx_flattex_mode;
+        gfx_texture_cache_clear();
+    }
+    // The grayscale shader path serves three pd.* fx modes: gold-shiny
+    // (gfx_shiny_mode == 2), the generic screen tint (pd.screen_tint) and plain
+    // forced grayscale - in that priority order; turning one off re-applies
+    // the next.
+    {
+        int want_on = 0;
+        uint32_t want_col = 0x00ffffff;
+
+        if (gfx_shiny_mode == 2) {
+            want_on = 1;
+            want_col = 0x00ffc440; // gold: bright yellow-orange metal tint
+        } else if (gfx_screen_tint != 0) {
+            want_on = 1;
+            want_col = (uint32_t)gfx_screen_tint & 0x00ffffff;
+        } else if (gfx_force_grayscale) {
+            want_on = 1;
+        }
+
+        // grayscale_applied packs (on << 24 | colour) so a colour change while
+        // already on still re-applies.
+        const int want_key = want_on ? (int)(0x01000000u | want_col) : 0;
+        if (want_key != grayscale_applied) {
+            grayscale_applied = want_key;
+            rdp.grayscale = want_on != 0;
+            rdp.grayscale_color.r = (want_col >> 16) & 0xff;
+            rdp.grayscale_color.g = (want_col >> 8) & 0xff;
+            rdp.grayscale_color.b = want_col & 0xff;
+            rdp.grayscale_color.a = 255; // full lerp to luminance
+        }
+    }
+
     gfx_wapi->handle_events();
     gfx_wapi->get_dimensions(&gfx_current_window_dimensions.width, &gfx_current_window_dimensions.height,
                              &gfx_current_window_position_x, &gfx_current_window_position_y);
@@ -2684,6 +3120,23 @@ extern "C" void gfx_start_frame(void) {
 
     gfx_current_game_window_viewport.width = gfx_current_dimensions.width;
     gfx_current_game_window_viewport.height = gfx_current_dimensions.height;
+
+    // pd.* fx true internal render resolution: shrink the render dimensions
+    // while the window viewport keeps the real size - the different_size path
+    // below then routes the frame into game_framebuffer at the low size, and
+    // gfx_run upscales it (NEAREST) to the window. Width is derived from the
+    // window aspect so nothing stretches.
+    if (gfx_framebuffers_enabled && gfx_internal_res_chaos > 0 &&
+        (uint32_t)gfx_internal_res_chaos < gfx_current_window_dimensions.height) {
+        uint32_t h = gfx_internal_res_chaos < 120 ? 120u : (uint32_t)gfx_internal_res_chaos;
+        uint32_t w = (uint32_t)(h * gfx_current_window_dimensions.aspect_ratio + 0.5f);
+        if (w < 160) {
+            w = 160;
+        }
+        gfx_current_dimensions.width = w;
+        gfx_current_dimensions.height = h;
+        gfx_current_dimensions.aspect_ratio = (float)w / (float)h;
+    }
 
     if (gfx_current_dimensions.height != gfx_prev_dimensions.height) {
         for (auto& fb : framebuffers) {
@@ -2713,8 +3166,15 @@ extern "C" void gfx_start_frame(void) {
     if (gfx_framebuffers_enabled && (different_size || gfx_msaa_level > 1)) {
         game_renders_to_framebuffer = true;
         if (different_size) {
+            // Only the pd.* fx internal resolution gets here. Kai (be46717)
+            // renders this target UPRIGHT (invert_y=false), diverging from
+            // upstream's inverted offscreen convention: it is presented by
+            // the resolve_msaa blit in gfx_run and nothing samples it, and an
+            // inverted target both shows the frame upside down through that
+            // blit and mirrors every asymmetric scissor/viewport
+            // (gfx_adjust_viewport_or_scissor emits upright rects).
             gfx_rapi->update_framebuffer_parameters(game_framebuffer, gfx_current_dimensions.width,
-                                                    gfx_current_dimensions.height, gfx_msaa_level, true, true, true,
+                                                    gfx_current_dimensions.height, gfx_msaa_level, false, true, true,
                                                     true);
         } else {
             // MSAA framebuffer needs to be resolved to an equally sized target when complete, which must therefore
@@ -2791,7 +3251,9 @@ extern "C" void gfx_run(Gfx* commands) {
     gfx_rapi->start_frame();
     gfx_rapi->start_draw_to_framebuffer(game_renders_to_framebuffer ? game_framebuffer : 0,
                                         (float)gfx_current_dimensions.height / SCREEN_HEIGHT);
-    gfx_rapi->clear_framebuffer(true, false);
+    // pd.* fx "Hall of mirrors": skip the colour clear so last frame's pixels
+    // smear where new geometry doesn't overwrite them.
+    gfx_rapi->clear_framebuffer(!gfx_hom_mode, false);
     rdp.viewport_or_scissor_changed = true;
     rendering_state.viewport = {};
     rendering_state.scissor = {};
@@ -2812,6 +3274,36 @@ extern "C" void gfx_run(Gfx* commands) {
             gfx_submitted_debug_texture_valid = true;
         }
     }
+    // pd.* fx retro/post filter: filter the finished frame (world + viewmodel
+    // + HUD) in place, before the MSAA resolve / present path picks it up.
+    if ((gfx_retro_pixel_w > 0 || gfx_retro_colors != 0 || gfx_retro_fx != 0 || gfx_retro_warp != 0.0f ||
+         gfx_rotate180_mode || gfx_doublevision_mode) &&
+        gfx_rapi->retro_filter != nullptr) {
+        int cmode = 0, clevels = 0;
+        if (gfx_retro_colors == 1000) {
+            cmode = 3; // invert
+        } else if (gfx_retro_colors == 1001) {
+            cmode = 4; // Game Boy DMG greens
+        } else if (gfx_retro_colors == 1002) {
+            cmode = 5; // thermal palette
+        } else if (gfx_retro_colors == 1003) {
+            cmode = 6; // Virtual Boy reds
+        } else if (gfx_retro_colors == 1004) {
+            cmode = 7; // animated hue rotate
+        } else if (gfx_retro_colors == 1005) {
+            cmode = 8; // screen-space multi-rate hue field
+        } else if (gfx_retro_colors >= 256) {
+            cmode = 2; // RGB 3-3-2
+        } else if (gfx_retro_colors >= 2) {
+            cmode = 1; // N-level greyscale
+            clevels = gfx_retro_colors > 64 ? 64 : gfx_retro_colors;
+        }
+        gfx_rapi->retro_filter(gfx_retro_pixel_w, gfx_retro_pixel_h, cmode, clevels,
+                               gfx_retro_fx | (gfx_rotate180_mode ? 64 : 0) |
+                                   (gfx_doublevision_mode ? (128 | 256 | 512) : 0),
+                               gfx_retro_warp);
+    }
+
     gfxFramebuffer = 0;
 
     if (game_renders_to_framebuffer) {
@@ -2825,11 +3317,19 @@ extern "C" void gfx_run(Gfx* commands) {
             if (different_size) {
                 gfx_rapi->resolve_msaa_color_buffer(game_framebuffer_msaa_resolved, game_framebuffer);
                 gfxFramebuffer = (uintptr_t)gfx_rapi->get_framebuffer_texture_id(game_framebuffer_msaa_resolved);
+                // pd.* fx internal resolution: present the resolved low-res
+                // frame to the window (scaled NEAREST blit; GL can't scale
+                // from an MSAA source, hence via the resolved fb).
+                gfx_rapi->resolve_msaa_color_buffer(0, game_framebuffer_msaa_resolved);
             } else {
                 gfx_rapi->resolve_msaa_color_buffer(0, game_framebuffer);
             }
         } else {
             gfxFramebuffer = (uintptr_t)gfx_rapi->get_framebuffer_texture_id(game_framebuffer);
+            // pd.* fx internal resolution, no MSAA: game_framebuffer only
+            // differs from the window by size - present it with the scaled
+            // NEAREST blit.
+            gfx_rapi->resolve_msaa_color_buffer(0, game_framebuffer);
         }
     }
 

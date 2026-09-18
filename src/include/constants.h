@@ -964,6 +964,9 @@
 #define DESCRIPTION_HOLOTIP2       0x0a
 #define DESCRIPTION_DEVICETIP1     0x0b
 #define DESCRIPTION_DEVICETIP2     0x0c
+#ifndef PLATFORM_N64
+#define DESCRIPTION_LUADIRECTOR    0x0d /* port-only: Lua Director scroll-panel text */
+#endif
 
 #define DEVICE_NIGHTVISION 0x01
 #define DEVICE_XRAYSCANNER 0x02
@@ -1815,6 +1818,10 @@
 #define MENUDIALOGFLAG_1000              0x1000
 #ifndef PLATFORM_N64
 #define MENUDIALOGFLAG_LITERAL_TEXT      0x2000
+// Dialog is skipped from the pause-menu carousel while a chaos weapon lock
+// (g_ChaosGunLock / g_ChaosKnifeLock) is active — the pause-menu Inventory's
+// Equip is a weapon-switch avenue the locks must close. From Kai (be46717).
+#define MENUDIALOGFLAG_WEAPONLOCK_HIDDEN 0x8000
 #endif
 
 #define MENUDIALOGSTATE_PREOPEN    0
@@ -3828,6 +3835,13 @@
 #define PROJECTILEFLAG_NOTIMELIMIT 0x00004000
 #define PROJECTILEFLAG_INROOM      0x00008000
 #define PROJECTILEFLAG_00010000    0x00010000
+#ifndef PLATFORM_N64
+// Port-only: chaos "Rubber Objects" (Kai fork). Stamped on a projectile at its
+// drop (objSetDropped) so only items entering the world while the effect is on
+// keep bouncing; props already lying on the floor are never marked.
+// Self-clearing — projectileReset zeroes projectile->flags on the next launch.
+#define PROJECTILEFLAG_CHAOSRUBBER 0x00020000
+#endif
 #define PROJECTILEFLAG_LIGHTWEIGHT 0x40000000
 #define PROJECTILEFLAG_FREE        0x80000000
 

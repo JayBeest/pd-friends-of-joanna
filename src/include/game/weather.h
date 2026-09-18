@@ -22,5 +22,8 @@ bool weatherIsRoomWeatherProof(s32 room);
 Gfx *weatherRenderRain(Gfx *gdl, struct weatherdata *weather, s32 arg2);
 Gfx *weatherRenderSnow(Gfx *gdl, struct weatherdata *weather, s32 arg2);
 void weatherStop(void);
+#ifndef PLATFORM_N64
+s32 weatherChaosSet(s32 type, s32 intensity); /* pd.weather: 0 off / 1 rain / 2 snow on any stage */
+#endif
 
 #endif

@@ -651,8 +651,15 @@ bool eyespyTryLaunch(void)
 
 		propSetPerimEnabled(g_Vars.currentplayer->eyespy->prop, false);
 
+		// "Not enough room to launch " -- 26 bytes, and the weapon name that
+		// follows is a langGet result, which pd.weapon_rename can replace with
+		// up to CHAOS_LANG_OVERRIDE_MAX bytes. text is char[48].
 		// "Not enough room to launch "
+#ifndef PLATFORM_N64
+		snprintf(text, sizeof(text), "%s%s", langGet(L_MISC_218), bgunGetName(WEAPON_EYESPY));
+#else
 		sprintf(text, "%s%s", langGet(L_MISC_218), bgunGetName(WEAPON_EYESPY));
+#endif
 		hudmsgCreate(text, HUDMSGTYPE_DEFAULT);
 		launched = false;
 	} else {

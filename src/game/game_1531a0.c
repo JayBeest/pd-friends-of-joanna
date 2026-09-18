@@ -3126,6 +3126,22 @@ void textWrap(s32 wrapwidth, char *src, char *dst, struct fontchar *chars, struc
 				}
 			}
 
+#ifndef PLATFORM_N64
+			// curword is 32 bytes and nothing above bounds the word length.
+			// Vanilla text never has a 30+ character unbroken word; a Lua
+			// script (pd.hud_message) can hand one straight down here, so
+			// consume the tail of an over-long word without storing it.
+			if (isvalidchar && wordlen >= (s32)sizeof(curword) - 2) {
+				src++;
+
+				if (multibyte) {
+					src++;
+				}
+
+				continue;
+			}
+#endif
+
 			if (isvalidchar) {
 				curword[wordlen] = *src;
 				src++;
@@ -3247,6 +3263,15 @@ void textWrap(s32 wrapwidth, char *src, char *dst, struct fontchar *chars, struc
 		v1 = 0;
 
 		while (*src > ' ') {
+#ifndef PLATFORM_N64
+			// See the JPN branch: curword is 32 bytes with no bound on the
+			// word, and script text reaches this via hudmsgCreateFromArgs.
+			if (wordlen >= (s32)sizeof(curword) - 2) {
+				src++;
+				continue;
+			}
+#endif
+
 			curword[wordlen] = *src;
 			v1 += chars[*src - 0x21].width;
 			src++;

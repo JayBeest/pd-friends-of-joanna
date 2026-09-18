@@ -2,6 +2,7 @@
 #include "n_libaudio.h"
 #include "constants.h"
 #include "game/file.h"
+#include "game/chaosstate.h"
 #include "game/lv.h"
 #include "game/music.h"
 #include "bss.h"
@@ -689,6 +690,19 @@ struct audiorussmapping g_AudioRussMappings[] = {
 	/*0x01bb*/ { 0xf44f, AUDIOCONFIG_02 }, // President: "Damn it man. I say no and I mean no..."
 	/*0x01bc*/ { 0x0000, AUDIOCONFIG_00 },
 };
+
+#ifndef PLATFORM_N64
+/* The packed sound a config id maps to, or -1 when confignum is outside the
+ * table (pd.sound takes script ids; sndStart indexes the table unchecked). */
+s32 sndGetRussMappingSound(s32 confignum)
+{
+	if (confignum < 0 || confignum >= ARRAYCOUNT(g_AudioRussMappings)) {
+		return -1;
+	}
+
+	return (u16)g_AudioRussMappings[confignum].soundnum;
+}
+#endif
 
 struct audioconfig g_AudioConfigs[] = {
 	{ /* 0*/  200, 1000, 1200, -1, 100, -1,   0, 0 },
@@ -1685,6 +1699,69 @@ void snd0000fc40(s32 arg0)
 	// empty
 }
 
+#ifndef PLATFORM_N64
+// One-shot "start this track at a fraction of its length" latch (pd.song's
+// random-start jukebox, from the Kai fork). Keyed by tracknum so it can only be
+// consumed by the seqPlay that starts THAT track — the pause menu starting a
+// different menu track can't pick up a stale latch. Armed via seqSetNextSeek,
+// consumed (or discarded) by the next seqPlay of the matching track.
+static s32 g_SeqSeekTracknum = -1;
+static f32 g_SeqSeekFrac = 0.0f;
+
+void seqSetNextSeek(s32 tracknum, f32 frac)
+{
+	g_SeqSeekTracknum = tracknum;
+	g_SeqSeekFrac = frac;
+}
+
+// Jump a freshly-loaded sequence to frac (0..1) of its linear length before
+// n_alCSPPlay: measure the length with a marker-mode scan (arg 0 makes
+// loop-end events fall through instead of jumping back, so the scan
+// terminates even on loop-forever music and leaves the loops armed for real
+// playback), park the sequence on a marker at the target tick, and arm the
+// DEFERRED state chase (n_seqSeekChase) that the sequence player itself runs
+// when it starts (AL_SEQP_PLAY_EVT, n_csplayer.c __n_CSPChaseTo). The chase
+// — replaying the skipped program changes / controllers / tempo — cannot
+// happen here: the queued AL_SEQP_SEQ_EVT re-inits channel state from the
+// bank AFTER this function returns (wiping direct writes), and posting the
+// chase as n_alCSPSendMidi events overflows the event queue, which silently
+// drops the AL_SEQP_PLAY_EVT and leaves the player stuck-silent.
+static void seqSeekToFrac(struct seqinstance *seq, f32 frac)
+{
+	ALCSeq scan;
+	ALCSeqMarker marker;
+	N_ALEvent evt;
+	u32 target;
+	s32 guard;
+
+	// Linear length in sequence ticks
+	n_alCSeqNew(&scan, seq->data);
+	guard = 0;
+	do {
+		n_alCSeqNextEvent(&scan, &evt, 0);
+	} while (evt.type != AL_SEQ_END_EVT && ++guard < 0x80000);
+
+	if (guard >= 0x80000 || scan.lastTicks == 0) {
+		return;
+	}
+
+	target = (u32)(scan.lastTicks * frac);
+
+	if (target == 0) {
+		return;
+	}
+
+	n_alCSeqNewMarker(&seq->seq, &marker, target);
+	alCSeqSetLoc(&seq->seq, &marker);
+
+	n_seqSeekChase.seq = &seq->seq;
+	n_seqSeekChase.ticks = target;
+	n_seqSeekChase.markticks = marker.lastTicks;
+	// written last: seqp is the "armed" flag the player checks
+	n_seqSeekChase.seqp = seq->seqp;
+}
+#endif
+
 bool seqPlay(struct seqinstance *seq, s32 tracknum)
 {
 	u32 stack;
@@ -1790,6 +1867,17 @@ bool seqPlay(struct seqinstance *seq, s32 tracknum)
 	n_alCSeqNew(&seq->seq, seq->data);
 	n_alCSPSetSeq(seq->seqp, &seq->seq);
 	seqSetVolume(seq, seqGetVolume(seq));
+
+#ifndef PLATFORM_N64
+	if (tracknum == g_SeqSeekTracknum) {
+		if (g_SeqSeekFrac > 0.0f && g_SeqSeekFrac < 1.0f) {
+			seqSeekToFrac(seq, g_SeqSeekFrac);
+		}
+		g_SeqSeekTracknum = -1;
+		g_SeqSeekFrac = 0.0f;
+	}
+#endif
+
 	n_alCSPPlay(seq->seqp);
 
 	return true;
@@ -2247,6 +2335,26 @@ struct sndstate *sndStart(s32 arg0, s16 sound, struct sndstate **handle, s32 vol
 		return NULL;
 	}
 
+#ifndef PLATFORM_N64
+	// Chaos SFX shuffle (pd.sfx_shuffle): every one-shot sound plays as a
+	// random other sound. Remapped here — after the MP3 branch, right before
+	// the id-vs-g_NumSounds validity check — so any remap target is by
+	// construction a valid sound-table entry. Local LCG (not rngRandom) so game
+	// RNG state is untouched.
+	if (g_ChaosSfxShuffle && g_NumSounds > 0) {
+		static u32 shuffleseed = 0x2545f491;
+		shuffleseed = shuffleseed * 1664525u + 1013904223u;
+		sp40.id = (shuffleseed >> 8) % (u32)g_NumSounds;
+	}
+	// Chaos targeted replace (pd.sfx_replace): checked AFTER the shuffle so a
+	// full randomisation still wins when both are active, and bounds-gated like
+	// the shuffle so the target is a valid table entry.
+	if (g_ChaosSfxReplaceFrom >= 0 && sp40.id == (u32)g_ChaosSfxReplaceFrom
+			&& g_ChaosSfxReplaceTo >= 0 && g_ChaosSfxReplaceTo < g_NumSounds) {
+		sp40.id = (u32)g_ChaosSfxReplaceTo;
+	}
+#endif
+
 #if VERSION >= VERSION_NTSC_1_0
 	if (sp40.id < (u32)g_NumSounds) {
 		return func00033820(arg0, sp40.id, volume, pan & 0x7f, pitch, fxmix, IS4MB() ? 0 : fxbus, handle);
@@ -2343,6 +2451,34 @@ void sndPlayNosedive(s32 seconds)
 	g_SndNosediveVolume = 0;
 	g_SndNosediveHandle = NULL;
 }
+
+#ifndef PLATFORM_N64
+// Chaos "Soundboard" cleanup (Kai fork): stop every currently-playing sample
+// sound. The SFX shuffle remaps one-shots to random sounds, and a one-shot
+// remapped to a looping sound loops forever (the game only ever stops it as a
+// one-shot), so on effect end we hard-stop the lot. Walks the active sndstate
+// list like sndTick (thread priority raised); MIDI/sequenced music is a
+// separate system and is untouched. Captures ->next before audioStop in case
+// it delists.
+void sndStopAll(void)
+{
+	OSPri prevpri;
+	struct sndstate *state;
+	struct sndstate *next;
+
+	prevpri = osGetThreadPri(NULL);
+	osSetThreadPri(0, osGetThreadPri(&g_AudioManager.thread) + 1);
+
+	state = sndpGetHeadState();
+	while (state) {
+		next = (struct sndstate *)state->node.next;
+		audioStop(state);
+		state = next;
+	}
+
+	osSetThreadPri(0, prevpri);
+}
+#endif
 
 void sndStopNosedive(void)
 {

@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "../lib/naudio/n_sndp.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
@@ -355,9 +356,42 @@ Gfx *propRender(Gfx *gdl, struct prop *prop, bool xlupass)
 	case PROPTYPE_OBJ:
 	case PROPTYPE_DOOR:
 	case PROPTYPE_WEAPON:
+#ifndef PLATFORM_N64
+		// pd.ipod_ad "iPod Ad": objects/doors/weapons render pure white.
+		if (g_ChaosIpodAd) {
+			gDPFlatFillEXT(gdl++, 255, 255, 255);
+			gdl = objRender(prop, gdl, xlupass);
+			gDPFlatFillResetEXT(gdl++);
+			break;
+		}
+#endif
 		gdl = objRender(prop, gdl, xlupass);
 		break;
 	case PROPTYPE_CHR:
+#ifndef PLATFORM_N64
+		// pd.ipod_ad "iPod Ad": characters render pure black (silhouettes).
+		// Takes precedence over wireframe-enemies.
+		if (g_ChaosIpodAd) {
+			gDPFlatFillEXT(gdl++, 0, 0, 0);
+			gdl = chrRender(prop, gdl, xlupass);
+			gDPFlatFillResetEXT(gdl++);
+			break;
+		}
+		// pd.chr_wireframe "wireframe enemies": bracket hostile chr models
+		// (their held weapons render as children inside chrRender, so they
+		// wireframe too) in the scoped-wireframe marker. Friendly and
+		// non-combat chrs stay solid.
+		if (g_ChaosWireframeChrs && prop->chr != NULL
+				&& g_Vars.currentplayer != NULL
+				&& g_Vars.currentplayer->prop != NULL
+				&& g_Vars.currentplayer->prop->chr != NULL
+				&& chrCompareTeams(g_Vars.currentplayer->prop->chr, prop->chr, COMPARE_ENEMIES)) {
+			gDPChrWireframeEXT(gdl++, 1);
+			gdl = chrRender(prop, gdl, xlupass);
+			gDPChrWireframeEXT(gdl++, 0);
+			break;
+		}
+#endif
 		gdl = chrRender(prop, gdl, xlupass);
 		break;
 	case PROPTYPE_PLAYER:
@@ -720,10 +754,27 @@ struct prop *shotCalculateHits(s32 handnum, bool isshooting, struct coord *gunpo
 	}
 
 	if (hitbg && shotdata.gset.weaponnum != WEAPON_FARSIGHT) {
+		f32 bgdepth;
+
 		mtx4TransformVec(camGetWorldToScreenMtxf(), &sp694.pos, &sp658);
 
-		if (shotdata.distance > -sp658.z) {
-			shotdata.distance = -sp658.z;
+		bgdepth = -sp658.z;
+
+#ifndef PLATFORM_N64
+		// Chaos "Backwards bullets" (pd.backfire): this depth is measured
+		// along the CAMERA'S FORWARD axis, so the wall a reversed shot hits —
+		// which is behind the player — produces a NEGATIVE distance, and every
+		// downstream comparison inverts (a rear chr would only register when
+		// touching the player). With the ray flipped 180 degrees everything the
+		// shot can reach is behind the camera, so the magnitude is the true
+		// along-ray distance and restores "nearer than the wall wins".
+		if (g_ChaosBackfire && bgdepth < 0.0f) {
+			bgdepth = -bgdepth;
+		}
+#endif
+
+		if (shotdata.distance > bgdepth) {
+			shotdata.distance = bgdepth;
 		}
 	}
 
@@ -1548,6 +1599,17 @@ void handTickAttack(s32 handnum)
 				chrUncloakTemporarily(g_Vars.currentplayer->prop->chr);
 				mpstatsIncrementPlayerShotCount2(&gset, 0);
 
+#ifndef PLATFORM_N64
+				// Chaos "Everything Rockets" (pd.ammo_swap): the held gun keeps
+				// its own animation + fire rate, but when the swap weapon is a
+				// projectile launcher its projectile is spawned here instead of
+				// the hitscan shot — one per fire event. Hitscan swaps fall
+				// through (shotCreate uses the swap gset via
+				// gsetPopulateFromCurrentPlayer).
+				if (chaosAmmoSwapProjectile(weaponnum)) {
+					bgunCreateFiredProjectile(handnum);
+				} else
+#endif
 				if (weaponnum == WEAPON_SHOTGUN) {
 					shotCreate(handnum, true, true, 1, true);
 					shotCreate(handnum, true, true, 1, true);

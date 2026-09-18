@@ -13,6 +13,31 @@ void __n_setUsptFromTempo(N_ALCSPlayer *seqp, f32 tempo);
 void __n_CSPHandleMetaMsg(N_ALCSPlayer *seqp, N_ALEvent *event);
 ALMicroTime __n_vsDelta(N_ALVoiceState *vs, ALMicroTime t);
 
+#ifndef PLATFORM_N64
+// pd.song mid-song start (Kai fork; see n_libaudio.h): armed by snd.c
+// seqSeekToFrac, consumed in the AL_SEQP_PLAY_EVT case below.
+n_ALSeqSeekChase n_seqSeekChase;
+
+static void __n_CSPChaseTo(N_ALCSPlayer *seqp, u32 ticks);
+
+// Chaos instrument shuffle (pd.instrument_shuffle): while set, every MIDI
+// program change picks a random instrument from the loaded bank instead of the
+// one the song asked for. Defined in game/chaosstate.c as a u8; declared here
+// by hand because the game headers redefine bool. Program changes fire when a
+// track (re)starts, so the effect pairs the toggle with starting a song. Local
+// LCG (never call game RNG from the audio code).
+extern u8 g_ChaosInstrumentShuffle;
+
+// Beat-game drum anchor (lib/music.c sndGetMusicBeat).
+extern s32 g_SndBeatAnchorTime;
+extern void *g_SndBeatAnchorSeqp;
+extern s32 g_SndBeatKickKey;
+
+// Chaos "DJ" tempo (lib/music.c).
+extern void sndChaosMusicSetBase(void *seqp, s32 uspt);
+extern void sndChaosMusicApply(void *seqp);
+#endif
+
 u32 var8009c350[16];
 
 // 110000 occurs twice in this table...
@@ -289,6 +314,25 @@ ALMicroTime __n_CSPVoiceHandler(void *node)
 		case (AL_SEQP_PLAY_EVT):
 			if (seqp->state != AL_PLAYING) {
 				seqp->state = AL_PLAYING;
+#ifndef PLATFORM_N64
+				// pd.song mid-song start: the sequence was already parked at
+				// the seek marker (alCSeqSetLoc in seqPlay), but every
+				// program change / controller / tempo event before that point
+				// was skipped. Replay them through the real handlers now —
+				// the bank re-init (AL_SEQP_SEQ_EVT) has run by this point,
+				// and direct handler calls consume no event-queue nodes.
+				// The seq/markticks checks discard a stale arm whose track
+				// never reached PLAY (the sequence struct is reused per
+				// channel; a fresh load resets lastTicks to 0).
+				if (n_seqSeekChase.seqp == seqp) {
+					if (seqp->target != NULL
+							&& seqp->target == n_seqSeekChase.seq
+							&& (s32)seqp->target->lastTicks == n_seqSeekChase.markticks) {
+						__n_CSPChaseTo(seqp, n_seqSeekChase.ticks);
+					}
+					n_seqSeekChase.seqp = NULL;
+				}
+#endif
 				__n_CSPPostNextSeqEvent(seqp);
 				/* seqp must be AL_PLAYING before we call this routine. */
 			}
@@ -456,6 +500,60 @@ void __n_CSPHandleNextSeqEvent(N_ALCSPlayer *seqp)
 	}
 }
 
+#ifndef PLATFORM_N64
+// pd.song mid-song start: replay the state-bearing events of the first
+// `ticks` ticks of seqp->target from a scratch cursor — program changes
+// (with their bank-select CC 0x20 pairs, chronological order preserved),
+// controllers, pitch bends and tempo — so a seeked-into song has the right
+// instruments, mix and speed. Notes and aftertouch are transient and
+// skipped. CC 0x1e (host message) and CC 0x1a (FX_CTRL_6 — starts an mp3!)
+// must not refire; CC 0xfe is the internal ramp step; the CC 0xff
+// channel-vol ramp is applied instantly as its 0xfc set-now form so nothing
+// is posted to the event queue. Marker-mode scanning (arg 0) steps past
+// loop ends, so this terminates even on loop-forever tracks.
+static void __n_CSPChaseTo(N_ALCSPlayer *seqp, u32 ticks)
+{
+	ALCSeq scan;
+	N_ALEvent evt;
+	s32 guard = 0;
+
+	n_alCSeqNew(&scan, (u8 *)seqp->target->base);
+
+	while (scan.lastTicks < ticks && guard++ < 0x80000) {
+		n_alCSeqNextEvent(&scan, &evt, 0);
+
+		if (evt.type == AL_SEQ_END_EVT) {
+			break;
+		}
+
+		if (evt.type == AL_TEMPO_EVT) {
+			s32 tempo = ((s32)evt.msg.tempo.byte1 << 16) | ((s32)evt.msg.tempo.byte2 << 8) | evt.msg.tempo.byte3;
+			__n_setUsptFromTempo(seqp, (f32)tempo);
+		} else if (evt.type == AL_SEQ_MIDI_EVT) {
+			u8 status = evt.msg.midi.status & 0xf0;
+
+			if (status == AL_MIDI_NoteOn || status == AL_MIDI_NoteOff
+					|| status == AL_MIDI_PolyKeyPressure || status == AL_MIDI_ChannelPressure) {
+				continue;
+			}
+
+			if (status == AL_MIDI_ControlChange) {
+				if (evt.msg.midi.byte1 == 0x1e
+						|| evt.msg.midi.byte1 == AL_MIDI_FX_CTRL_6
+						|| evt.msg.midi.byte1 == 0xfe) {
+					continue;
+				}
+				if (evt.msg.midi.byte1 == 0xff) {
+					evt.msg.midi.byte1 = 0xfc;
+				}
+			}
+
+			__n_CSPHandleMIDIMsg(seqp, &evt);
+		}
+	}
+}
+#endif
+
 void func00034f0c(N_ALCSPlayer *seqp, u8 channel)
 {
 	N_ALVoiceState *vs;
@@ -556,6 +654,22 @@ void __n_CSPHandleMIDIMsg(N_ALCSPlayer *seqp, N_ALEvent *event)
 			sound = __n_lookupSoundQuick((N_ALSeqPlayer*)seqp, key, vel, chan);
 			ALFlagFailIf(!sound, seqp->debugFlags & NO_SOUND_ERR_MASK,
 					ERR_ALSEQP_NO_SOUND);
+
+#ifndef PLATFORM_N64
+			// Beat-game sync: anchor the beat phase to the KICK drum. Percussion
+			// instruments root ONE sample per key (keyMin == keyMax); melodic ones
+			// span key ranges. The kick is the lowest-key drum, learned live
+			// (g_SndBeatKickKey, reset per track). Record its sequence time so
+			// sndGetMusicBeat can phase-lock to the real drum instead of the
+			// arbitrary track-start reference.
+			if (sound && sound->keyMap
+					&& sound->keyMap->keyMin == sound->keyMap->keyMax
+					&& (s32)key <= g_SndBeatKickKey) {
+				g_SndBeatKickKey = (s32)key;
+				g_SndBeatAnchorTime = seqp->curTime;
+				g_SndBeatAnchorSeqp = (void *)seqp;
+			}
+#endif
 
 			config.priority = chanstate->priority;
 			config.fxBus = chanstate->unk0b;
@@ -1092,6 +1206,17 @@ void __n_CSPHandleMIDIMsg(N_ALCSPlayer *seqp, N_ALEvent *event)
 		/* sct 1/16/96 - We must have a valid bank in order to process the program change. */
 		sp90 = (seqp->chanState[chan].unk32 << 7) + key;
 
+#ifndef PLATFORM_N64
+		// Chaos instrument shuffle: any instrument in the loaded bank will
+		// do. Remapped before the instCount bounds check below, so the pick
+		// is always a valid bank entry.
+		if (g_ChaosInstrumentShuffle && seqp->bank->instCount > 0) {
+			static u32 instseed = 0xbadc0ffe;
+			instseed = instseed * 1664525u + 1013904223u;
+			sp90 = (instseed >> 8) % (u32)seqp->bank->instCount;
+		}
+#endif
+
 		if (sp90 < seqp->bank->instCount) {
 			ALInstrument *inst = seqp->bank->instArray[sp90];
 			__n_setInstChanState((N_ALSeqPlayer*)seqp, inst, chan);	/* sct 11/6/95 */
@@ -1226,6 +1351,16 @@ void __n_setUsptFromTempo(N_ALCSPlayer *seqp, f32 tempo)
 	} else {
 		seqp->uspt = 488;
 	}
+
+#ifndef PLATFORM_N64
+	// Chaos "DJ" (lib/music.c): this is the only code that knows the TRUE
+	// tempo, so hand the unscaled value over as the canonical base, then let
+	// music.c apply the rate. Deliberately does NOT scale seqp->uspt itself —
+	// doing that here as well as in sndChaosSetMusicRate is what made the two
+	// multiply and sent the tempo to 400+ BPM in Kai's first attempt.
+	sndChaosMusicSetBase(seqp, seqp->uspt);
+	sndChaosMusicApply(seqp);
+#endif
 }
 
 void __n_CSPPostNextSeqEvent(N_ALCSPlayer *seqp)

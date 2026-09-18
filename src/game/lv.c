@@ -12,6 +12,7 @@
 #include "game/bondview.h"
 #include "game/camdraw.h"
 #include "game/casing.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/chr.h"
 #include "game/chraction.h"
@@ -146,6 +147,50 @@ void setVar80084040(u32 value)
 	var80084040 = value;
 }
 
+#ifndef PLATFORM_N64
+// Lua SUPERHOT (pd.time_stop, from Kai): the movement/button rate, 0..1,
+// looped onto the player's actual input magnitude. The mouse-look trickle is
+// handled in lvTick (instant, never smoothed) and look stays 1:1 via
+// g_ChaosLookBank* (consumed in bondmove.c).
+// - Held buttons = full rate (firing/interacting/pausing tick normally).
+// - Move stick = proportional to deflection (walk slowly, time crawls).
+static f32 chaosTimeStopMoveRate(void)
+{
+	f32 rate = 0.0f;
+	s32 pad;
+
+	for (pad = 0; pad < 2; pad++) {
+		s32 sx = joyGetStickX(pad);
+		s32 sy = joyGetStickY(pad);
+		f32 mag;
+
+		if (joyGetButtons(pad, 0xffffffff) != 0) {
+			return 1.0f;
+		}
+
+		if (sx < 0) {
+			sx = -sx;
+		}
+		if (sy < 0) {
+			sy = -sy;
+		}
+		if (sy > sx) {
+			sx = sy;
+		}
+		// deadzone 12, full speed around 60 (the keyboard/stick walk range)
+		mag = (sx > 12) ? sx * (1.0f / 60.0f) : 0.0f;
+		if (mag > 1.0f) {
+			mag = 1.0f;
+		}
+		if (mag > rate) {
+			rate = mag;
+		}
+	}
+
+	return rate;
+}
+#endif
+
 void lvInit(void)
 {
 	g_Vars.lockscreen = 0;
@@ -242,6 +287,56 @@ void lvReset(s32 stagenum)
 {
 	lvFadeReset();
 
+#ifndef PLATFORM_N64
+	// Lua effect state (pd.*) must not carry into the next stage: the Lua
+	// state is torn down below without running any effect's stop().
+	chaosStateResetPerStage();
+
+	// World/audio effect state that lives outside chaosstate.c. The saved door
+	// and room lists point at the old stage's props and rooms, so they are
+	// forgotten, never restored.
+	{
+		extern void chraiLuaRoomHighlightReset(void);
+		extern void chraiLuaDoorsHoldReset(void);
+		extern void chraiLuaDoorsSpeedsReset(void);
+		extern void audioSetHold(s32 on);
+
+		audioSetHold(0); // a stage change mid-Fake-Crash must not strand the held audio
+		chraiLuaRoomHighlightReset();
+		chraiLuaDoorsHoldReset();
+		chraiLuaDoorsSpeedsReset();
+		if (g_ChaosMusicRate != 1.0f) {
+			sndChaosSetMusicRate(1.0f); // pd.music_rate (only if moved: it rewrites every player's uspt)
+		}
+		g_MusicSuppressed = 0;      // never carry a pd.stage_music silence latch across stages
+	}
+#endif
+#ifndef PLATFORM_N64
+	{
+		// pd.spawn_sentry's per-stage count and pd.possess_spawn's fly state
+		// (luaai_bridge_chrs.c, port/src/possess.c): their props die with the
+		// stage.
+		extern void chraiLuaResetSentries(void);
+		extern void luaPossessStageReset(void);
+		chraiLuaResetSentries();
+		luaPossessStageReset();
+	}
+#endif
+
+#ifndef PLATFORM_N64
+	// Lua input effects (pd.input_delay, pd.deadzone, pd.sens_boost) keep
+	// their state in input.c.
+	{
+		extern void inputSetChaosInputDelay(s32 frames);
+		extern void inputSetChaosDeadzone(s32 dz);
+		extern void inputSetChaosSensMult(f32 mult);
+
+		inputSetChaosInputDelay(0);
+		inputSetChaosDeadzone(0);
+		inputSetChaosSensMult(1.0f);
+	}
+#endif
+
 	var80084014 = false;
 	var80084010 = 0;
 
@@ -310,6 +405,15 @@ void lvReset(s32 stagenum)
 	modelmgrSetLvResetting(true);
 	surfaceReset();
 	texReset();
+#ifndef PLATFORM_N64
+	// pd.* fx: renderer, video and HUD effect state that lives outside
+	// chaosStateResetPerStage (fast3d globals, the fps cap, the tex_override
+	// image, hudvd). Must not carry into the next stage.
+	{
+		extern void luaFxResetPerStage(void);
+		luaFxResetPerStage();
+	}
+#endif
 	textReset();
 	hudmsgsReset();
 
@@ -1337,7 +1441,14 @@ Gfx *lvRender(Gfx *gdl)
 					g_Vars.currentplayer->lookingatprop.prop = NULL;
 				}
 
-				if (gsetHasFunctionFlags(&g_Vars.currentplayer->hands[0].gset, FUNCFLAG_THREATDETECTOR)) {
+				// pd.terminator forces the threat detector on for ANY weapon;
+				// otherwise only a gun whose current function carries
+				// FUNCFLAG_THREATDETECTOR (the CMP150 secondary) tracks targets.
+				if (gsetHasFunctionFlags(&g_Vars.currentplayer->hands[0].gset, FUNCFLAG_THREATDETECTOR)
+#ifndef PLATFORM_N64
+						|| g_ChaosTerminator
+#endif
+						) {
 					lvFindThreats();
 				} else if (weaponHasFlag(bgunGetWeaponNum(HAND_RIGHT), WEAPONFLAG_AIMTRACK)) {
 					s32 j;
@@ -1748,7 +1859,22 @@ Gfx *lvRender(Gfx *gdl)
 				}
 
 				gdl = skyRenderOverexposure(gdl);
+#ifndef PLATFORM_N64
+				// HUDVD: the active (weapon/gadget select) menu bounces too.
+				// pd.hud_off hides it with the rest of the HUD elements.
+				{
+					extern Gfx *hudvdEmit(Gfx *gdl, s32 slot);
+					extern Gfx *hudvdReset(Gfx *gdl);
+
+					if (!g_ChaosHudOff) {
+						gdl = hudvdEmit(gdl, 6);
+						gdl = amRender(gdl);
+						gdl = hudvdReset(gdl);
+					}
+				}
+#else
 				gdl = amRender(gdl);
+#endif
 				mtx00016748(1);
 
 				if (g_Vars.currentplayer->menuisactive) {
@@ -2168,6 +2294,62 @@ void lvTick(void)
 		s32 slowmo = lvGetSlowMotionType();
 		g_Vars.lvupdate240 = g_Vars.diffframe240;
 
+#ifndef PLATFORM_N64
+		// Lua SUPERHOT (pd.time_stop, from Kai): a literal time stop. The game
+		// tick advances only as fast as the player is acting (the lvIsPaused
+		// mechanism above, not slow-mo; lvupdate60/freal derive from this
+		// below, so the whole sim scales). The movement rate eases in and out
+		// (~1/3s ramp); the mouse-look trickle (0.2) is instant and
+		// unsmoothed. Fractional ticks accumulate so low rates emit one sim
+		// tick every few frames instead of rounding to zero forever.
+		if (g_ChaosTimeStop && !g_Vars.in_cutscene) {
+			extern void inputMouseGetScaledDelta(f32 *dx, f32 *dy);
+			static f32 acc = 0.0f;
+			static f32 smoothed = 0.0f;
+			f32 mdx;
+			f32 mdy;
+			f32 rate;
+			f32 k;
+			s32 ticks;
+			s32 orig = g_Vars.lvupdate240;
+
+			// frame-rate-independent ease toward the raw movement rate
+			k = 0.1f * orig * 0.25f;
+			if (k > 1.0f) {
+				k = 1.0f;
+			}
+			smoothed += (chaosTimeStopMoveRate() - smoothed) * k;
+			rate = smoothed;
+
+			// looking advances time slightly, immediately (never smoothed: a
+			// head turn must not spool time up or leave it running down)
+			inputMouseGetScaledDelta(&mdx, &mdy);
+			if ((mdx != 0.0f || mdy != 0.0f) && rate < 0.2f) {
+				rate = 0.2f;
+			}
+
+			acc += orig * rate;
+			ticks = (s32)acc;
+			acc -= ticks;
+
+			if (ticks > orig) {
+				ticks = orig;
+			}
+
+			if (ticks == 0) {
+				// no sim tick this frame: bank the look delta so it isn't lost
+				// (bondmove adds it on the next ticking frame)
+				g_ChaosLookBankX += mdx;
+				g_ChaosLookBankY += mdy;
+			}
+
+			g_Vars.lvupdate240 = ticks;
+		} else {
+			g_ChaosLookBankX = 0.0f;
+			g_ChaosLookBankY = 0.0f;
+		}
+#endif
+
 		if (slowmo == SLOWMOTION_ON) {
 			if (g_Vars.speedpillon == false || g_Vars.in_cutscene) {
 				if (g_Vars.lvupdate240 > LV_SLOMO_TICK_CAP) {
@@ -2224,6 +2406,28 @@ void lvTick(void)
 			}
 		}
 	}
+
+#ifndef PLATFORM_N64
+	// pd.fake_crash: a HARD time freeze - the whole sim stops dead for a
+	// real-time span while the frame keeps redrawing the same instant.
+	// The countdown consumes diffframe240 (REAL frame time), never
+	// lvupdate240 - a sim-time countdown could not advance while the sim is
+	// frozen. For the same reason the release can NOT come from a Lua effect's
+	// own timer; this counter is the only thing that ends it. Like Kai, it
+	// only counts while the game is running (not paused, not in a cutscene).
+	if (g_ChaosFakeCrash240 > 0 && !g_Vars.in_cutscene && !lvIsPaused() && !mpIsPaused()) {
+		extern void luaFxFakeCrashRelease(void);
+
+		g_ChaosFakeCrash240 -= g_Vars.diffframe240;
+
+		if (g_ChaosFakeCrash240 <= 0) {
+			g_ChaosFakeCrash240 = 0;
+			luaFxFakeCrashRelease();
+		} else {
+			g_Vars.lvupdate240 = 0;
+		}
+	}
+#endif
 
 	g_Vars.lvupdate60 = g_Vars.lvupdate240 + g_Vars.lvupdate240rem;
 	g_Vars.lvupdate240rem = g_Vars.lvupdate60 & 3;

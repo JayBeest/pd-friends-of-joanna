@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/lang.h"
 #include "constants.h"
 #include "game/propsnd.h"
 #include "game/game_0b0fd0.h"
@@ -615,6 +616,20 @@ void hudmsgCreate(char *text, s32 type)
 			-1, 0);
 }
 
+#ifndef PLATFORM_N64
+// Lua-facing wrapper (pd.hud_message; from the Perfect Dark Kai fork,
+// be46717) so a script can pop a HUD message the same way the engine does.
+// hudmsgCreate dereferences g_Vars.currentplayer, so no-op when there's no
+// live local player (title / menus / between missions).
+void hudmsgCreateLua(char *text, s32 type)
+{
+	if (text && g_Vars.currentplayer && g_Vars.currentplayer->prop
+			&& type >= 0 && type < ARRAYCOUNT(g_HudmsgTypes)) {
+		hudmsgCreate(text, type);
+	}
+}
+#endif
+
 void hudmsgCreateWithFlags(char *text, s32 type, u32 flags)
 {
 	hudmsgCreateFromArgs(text, type,
@@ -1167,6 +1182,13 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 			xmarginaextra = 0;
 			msg = &g_HudMessages[index];
 			wrapwidth = hudmsg0f0ddb1c(&xmarginaextra, conf16);
+#ifndef PLATFORM_N64
+			// Chaos text gags (Kai be46717): HUD text is COPIED into the slot
+			// here, so the langGet-side transform never reaches messages
+			// created from non-langGet strings (Lua text) or pre-formatted
+			// buffers. Transform at the choke instead (no-op when off).
+			text = langChaosTransform(text);
+#endif
 			textMeasure(&textheight, &textwidth, text, *conf04, *conf08, 0);
 
 #if VERSION >= VERSION_JPN_FINAL
@@ -1175,6 +1197,44 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 			if (textwidth > wrapwidth)
 #endif
 			{
+#ifndef PLATFORM_N64
+				// stacktext is char[400] and the loop bound let writeindex
+				// REACH 400, so the '\n' and the '\0' below landed at [400]
+				// and [401]. Vanilla text never got close; langChaosTransform
+				// above can hand back a string LONGER than the caller's (up
+				// to UWU_BIGLEN), and Lua text arrives here unmeasured, so
+				// the cap is load-bearing now. Leave two bytes for them.
+				//
+				// textWrap's output is longer than its input (a newline, plus
+				// g_WrapIndentCount spaces, per wrapped word) and msg->text is
+				// only 400 bytes, so wrap into a scratch and copy in bounded.
+				// 1024 covers a 398-byte input at one extra byte per word;
+				// nothing in the build calls textSetWrapIndent, so the indent
+				// term is zero (see still-open note if that ever changes).
+				char wrapped[1024];
+
+				i = 0;
+				writeindex = 0;
+
+				while (i < (s32)sizeof(stacktext) - 2 && text[i] != '\0') {
+					if (text[i] != '\n') {
+						stacktext[writeindex++] = text[i];
+					}
+
+					i++;
+				}
+
+				stacktext[writeindex++] = '\n';
+				stacktext[writeindex] = '\0';
+
+				wrapped[0] = '\0';
+				textWrap(wrapwidth, stacktext, wrapped, *conf04, *conf08);
+				wrapped[sizeof(wrapped) - 1] = '\0';
+
+				strncpy(msg->text, wrapped, sizeof(msg->text) - 1);
+				msg->text[sizeof(msg->text) - 1] = '\0';
+				textMeasure(&textheight, &textwidth, msg->text, *conf04, *conf08, 0);
+#else
 				i = 0;
 				writeindex = 0;
 
@@ -1191,9 +1251,10 @@ void hudmsgCreateFromArgs(char *text, s32 type, s32 conf00, s32 conf01, s32 conf
 
 				textWrap(wrapwidth, stacktext, msg->text, *conf04, *conf08);
 				textMeasure(&textheight, &textwidth, msg->text, *conf04, *conf08, 0);
+#endif
 			} else {
-				strncpy(msg->text, text, 399);
-				msg->text[399] = '\0';
+				strncpy(msg->text, text, sizeof(msg->text) - 1);
+				msg->text[sizeof(msg->text) - 1] = '\0';
 			}
 
 			msg->flags = flags;

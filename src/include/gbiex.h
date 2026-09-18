@@ -207,6 +207,27 @@
 #define G_LOADTLUT2                  0x46
 #define G_SETTEXINFO_EXT             0x47
 
+// pd.* fx effects (Lua API; from the Perfect Dark Kai fork, be46717, where
+// they are 0x4c-0x4e and documented in docs/PORT_CHAOS.md). Honoured by the
+// fast3d renderer; the game emits them only while the matching effect is on.
+//
+// Scoped wireframe bracket ("wireframe enemies"): draws issued while the scope
+// is set render as polygon outlines. w1 = 1 begin / 0 end. Emitted around
+// hostile chr models in prop.c's render dispatch; the renderer flushes on
+// toggle, and force-clears the scope each gfx_start_frame so a lost END can't
+// leak.
+#define G_CHRWIREFRAME_EXT           0x48
+// HUDVD: every subsequent 2D rect is translated by the renderer-owned offset
+// of the slot in w0's low 16 bits until a slot of -1 ends the bracket.
+// Emitted around each HUD element so they bounce DVD-style in independent
+// directions; force-cleared each gfx_start_frame.
+#define G_HUDOFFSET_EXT              0x49
+// "iPod Ad": while the silhouette mode is active, set the flat fill colour
+// used for subsequent depth-tested 3D geometry (w0 low bit = 1, colour in w1),
+// or reset to the standing wall default (bit 0). Emitted around each prop
+// class in propRender and around the viewmodel.
+#define G_FLATFILL_EXT               0x4a
+
 /* G_EXTRAGEOMETRYMODE flags */
 
 #define G_INVERT_CULLING_EXT     0x00000001
@@ -217,6 +238,11 @@
 #define G_ASPECT_MODE_EXT        (G_ASPECT_CENTER_EXT | G_ASPECT_WIDE_EXT)
 #define G_NO_CLIPPING_EXT        0x00000100
 #define G_MODULATE_EXT           0x00000200 // this should really go into OTHERMODE_H, but for some reason I can't get it to work
+// Geometry tagged with this bit is exempt from the pd.* fx vertex effects
+// (screen roll, wobble, shiny). Kai (be46717) uses it to keep 2D UI drawn as
+// 3D geometry un-mirrored under its mirror cheat, which this port lacks; the
+// renderer honours it the same way.
+#define G_NOMIRROR_EXT           0x00000400
 
 /* Extra texture filtering mode */
 
@@ -264,6 +290,42 @@
 }
 
 #define gDPSetGrayscaleColorEXT(pkt, r, g, b, lerp) DPRGBColor(pkt, G_SETINTENSITY_EXT, r, g, b, lerp)
+
+#define gDPChrWireframeEXT(pkt, state)                 \
+{                                                      \
+    Gfx* _g = (Gfx*)(pkt);                             \
+                                                       \
+    _g->words.w0 = _SHIFTL(G_CHRWIREFRAME_EXT, 24, 8); \
+    _g->words.w1 = state;                              \
+}
+
+// HUDVD: begin the bracket of slot x (y unused, 0); a slot of -1 ends it.
+#define gDPHudOffsetEXT(pkt, x, y)                                             \
+{                                                                             \
+    Gfx* _g = (Gfx*)(pkt);                                                     \
+                                                                             \
+    _g->words.w0 = _SHIFTL(G_HUDOFFSET_EXT, 24, 8) | _SHIFTL((s16)(x), 0, 16); \
+    _g->words.w1 = _SHIFTL((s16)(y), 0, 16);                                  \
+}
+
+// iPod Ad: set the flat fill colour for subsequent 3D geometry (w0 low bit =
+// 1), or reset to the wall default (bit 0). Colour is 0..255 per channel.
+#define gDPFlatFillEXT(pkt, r, g, b)                                    \
+{                                                                       \
+    Gfx* _g = (Gfx*)(pkt);                                              \
+                                                                        \
+    _g->words.w0 = _SHIFTL(G_FLATFILL_EXT, 24, 8) | 1;                  \
+    _g->words.w1 = (((u32)(r) & 0xff) << 16) | (((u32)(g) & 0xff) << 8) \
+            | ((u32)(b) & 0xff);                                        \
+}
+
+#define gDPFlatFillResetEXT(pkt)                       \
+{                                                      \
+    Gfx* _g = (Gfx*)(pkt);                             \
+                                                       \
+    _g->words.w0 = _SHIFTL(G_FLATFILL_EXT, 24, 8);     \
+    _g->words.w1 = 0;                                  \
+}
 
 // NOTE: these will function correctly only if you pass `gdl++` as `pkt`
 

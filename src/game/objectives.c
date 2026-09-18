@@ -1,5 +1,6 @@
 #include <ultra64.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/chraction.h"
 #include "game/debug.h"
 #include "game/prop.h"
@@ -335,6 +336,17 @@ s32 objectiveCheck(s32 index)
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Chaos "objective scramble" (pd.objective_force, Kai fork): 1 = force
+	// INCOMPLETE, 2 = force COMPLETE, 0 = off. Display AND the mission-end
+	// all-complete check both route through objectiveCheck, so a held-down
+	// objective blocks completion until the effect releases it.
+	if (index >= 0 && index < MAX_OBJECTIVES && g_ChaosObjectiveForce[index] != 0) {
+		objstatus = g_ChaosObjectiveForce[index] == 2
+				? OBJECTIVE_COMPLETE : OBJECTIVE_INCOMPLETE;
+	}
+#endif
+
 	if (debugForceAllObjectivesComplete()) {
 		objstatus = OBJECTIVE_COMPLETE;
 	}
@@ -393,6 +405,15 @@ void objectivesCheckAll(void)
 
 			if (g_ObjectiveStatuses[i] != status) {
 				g_ObjectiveStatuses[i] = status;
+
+#ifndef PLATFORM_N64
+				// Per-objective completion event. Edge-triggered on the
+				// transition to COMPLETE; stage + difficulty key it uniquely.
+				if (status == OBJECTIVE_COMPLETE) {
+					extern void luaEmitObjective(s32 stageindex, s32 difficulty, s32 objindex, s32 status);
+					luaEmitObjective(g_MissionConfig.stageindex, lvGetDifficulty(), i, status);
+				}
+#endif
 
 				if (objectiveGetDifficultyBits(i) & (1 << lvGetDifficulty())) {
 #if VERSION >= VERSION_JPN_FINAL

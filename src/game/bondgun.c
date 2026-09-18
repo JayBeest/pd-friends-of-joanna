@@ -3,6 +3,7 @@
 #include "../lib/naudio/n_sndp.h"
 #include "game/bondmove.h"
 #include "game/bondwalk.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/chraction.h"
 #include "game/inv.h"
@@ -58,6 +59,7 @@
 #include "types.h"
 #ifndef PLATFORM_N64
 #include "game/stagetable.h"
+#include "game/atan2f.h"
 #include "video.h"
 #include "platform.h"
 #endif
@@ -201,6 +203,61 @@ char var800700bc[][10] = {
 
 #ifndef PLATFORM_N64
 s32 g_BgunGeMuzzleFlashes = false;
+
+// Only bullet-firing GUNS jam (pd.weapon_jam, g_ChaosWeaponJam). Unarmed, the
+// combat knife, and thrown/planted weapons (grenades, N-bomb, mines) have no
+// dry-fire click to route to.
+// Kai (be46717): the chaos weapon state itself lives in game/chaosstate.c.
+static bool bgunWeaponIsJammable(s32 weaponnum)
+{
+	switch (weaponnum) {
+	case WEAPON_NONE:
+	case WEAPON_UNARMED:
+	case WEAPON_COMBATKNIFE:
+	case WEAPON_GRENADE:
+	case WEAPON_NBOMB:
+	case WEAPON_TIMEDMINE:
+	case WEAPON_PROXIMITYMINE:
+	case WEAPON_REMOTEMINE:
+	case WEAPON_ECMMINE:
+		return false;
+	}
+	return true;
+}
+
+// Temu partial-clip memory for EVERY weapon (g_ChaosTemuSpent): vanilla only
+// remembers the crossbow/shotgun/magnums' partial clips across switches
+// (gunroundsspent, 4 slots), so switching away and back handed any other gun
+// a fresh mag — a free, animation-less reload that gutted Temu Magazine.
+// Same mechanism, chaos-scoped side table: [hand][weaponnum][ammoindex],
+// same countdown encoding as gunroundsspent (missing rounds in the high
+// bits, decayed in bgunTickUnequippedReload so holstered guns trickle-reload
+// one round per ~4.3s like the magnum family).
+//
+// The table is shared by TWO effects. Reload Denied has exactly the same hole
+// Temu did: refusing the reload transition means nothing if switching away and
+// back hands the gun a fresh clip, because vanilla's gunroundsspent memory only
+// covers the crossbow/shotgun/magnum/LX. So the memory is armed for either
+// effect.
+static bool bgunChaosClipMemoryActive(void)
+{
+	return g_ChaosTemuMag || g_ChaosNoReload;
+}
+
+void bgunChaosTemuSpentClear(void)
+{
+	s32 h;
+	s32 w;
+	s32 a;
+
+	for (h = 0; h < 2; h++) {
+		for (w = 0; w < 96; w++) {
+			for (a = 0; a < 2; a++) {
+				g_ChaosTemuSpent[h][w][a] = 0;
+			}
+		}
+	}
+}
 #endif
 
 #if !MATCHING || VERSION >= VERSION_NTSC_1_0
@@ -506,6 +563,37 @@ void bgunTickUnequippedReload(void)
 			g_Vars.currentplayer->hands[i].gunroundsspent[j] = spent;
 		}
 	}
+
+#ifndef PLATFORM_N64
+	// Chaos Temu Magazine: decay the all-weapons partial-clip memory the same
+	// way, so holstered guns trickle-reload like the magnum family does.
+	//
+	// Deliberately gated on TEMU ALONE, not bgunChaosClipMemoryActive(). The
+	// trickle IS a reload, just a slow one — under Reload Denied it would be a
+	// loophole (park a gun for a minute, collect rounds), and that effect's whole
+	// premise is that reloading does not happen. Temu keeps it because there the
+	// point is that a reload chambers too little, not that it never happens. With
+	// both effects live Temu's semantics win, which is the harmless direction.
+	if (g_ChaosTemuMag) {
+		s32 w;
+
+		for (i = 0; i < 2; i++) {
+			for (w = 0; w < 96; w++) {
+				for (j = 0; j < 2; j++) {
+					u16 spent = g_ChaosTemuSpent[i][w][j];
+
+					if (spent > g_Vars.lvupdate60) {
+						spent -= g_Vars.lvupdate60;
+					} else {
+						spent = 0;
+					}
+
+					g_ChaosTemuSpent[i][w][j] = spent;
+				}
+			}
+		}
+	}
+#endif
 }
 
 bool bgunTestGunVisCommand(struct gunviscmd *cmd, struct hand *hand)
@@ -1093,6 +1181,23 @@ void bgun0f098df8(s32 weaponfunc, struct handweaponinfo *info, struct hand *hand
 				amount -= hand->gunroundsspent[reloadindex] >> 8;
 #endif
 			}
+#ifndef PLATFORM_N64
+			// Chaos Temu Magazine / Reload Denied: apply the all-weapons
+			// partial-clip memory (stored in bgunFreeWeapon) so a re-equip
+			// restores the clip you holstered instead of granting a fresh mag.
+			else if (checkunequipped && bgunChaosClipMemoryActive()
+					&& info->weaponnum > 0 && info->weaponnum < 96) {
+				s32 chaoshand = (hand == &g_Vars.currentplayer->hands[HAND_LEFT]) ? HAND_LEFT : HAND_RIGHT;
+#if VERSION >= VERSION_PAL_BETA
+				amount -= g_ChaosTemuSpent[chaoshand][info->weaponnum][ammoindex] / TICKS(256);
+#else
+				amount -= g_ChaosTemuSpent[chaoshand][info->weaponnum][ammoindex] >> 8;
+#endif
+				if (amount < 0) {
+					amount = 0;
+				}
+			}
+#endif
 
 			if (onebullet) {
 				amount = 1;
@@ -1111,8 +1216,40 @@ void bgun0f098df8(s32 weaponfunc, struct handweaponinfo *info, struct hand *hand
 			}
 #endif
 
-			hand->loadedammo[ammoindex] += amount;
-			g_Vars.currentplayer->ammoheldarr[info->gunctrl->ammotypes[ammoindex]] -= amount;
+#ifndef PLATFORM_N64
+			// Chaos "Temu Magazine": a knockoff mag. Every reload pays for a
+			// WHOLE magazine (clipsize) from the reserve — the price of a fresh
+			// full mag, NOT just the rounds that fit — but the mag only actually
+			// holds a random 1-100% of capacity, and slotting it REPLACES the
+			// current clip (so a bad mag can leave you with fewer rounds than you
+			// had). amount >= 2 keeps single-shell / incremental reloads normal.
+			// !checkunequipped: an EQUIP is not a reload — it restores the
+			// holstered clip via the memory above, it must never roll (the
+			// weapon-switch free-reroll exploit).
+			if (g_ChaosTemuMag && amount >= 2 && !checkunequipped) {
+				s32 clipsize = hand->clipsizes[ammoindex];
+				s32 reserve = g_Vars.currentplayer->ammoheldarr[info->gunctrl->ammotypes[ammoindex]];
+				s32 cost = clipsize;
+				s32 loaded;
+
+				if (cost > reserve) {
+					cost = reserve; // can't pay more than you hold
+				}
+				loaded = clipsize * (1 + (s32)(rngRandom() % 100)) / 100;
+				if (loaded < 1) {
+					loaded = 1;
+				}
+				if (loaded > cost) {
+					loaded = cost; // can't chamber more than you paid for
+				}
+				hand->loadedammo[ammoindex] = loaded; // fresh mag replaces the clip
+				g_Vars.currentplayer->ammoheldarr[info->gunctrl->ammotypes[ammoindex]] -= cost;
+			} else
+#endif
+			{
+				hand->loadedammo[ammoindex] += amount;
+				g_Vars.currentplayer->ammoheldarr[info->gunctrl->ammotypes[ammoindex]] -= amount;
+			}
 
 			if (info->definition->ammos[ammoindex]->flags & AMMOFLAG_NORESERVE) {
 				g_Vars.currentplayer->ammoheldarr[info->gunctrl->ammotypes[ammoindex]] = 0;
@@ -1328,6 +1465,23 @@ s32 bgunTickIncIdle(struct handweaponinfo *info, s32 handnum, struct hand *hand,
 			}
 		} else {
 			// Clip has ammo
+#ifndef PLATFORM_N64
+			// Chaos "Weapon jam" (pd.weapon_jam): trigger pulls route to the
+			// empty-clip state instead of ATTACK — the dry-fire click plays,
+			// no shot happens, no ammo is spent. Mode 1 jams every pull; mode 2
+			// ("jam v2") dry-fires ~35% of pulls and lets the rest through — but
+			// a shot that fires jams the remainder of the magazine (drained at
+			// the decrement site; reload to clear).
+			if ((g_ChaosWeaponJam == 1
+					|| (g_ChaosWeaponJam == 2 && (rngRandom() % 100) < 35))
+					&& hand->triggeron && bgunWeaponIsJammable(info->weaponnum)) {
+				hand->unk0cc8_01 = false;
+
+				if (bgunSetState(handnum, HANDSTATE_ATTACKEMPTY)) {
+					return lvupdate;
+				}
+			}
+#endif
 			if (hand->triggeron || (hand->activatesecondary && hand->gset.weaponfunc == FUNC_SECONDARY)) {
 				if (info->weaponnum != WEAPON_NONE) {
 					g_Vars.currentplayer->doautoselect = false;
@@ -1916,6 +2070,14 @@ void bgun0f09a6f8(struct handweaponinfo *info, s32 handnum, struct hand *hand, s
 		}
 	}
 
+#ifndef PLATFORM_N64
+	// Chaos "Quad handed" (pd.double_shots): double the shots this fire event
+	// takes. The ammo decrement below uses the same count.
+	if (g_ChaosDoubleShots && hand->firing && hand->shotstotake > 0) {
+		hand->shotstotake *= 2;
+	}
+#endif
+
 	hand->burstbullets += hand->shotstotake;
 
 	if (func->flags & FUNCFLAG_NOMUZZLEFLASH) {
@@ -1953,6 +2115,23 @@ void bgun0f09a6f8(struct handweaponinfo *info, s32 handnum, struct hand *hand, s
 				hand->shotstotake += hand->loadedammo[func->ammoindex];
 				hand->loadedammo[func->ammoindex] = 0;
 			}
+
+#ifndef PLATFORM_N64
+			// Chaos: "Inflated bullets" (pd.ammo_cost — each shot spends
+			// extra rounds; the shots themselves are unchanged) and "jam v2"
+			// (pd.weapon_jam(2) — a shot that fired jams the rest of the
+			// magazine: drain it so the player must reload to clear).
+			if (g_ChaosAmmoCost > 1) {
+				hand->loadedammo[func->ammoindex] -=
+						hand->shotstotake * (g_ChaosAmmoCost - 1);
+			}
+			if (g_ChaosWeaponJam == 2 && bgunWeaponIsJammable(hand->gset.weaponnum)) {
+				hand->loadedammo[func->ammoindex] = 0;
+			}
+			if (hand->loadedammo[func->ammoindex] < 0) {
+				hand->loadedammo[func->ammoindex] = 0;
+			}
+#endif
 		}
 
 		switch (func->type & 0xff00) {
@@ -1997,6 +2176,14 @@ void bgun0f09a6f8(struct handweaponinfo *info, s32 handnum, struct hand *hand, s
 
 			if (gsetGetSingleShootSound(&hand->gset)) {
 				struct sndstate *handle = NULL;
+#ifndef PLATFORM_N64
+				{
+					/* declared in game/luaai.h; local extern keeps this TU
+					 * self-sufficient regardless of include ordering */
+					extern void luaEmitWeaponFire(s32 weaponnum, s32 playernum);
+					luaEmitWeaponFire((s32)hand->gset.weaponnum, g_Vars.currentplayernum);
+				}
+#endif
 
 				if (hand->audiohandle2 == NULL) {
 					handle = sndStart(var80095200, gsetGetSingleShootSound(&hand->gset), &hand->audiohandle2, -1, -1, -1, -1, -1);
@@ -2435,6 +2622,16 @@ bool bgunTickIncAttackingMelee(s32 handnum, struct hand *hand)
 		if (hand->statecycles == 0) {
 			hand->firing = true;
 			hand->attacktype = HANDATTACKTYPE_MELEENOUNCLOAK;
+
+#ifndef PLATFORM_N64
+			{
+				/* melee swings never reach the shoot-sound weaponfire emit,
+				 * so report them as their own "punch" event (fists and knife
+				 * alike — listeners filter by weaponnum) */
+				extern void luaEmitPunch(s32 weaponnum, s32 playernum);
+				luaEmitPunch((s32)hand->gset.weaponnum, g_Vars.currentplayernum);
+			}
+#endif
 
 			if (func->fire_animation) {
 				bgunStartAnimation(func->fire_animation, handnum, hand);
@@ -3264,6 +3461,16 @@ bool bgunSetState(s32 handnum, s32 state)
 	if (state == HANDSTATE_CHANGEFUNC && weaponGetFunction(&hand->gset, 1 - hand->gset.weaponfunc) == NULL) {
 		valid = false;
 	}
+
+#ifndef PLATFORM_N64
+	// Chaos "Reload Denied" (pd.no_reload): refuse every reload transition. The
+	// manual reload button, the empty-clip auto-reload, and the switch-triggered
+	// reload all funnel through bgunSetState(HANDSTATE_RELOAD), so one gate here
+	// blocks them all — the gun runs dry and stays dry until the effect ends.
+	if (state == HANDSTATE_RELOAD && g_ChaosNoReload) {
+		valid = false;
+	}
+#endif
 
 	if (valid) {
 		hand->state = state;
@@ -4830,8 +5037,33 @@ void bgunCreateFiredProjectile(s32 handnum)
 	f32 spe4[4];
 	f32 spd4[4];
 	f32 spc4[4];
+#ifndef PLATFORM_N64
+	s32 chaosSavedWeaponnum = 0;
+	s32 chaosSavedWeaponfunc = 0;
+	bool chaosSwapped = false;
+#endif
 
 	hand = g_Vars.currentplayer->hands + handnum;
+
+#ifndef PLATFORM_N64
+	// Chaos "Everything Rockets" (pd.ammo_swap): the held gun keeps its own
+	// animation, but the projectile is picked from the HELD weapon below, so a
+	// hitscan gun would spawn nothing. Present the swap weapon as the held
+	// weapon for the projectile creation (restored at the end). Gate mirrors
+	// gsetPopulateFromCurrentPlayer's.
+	if (g_ChaosAmmoSwapWeapon >= 0
+			&& (hand == &g_Vars.currentplayer->hands[HAND_RIGHT] || hand == &g_Vars.currentplayer->hands[HAND_LEFT])
+			&& hand->gset.weaponnum >= WEAPON_FALCON2
+			&& hand->gset.weaponnum <= WEAPON_CROSSBOW
+			&& hand->gset.weaponnum != WEAPON_COMBATKNIFE
+			&& hand->gset.weaponnum != g_ChaosAmmoSwapWeapon) {
+		chaosSavedWeaponnum = hand->gset.weaponnum;
+		chaosSavedWeaponfunc = hand->gset.weaponfunc;
+		chaosSwapped = true;
+		hand->gset.weaponnum = g_ChaosAmmoSwapWeapon;
+		hand->gset.weaponfunc = FUNC_PRIMARY;
+	}
+#endif
 
 	playerprop = g_Vars.currentplayer->prop;
 	prevpos = &g_Vars.currentplayer->bondprevpos;
@@ -5011,6 +5243,34 @@ void bgunCreateFiredProjectile(s32 handnum)
 						weapon->base.projectile->unk08c = funcdef->reflectangle;
 						weapon->base.projectile->unk098 = funcdef->unk50 * 1.6666666f;
 
+#ifndef PLATFORM_N64
+						// Chaos "Pinball rounds": rebrand the projectile as a
+						// grenade-secondary Proximity Pinball. Thrust flags are
+						// stripped so it flies ballistic on its launch velocity
+						// and bounces on the thrown-weapon physics
+						// (PROJECTILEFLAG_00000002 + the 0.1 reflect damping,
+						// the bgunCreateThrownProjectile setup); weaponTick's
+						// proximity branch then arms it (timer240 counts to 1 ->
+						// weaponRegisterProxy) and detonates it when ANY player
+						// wanders close — the shooter included, which is the
+						// pinball's whole personality. Fly-by-wire (Slayer) is
+						// excluded so the rocket-cam keeps a rocket to fly, and
+						// bolts/knives are not explosives.
+						if (g_ChaosPinball
+								&& (funcdef->base.base.flags & FUNCFLAG_FLYBYWIRE) == 0
+								&& (weapon->weaponnum == WEAPON_ROCKET
+									|| weapon->weaponnum == WEAPON_HOMINGROCKET
+									|| weapon->weaponnum == WEAPON_GRENADEROUND)) {
+							weapon->weaponnum = WEAPON_GRENADE;
+							weapon->gunfunc = FUNC_SECONDARY;
+							weapon->base.projectile->flags &= ~(PROJECTILEFLAG_POWERED | PROJECTILEFLAG_LIGHTWEIGHT);
+							weapon->base.projectile->flags |= PROJECTILEFLAG_00000002;
+							weapon->base.projectile->targetprop = NULL;
+							weapon->base.projectile->unk08c = 0.1f;
+							weapon->timer240 = TICKS(120); // proxy arm countdown
+						}
+#endif
+
 						if (funcdef->soundnum > 0) {
 							psCreate(NULL, weapon->base.prop, funcdef->soundnum, -1, -1, 0, 0, PSTYPE_NONE, 0, -1.0f, 0, -1, -1.0f, -1.0f, -1.0f);
 						}
@@ -5103,6 +5363,13 @@ void bgunCreateFiredProjectile(s32 handnum)
 			}
 		}
 	}
+
+#ifndef PLATFORM_N64
+	if (chaosSwapped) {
+		hand->gset.weaponnum = chaosSavedWeaponnum;
+		hand->gset.weaponfunc = chaosSavedWeaponfunc;
+	}
+#endif
 }
 
 void bgunSwivel(f32 screenx, f32 screeny, f32 crossdamp, f32 aimdamp)
@@ -5338,6 +5605,11 @@ void bgunCalculatePlayerShotSpread(struct coord *gunpos2d, struct coord *gundir2
 	if (func != NULL && (func->type & 0xff) == INVENTORYFUNCTYPE_SHOOT) {
 		struct weaponfunc_shoot *shootfunc = (struct weaponfunc_shoot *) func;
 		spread = shootfunc->spread;
+#ifndef PLATFORM_N64
+		// Chaos Weapon Spread (pd.spread): scale every weapon's shot spread
+		// (and the matching crosshair bloom).
+		spread *= g_ChaosSpreadMult;
+#endif
 	}
 
 	if (weaponHasAimFlag(bgunGetWeaponNum2(handnum), INVAIMFLAG_ACCURATESINGLESHOT)
@@ -5389,6 +5661,19 @@ void bgunCalculatePlayerShotSpread(struct coord *gunpos2d, struct coord *gundir2
 	gunpos2d->x = gundir2d->x * pullback;
 	gunpos2d->y = gundir2d->y * pullback;
 	gunpos2d->z = gundir2d->z * pullback;
+
+#ifndef PLATFORM_N64
+	// Chaos "backfire" (pd.backfire): rotate the shot ray 180 degrees about
+	// the camera's vertical axis, in camera space, so every consumer — hitscan
+	// traces (shotCreate / propFindAimingAt), fired projectile velocities
+	// (bgunCreateFiredProjectile), and the tracer visual — fires BEHIND the
+	// player. Vertical aim is preserved (aim up = shoot up-behind); the
+	// crosshair and gun render stay untouched, which is the joke.
+	if (g_ChaosBackfire) {
+		gundir2d->x = -gundir2d->x;
+		gundir2d->z = -gundir2d->z;
+	}
+#endif
 }
 
 void bgunCalculateBotShotSpread(struct coord *arg0, s32 weaponnum, s32 funcnum, bool arg3, s32 crouchpos, bool dual)
@@ -5408,6 +5693,9 @@ void bgunCalculateBotShotSpread(struct coord *arg0, s32 weaponnum, s32 funcnum, 
 		if (funcdef && (funcdef->type & 0xff) == INVENTORYFUNCTYPE_SHOOT) {
 			struct weaponfunc_shoot *shootfunc = (struct weaponfunc_shoot *)funcdef;
 			spread = shootfunc->spread;
+#ifndef PLATFORM_N64
+			spread *= g_ChaosSpreadMult;
+#endif
 		}
 	}
 
@@ -5497,6 +5785,22 @@ void bgunFreeWeapon(s32 handnum)
 					player->hands[handnum].gunroundsspent[index] = (spaceinclip << 8) | 0xff;
 #endif
 				}
+#ifndef PLATFORM_N64
+				// Chaos Temu Magazine / Reload Denied: remember the partial clip
+				// for weapons WITHOUT a vanilla gunroundsspent slot too (same
+				// encoding), so switching away and back can't mint a fresh mag.
+				else if (bgunChaosClipMemoryActive()
+						&& player->gunctrl.weaponnum > 0 && player->gunctrl.weaponnum < 96
+						&& spaceinclip >= 0) {
+#if VERSION >= VERSION_JPN_FINAL
+					g_ChaosTemuSpent[handnum][player->gunctrl.weaponnum][i] = (spaceinclip << 8) + 0xff;
+#elif VERSION >= VERSION_PAL_BETA
+					g_ChaosTemuSpent[handnum][player->gunctrl.weaponnum][i] = spaceinclip * 213 + 212;
+#else
+					g_ChaosTemuSpent[handnum][player->gunctrl.weaponnum][i] = (spaceinclip << 8) | 0xff;
+#endif
+				}
+#endif
 
 				if (player->hands[handnum].loadedammo[i] > 0) {
 					player->ammoheldarr[player->gunctrl.ammotypes[i]] += player->hands[handnum].loadedammo[i];
@@ -6153,6 +6457,68 @@ char *bgunGetShortName(s32 weaponnum)
 	return "** error\n";
 }
 
+#ifndef PLATFORM_N64
+// Port (Kai): re-run the chaos clip-capacity bake (quad-handed 2x / one-bullet
+// 1) for both of the current player's hands WITHOUT a weapon change — the bake
+// normally only happens at equip (bgun0f0abd30), so toggling mid-hold did
+// nothing until the next weapon switch. Excess loaded rounds above a
+// shrunken capacity are refunded to reserve before the clip clamps.
+void bgunChaosRebakeClipSizes(void)
+{
+	struct player *player = g_Vars.currentplayer;
+	s32 handnum;
+	s32 i;
+
+	if (player == NULL) {
+		return;
+	}
+
+	for (handnum = 0; handnum < 2; handnum++) {
+		struct hand *hand = &player->hands[handnum];
+		struct weapon *weapon = weaponFindById(hand->gset.weaponnum);
+
+		for (i = 0; i < 2; i++) {
+			if (weapon && weapon->ammos[i]) {
+				s32 newsize = weapon->ammos[i]->clipsize;
+
+				if (g_ChaosQuadTopGuns) {
+					newsize *= 2;
+				}
+				if (g_ChaosOneBulletMags && newsize > 1) {
+					newsize = 1;
+				}
+				if (handnum == HAND_LEFT && weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
+					newsize = 0;
+				}
+
+				if (hand->loadedammo[i] > newsize) {
+					s32 type = weapon->ammos[i]->type;
+					bgunSetAmmoQuantity(type,
+							bgunGetAmmoCount(type) + hand->loadedammo[i] - newsize);
+					hand->loadedammo[i] = newsize;
+				}
+
+				hand->clipsizes[i] = newsize;
+			}
+		}
+	}
+}
+
+// Port (Kai): the shortname text id (the weapon-wheel label). The chaos rename
+// override (pd.weapon_rename) needs it alongside bgunGetNameId so both the
+// full name and the wheel label get relabelled.
+u16 bgunGetShortNameId(s32 weaponnum)
+{
+	struct weapon *weapon = g_Weapons[weaponnum];
+
+	if (weapon) {
+		return weapon->shortname;
+	}
+
+	return 0;
+}
+#endif
+
 const char var7f1ac170[] = "wantedfn %d tiggle %d\n";
 
 void bgunReloadIfPossible(s32 handnum)
@@ -6725,7 +7091,13 @@ void bgunUpdateGangsta(struct hand *hand, s32 handnum, struct coord *arg2, struc
 	f32 tmp;
 	struct coord sp38 = {0, 0, 0};
 
-	if (g_Vars.currentplayer->gunctrl.gangsta
+	if ((g_Vars.currentplayer->gunctrl.gangsta
+#ifndef PLATFORM_N64
+				// Chaos "Gangster" (pd.gangsta): force the sideways pose on
+				// permanently, riding this rotate/revert animation unchanged.
+				|| g_ChaosGangstaForce
+#endif
+			)
 			&& funcdef
 			&& (funcdef->type & 0xff) == INVENTORYFUNCTYPE_SHOOT
 			&& (hand->state == HANDSTATE_IDLE
@@ -7646,14 +8018,28 @@ void bgunCreateFx(struct hand *hand, s32 handnum, struct weaponfunc *funcdef, s3
 
 // offset calculation from NeonNyan/perfect-dark
 
+// The FOV the viewmodel is actually rendered with: the chaos "WAYTOODANK
+// Viewmodel" override (pd.gun_fov) when set — bgunRender draws the gun pass
+// with it — else the world FOV. The position offsets below compensate for the
+// FOV the gun is *drawn* at (Kai's bgunGetRenderFovY, minus its Gun FOV
+// slider, which this build does not have).
+static inline f32 bgunGetRenderFovY(void)
+{
+	if (g_ChaosGunFovOverride > 0.0f) {
+		return g_ChaosGunFovOverride;
+	}
+
+	return PLAYER_DEFAULT_FOV;
+}
+
 static inline f32 bgunGetFovOffsetZ(void)
 {
-	return (PLAYER_DEFAULT_FOV - 60.f) / 3.f;
+	return (bgunGetRenderFovY() - 60.f) / 3.f;
 }
 
 static inline f32 bgunGetFovOffsetY(void)
 {
-	return (PLAYER_DEFAULT_FOV - 60.f) / (2.75f * 4.f);
+	return (bgunGetRenderFovY() - 60.f) / (2.75f * 4.f);
 }
 
 #endif
@@ -11114,8 +11500,26 @@ void bgunRender(Gfx **gdlptr)
 	s32 i;
 
 	static bool renderhand = true; // var800702dc
+#ifndef PLATFORM_N64
+	// The projection the gun pass starts with (COD Style Aiming may set its
+	// own), and the chaos "WAYTOODANK Viewmodel" one (pd.gun_fov) that
+	// replaces it for the gun and hand models.
+	f32 basefovy = 0.0f;
+	bool baseusefov = false;
+	f32 chaosgunfovy = 0.0f;
+	bool chaosusegunfov = false;
+#endif
 
 	player = g_Vars.currentplayer;
+
+#ifndef PLATFORM_N64
+	// Chaos gun-hide (pd.gun_hide — Blind bag's mystery weapon): skip the whole
+	// viewmodel render pass. Render-only — bgunTick* still runs, so firing,
+	// reloads and ammo behave normally; the gun and hands are just not drawn.
+	if (g_BgunHideGun) {
+		return;
+	}
+#endif
 
 	if (player->visionmode == VISIONMODE_XRAY) {
 		for (i = 0; i < 2; i++) {
@@ -11149,7 +11553,33 @@ void bgunRender(Gfx **gdlptr)
 
 		if (viewfov < adsfov) {
 			gdl = viSetPerspectiveWithFov(gdl, viewfov + (adsfov - viewfov) * player->codaimfrac, 1.5, 1000);
+			basefovy = viewfov + (adsfov - viewfov) * player->codaimfrac;
+			baseusefov = true;
 		}
+	}
+
+	// Chaos "WAYTOODANK Viewmodel" (pd.gun_fov): render the gun and hand
+	// models with their own projection (Kai's Gun FOV pass, driven by the
+	// chaos override only). Skipped during teleport, which forces its own 60
+	// FOV projection below.
+	if (g_ChaosGunFovOverride > 0.0f
+			&& g_Vars.currentplayer->teleportstate == TELEPORTSTATE_INACTIVE) {
+		chaosgunfovy = g_ChaosGunFovOverride;
+
+		// Weapon zoom: scale the gun FOV by the world's current zoom ratio in
+		// tan space so the gun magnifies on screen exactly as much as the
+		// world does; no-op when not zoomed.
+		if (viGetFovY() != PLAYER_DEFAULT_FOV) {
+			f32 half = chaosgunfovy * (M_PI / 360.0f);
+			f32 viewhalf = viGetFovY() * (M_PI / 360.0f);
+			f32 defhalf = PLAYER_DEFAULT_FOV * (M_PI / 360.0f);
+			f32 t = (sinf(half) / cosf(half)) * (sinf(viewhalf) / cosf(viewhalf)) / (sinf(defhalf) / cosf(defhalf));
+
+			chaosgunfovy = 2.0f * atan2f(t, 1.0f) * (180.0f / M_PI);
+		}
+
+		// equal FOVs project identically — skip the redundant matrix loads
+		chaosusegunfov = chaosgunfovy != (baseusefov ? basefovy : viGetFovY());
 	}
 #endif
 
@@ -11187,6 +11617,12 @@ void bgunRender(Gfx **gdlptr)
 
 		if (hand->visible) {
 			gdl = beamRender(gdl, &hand->beam, 0, 0);
+
+#ifndef PLATFORM_N64
+			if (chaosusegunfov) {
+				gdl = viSetPerspectiveWithFov(gdl, chaosgunfovy, 1.5, 1000);
+			}
+#endif
 
 			if (weaponHasFlag(hand->gset.weaponnum, WEAPONFLAG_00008000)) {
 				gSPSetLights1(gdl++, var80070090);
@@ -11341,6 +11777,38 @@ void bgunRender(Gfx **gdlptr)
 			// Render the gun
 			modelRender(&renderdata, &hand->gunmodel);
 
+#ifndef PLATFORM_N64
+			// Chaos "Quad handed" (pd.quad_top): render this gun a SECOND time
+			// under a vertically-mirrored projection, so the viewmodel also
+			// appears as a mirror reflection hanging from the top of the screen
+			// (two more barrels). The gun's model matrices are still loaded from
+			// the render above, so only the projection changes; it is restored
+			// right after for the hand render + cleanup below. A single-axis
+			// mirror reverses triangle winding, so cull nothing for this pass.
+			// Not during teleport, whose projection is built separately.
+			if (g_ChaosQuadTopGuns
+					&& g_Vars.currentplayer->teleportstate == TELEPORTSTATE_INACTIVE) {
+				u32 savedcull = renderdata.cullmode;
+				f32 curfovy = chaosusegunfov ? chaosgunfovy : (baseusefov ? basefovy : viGetFovY());
+
+				gdl = renderdata.gdl;
+				gdl = viSetPerspectiveWithFovMirrorY(gdl, curfovy, 1.5, 1000);
+				renderdata.gdl = gdl;
+				renderdata.cullmode = CULLMODE_NONE;
+				modelRender(&renderdata, &hand->gunmodel);
+				renderdata.cullmode = savedcull;
+				gdl = renderdata.gdl;
+
+				if (chaosusegunfov || baseusefov) {
+					gdl = viSetPerspectiveWithFov(gdl, curfovy, 1.5, 1000);
+				} else {
+					gdl = vi0000aca4(gdl, 1.5, 1000);
+				}
+
+				renderdata.gdl = gdl;
+			}
+#endif
+
 			// Render the hand
 			if (player->gunctrl.handmodeldef && renderhand) {
 				s32 prevcolour = renderdata.envcolour; // 7c
@@ -11350,7 +11818,20 @@ void bgunRender(Gfx **gdlptr)
 				modelUpdateRelations(&hand->handmodel);
 
 				renderdata.envcolour = colour;
+#ifndef PLATFORM_N64
+				// pd.ipod_ad "iPod Ad": the first-person ARMS/HANDS are black
+				// (body part), while the weapon stays white (the outer bracket
+				// in player.c). Restore white after for anything downstream.
+				if (g_ChaosIpodAd) {
+					gDPFlatFillEXT(renderdata.gdl++, 0, 0, 0);
+					modelRender(&renderdata, &hand->handmodel);
+					gDPFlatFillEXT(renderdata.gdl++, 255, 255, 255);
+				} else {
+					modelRender(&renderdata, &hand->handmodel);
+				}
+#else
 				modelRender(&renderdata, &hand->handmodel);
+#endif
 				renderdata.envcolour = prevcolour;
 			}
 
@@ -11365,6 +11846,18 @@ void bgunRender(Gfx **gdlptr)
 			mtx00016784();
 
 			gSPPerspNormalize(gdl++, viGetPerspScale());
+
+#ifndef PLATFORM_N64
+			if (chaosusegunfov) {
+				// Restore the gun pass's own projection for the next hand's
+				// beam and the casings below
+				if (baseusefov) {
+					gdl = viSetPerspectiveWithFov(gdl, basefovy, 1.5, 1000);
+				} else {
+					gdl = vi0000aca4(gdl, 1.5, 1000);
+				}
+			}
+#endif
 		}
 	}
 
@@ -13016,6 +13509,17 @@ Gfx *bgunDrawHud(Gfx *gdl)
 	u16 nameid;
 	struct hand *lefthand = &player->hands[HAND_LEFT];
 
+#ifndef PLATFORM_N64
+	// Chaos Blind bag (pd.gun_hide): the whole gun HUD block (ammo
+	// counter/gauge + the function overlay) is hidden with the viewmodel —
+	// ammo counts and clip sizes identify a gun as surely as its silhouette.
+	// The inventory menu's ?????-censor (pd.weapon_censor) covers the info
+	// screens instead.
+	if (g_BgunHideGun) {
+		return gdl;
+	}
+#endif
+
 	ctrl = &player->gunctrl;
 
 	if (player->isdead) {
@@ -13516,6 +14020,20 @@ void bgun0f0abd30(s32 handnum)
 			}
 
 			hand->clipsizes[i] = weapon->ammos[i]->clipsize;
+
+#ifndef PLATFORM_N64
+			// Chaos "Quad handed": double the magazine capacity (pairs with
+			// the double ammo-per-shot from g_ChaosDoubleShots, so a mag lasts
+			// the same number of trigger pulls but holds/drains 2x).
+			if (g_ChaosQuadTopGuns) {
+				hand->clipsizes[i] *= 2;
+			}
+
+			// Chaos "One Bullet Mags": one round per magazine.
+			if (g_ChaosOneBulletMags && hand->clipsizes[i] > 1) {
+				hand->clipsizes[i] = 1;
+			}
+#endif
 
 			if (handnum == HAND_LEFT && weaponHasFlag2(hand->gset.weaponnum, WEAPONFLAG2_DETONATORHAND)) {
 				hand->clipsizes[i] = 0;

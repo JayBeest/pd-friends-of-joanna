@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include <stdlib.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/cheats.h"
 #include "game/dlights.h"
 #include "game/gfxmemory.h"
@@ -33,6 +34,30 @@
 #include "system.h"
 
 #define DLIGHT(...) if (getenv("PD_DEBUG_DLIGHTS")) { sysLogPrintf(LOG_NOTE, "DLIGHT " __VA_ARGS__); }
+
+#ifndef PLATFORM_N64
+// Chaos per-room highlight (pd.room_highlight, Kai fork): mark INDIVIDUAL rooms
+// in a colour — the KotH hill-green mechanism, but without a scenario. The
+// engine's highlight path needs two things chaos has to supply itself: the
+// room's lightop must be LIGHTOP_HIGHLIGHT (the only way the reshade enters
+// that branch at all), and the colour comes from scenarioHighlightRoom, whose
+// vtable entry is NULL outside Combat Sim. chraiLuaRoomHighlight sets the
+// lightop; g_ChaosRoomHlMask/g_ChaosRoomHlCol (chaosstate.c) override the
+// colour at both reshade sites below. Rooms past CHAOS_ROOMHL_MAX are simply
+// never highlighted rather than corrupting memory.
+//
+// Chaos room tint (pd.room_tint): g_ChaosRoomTintFrac is a global colour
+// multiplier applied to every room's lighting — the KotH hill-highlight math
+// generalised to all rooms, independent of lightop.
+static s32 chaosRoomIsHighlighted(s32 roomnum)
+{
+	if (!g_ChaosRoomHlOn || roomnum < 1 || roomnum >= CHAOS_ROOMHL_MAX) {
+		return 0;
+	}
+
+	return (g_ChaosRoomHlMask[roomnum >> 3] >> (roomnum & 7)) & 1;
+}
+#endif
 
 const char var7f1a78e0[] = "LIGHTS : Hit occured on light %d in room %d\n";
 const char var7f1a7910[] = "L2(%d) -> ";
@@ -1446,6 +1471,16 @@ void roomsTickLighting(void)
 
 						scenarioHighlightRoom(i, &r, &g, &b);
 
+#ifndef PLATFORM_N64
+						// Chaos per-room highlight wins over the scenario's
+						// colour (outside Combat Sim there isn't one anyway).
+						if (chaosRoomIsHighlighted(i)) {
+							r = g_ChaosRoomHlCol[0];
+							g = g_ChaosRoomHlCol[1];
+							b = g_ChaosRoomHlCol[2];
+						}
+#endif
+
 						g_Rooms[i].highlightfrac_r = r * (1.0f / 255.0f);
 						g_Rooms[i].highlightfrac_g = g * (1.0f / 255.0f);
 						g_Rooms[i].highlightfrac_b = b * (1.0f / 255.0f);
@@ -1454,6 +1489,16 @@ void roomsTickLighting(void)
 						g_Rooms[i].highlightfrac_g = g_Rooms[i].highlightfrac_r;
 						g_Rooms[i].highlightfrac_b = g_Rooms[i].highlightfrac_r;
 					}
+
+#ifndef PLATFORM_N64
+					// Chaos room tint: multiply on top of whatever the
+					// scenario highlight decided (same math as the hill).
+					if (g_ChaosRoomTintOn) {
+						g_Rooms[i].highlightfrac_r *= g_ChaosRoomTintFrac[0];
+						g_Rooms[i].highlightfrac_g *= g_ChaosRoomTintFrac[1];
+						g_Rooms[i].highlightfrac_b *= g_ChaosRoomTintFrac[2];
+					}
+#endif
 
 					numprocessed++;
 				}
@@ -1667,7 +1712,25 @@ void roomHighlight(s32 roomnum)
 
 				if (g_Rooms[roomnum].lightop == LIGHTOP_HIGHLIGHT) {
 					scenarioHighlightRoom(roomnum, &red, &green, &blue);
+
+#ifndef PLATFORM_N64
+					// Chaos per-room highlight (see chaosRoomIsHighlighted).
+					if (chaosRoomIsHighlighted(roomnum)) {
+						red = g_ChaosRoomHlCol[0];
+						green = g_ChaosRoomHlCol[1];
+						blue = g_ChaosRoomHlCol[2];
+					}
+#endif
 				}
+
+#ifndef PLATFORM_N64
+				// Chaos room tint (pd.room_tint).
+				if (g_ChaosRoomTintOn) {
+					red = (s32)(red * g_ChaosRoomTintFrac[0]);
+					green = (s32)(green * g_ChaosRoomTintFrac[1]);
+					blue = (s32)(blue * g_ChaosRoomTintFrac[2]);
+				}
+#endif
 
 				if (red > 255) {
 					red = 255;

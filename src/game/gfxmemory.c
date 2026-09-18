@@ -207,3 +207,10 @@ u32 gfxGetFreeVtx(void)
 {
 	return g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_GfxMemPos;
 }
+
+// Total size (bytes) of one vtx-pool buffer. used = this - gfxGetFreeVtx().
+// From Kai (be46717), for pd.perf.
+u32 gfxGetVtxPoolSize(void)
+{
+	return g_VtxBuffers[g_GfxActiveBufferIndex + 1] - g_VtxBuffers[g_GfxActiveBufferIndex];
+}

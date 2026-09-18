@@ -1438,6 +1438,18 @@ struct chrdata {
   // back, because its last frame is the corpse, so this is held for as long
   // as the body is playing it rather than until an end frame.
   /*ext*/ s16 deathanim;
+  // Non-uniform VERTICAL render scale (chaos pd.chr_yscale). 1.0 = normal;
+  // 0.4 = 40% as tall but full width/depth. Applied every frame in
+  // modelUpdateChrNodeMtx by scaling the chr root matrix's world-Y column
+  // about the ground plane, so the feet stay planted. Purely visual
+  // (hitbox/AI unchanged). chrInit resets it to 1.0. (Kai be46717.)
+  /*ext*/ f32 yscale;
+  // Accumulated chaos UNIFORM-scale multiplier (chaos pd.chr_scale). 1.0 =
+  // none. Distinct from model->scale, which also carries the body's base
+  // scale: this tracks only the runtime chaos delta so
+  // modelUpdateChrNodeMtx can re-anchor just that delta to the ground plane.
+  // chrInit resets it to 1.0. (Kai be46717.)
+  /*ext*/ f32 groundmult;
 #endif
   /*ext*/ s32
       hiddenelsemask; // used by aiSetHiddenElseMask and aiIfChrActivatedObject

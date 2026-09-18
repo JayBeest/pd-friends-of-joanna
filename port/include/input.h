@@ -250,6 +250,16 @@ void inputSetDefaultKeyBinds(s32 cidx, s32 n64mode);
 void inputClearLastKey(void);
 s32 inputGetLastKey(void);
 
+// 1 if the most recent input came from a gamepad, 0 for keyboard/mouse
+s32 inputLastSourceWasPad(void);
+
+// Lua effect setters (pd.deadzone, pd.sens_boost, pd.input_delay), from Kai.
+// dz is a deadzone floor in raw axis units (0 = off); mult scales mouse and
+// stick sensitivity (1 = off); frames delays pad and mouse-look reads (0 = off).
+void inputSetChaosDeadzone(s32 dz);
+void inputSetChaosSensMult(f32 mult);
+void inputSetChaosInputDelay(s32 frames);
+
 // get/set Input.MouseLockMode
 s32 inputGetMouseLockMode(void);
 void inputSetMouseLockMode(s32 lockmode);

@@ -58,8 +58,11 @@ s32 g_LuaAiEnabled = 0;
 static lua_State *g_LuaState = NULL;
 static s32 g_LuaCurStage = -0x7fffffff;
 static s32 g_LuaInitFailed = 0;
-/* Set when too many lists failed this stage; cleared by luaaiReset. */
+/* Set when too many lists failed this stage, or when Lua ran out of memory;
+ * cleared by luaaiReset. */
 static s32 g_LuaSuspended = 0;
+/* Set when the error recorded in g_LuaErrMsg was an allocation failure. */
+static s32 g_LuaErrIsMem = 0;
 /* Number of registered ailist overrides. When zero, the per-list override
  * lookup (and its ailist id scan) is skipped entirely on the hot path. */
 static s32 g_LuaOverrideCount = 0;
@@ -67,7 +70,7 @@ static s32 g_LuaOverrideCount = 0;
 /* Registry keys for our internal tables. */
 static const char *const KEY_CHUNKS = "luaai.chunks";       /* lightuserdata(list) -> function */
 static const char *const KEY_OVERRIDES = "luaai.overrides"; /* id (int) -> function */
-static const char *const KEY_CTX = "luaai.ctx";             /* the shared ctx table */
+static const char *const KEY_CTX = "luaai.ctx";             /* the shared, read-only ctx */
 
 /* Last error message from luaai_get_chunk / luaai_run_list, copied out of the
  * Lua stack so the caller can log it once after the stack has been cleaned. */
@@ -145,6 +148,16 @@ static void luaai_set_error(const char *what, const char *msg)
 {
 	g_LuaErrWhat = what;
 	snprintf(g_LuaErrMsg, sizeof(g_LuaErrMsg), "%s", msg ? msg : "(no message)");
+	g_LuaErrIsMem = 0;
+}
+
+/* As luaai_set_error, but remembers whether Lua failed to allocate. An
+ * allocation failure is not a fault of the list that happened to be running,
+ * so luaai_quarantine escalates it instead of blaming that list. */
+static void luaai_set_error_status(const char *what, const char *msg, int status)
+{
+	luaai_set_error(what, msg);
+	g_LuaErrIsMem = (status == LUA_ERRMEM);
 }
 
 /* An error value as text, without lua_tostring's number conversion, which
@@ -241,6 +254,16 @@ static int luaai_pcall_budget(lua_State *L, int nargs, int nresults, s32 budget)
 static void luaai_quarantine(void *list)
 {
 	s32 id = chraiLuaGetListId(list);
+
+	if (g_LuaErrIsMem) {
+		/* Lua could not allocate. That says the process is short of memory, not
+		 * that this list is at fault, and leaving the other lists running would
+		 * keep asking for memory that is not there. Give the state back now. */
+		sysLogPrintf(LOG_ERROR, "luaai: %s in list %d: %s", g_LuaErrWhat, id, g_LuaErrMsg);
+		sysLogPrintf(LOG_ERROR, "luaai: out of memory; Lua AI suspended until the next stage");
+		g_LuaSuspended = 1;
+		return;
+	}
 
 	if (g_LuaQuarantineCount >= LUAAI_QUARANTINE_MAX) {
 		sysLogPrintf(LOG_ERROR, "luaai: %s in list %d: %s", g_LuaErrWhat, id, g_LuaErrMsg);
@@ -415,10 +438,24 @@ static void luaai_load_external_scripts(lua_State *L)
 	}
 }
 
+/* ctx.<name> = v: every chunk shares the one ctx, so a script that could
+ * replace ctx.exec would change how every other list runs. */
+static int l_ctx_newindex(lua_State *L)
+{
+	return luaL_error(L, "ctx is read-only");
+}
+
 static void luaai_build_ctx(lua_State *L)
 {
-	/* ctx = { cur=..., exec=..., run=... } stored in registry. */
-	lua_newtable(L);
+	/* ctx is a userdata whose locked metatable indexes a hidden method
+	 * table (cur, exec, run, self), stored in the registry. Kai used a plain
+	 * table, which any chunk could write to. A userdata cannot be written
+	 * to, rawset does not take one, and __metatable keeps getmetatable from
+	 * handing out the method table. */
+	lua_newuserdatauv(L, 0, 0);
+
+	lua_createtable(L, 0, 3); /* metatable */
+	lua_createtable(L, 0, 4); /* methods */
 
 	lua_pushcfunction(L, l_ctx_cur);
 	lua_setfield(L, -2, "cur");
@@ -429,6 +466,13 @@ static void luaai_build_ctx(lua_State *L)
 	lua_pushcfunction(L, l_ctx_self);
 	lua_setfield(L, -2, "self");
 
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, l_ctx_newindex);
+	lua_setfield(L, -2, "__newindex");
+	lua_pushliteral(L, "ctx");
+	lua_setfield(L, -2, "__metatable");
+
+	lua_setmetatable(L, -2);
 	lua_setfield(L, LUA_REGISTRYINDEX, KEY_CTX);
 }
 
@@ -650,8 +694,27 @@ void luaaiReset(void)
 	g_LuaOverrideCount = 0;
 	g_LuaQuarantineCount = 0; /* pointers are reused by the next stage */
 	g_LuaSwitchWarnings = 0;
+	/* lvReset calls this with the new stage number already set. Record it,
+	 * or the first AI tick of the stage would see a stage change and reset
+	 * the state luaTick has built since, running init.lua twice. */
+	g_LuaCurStage = chraiLuaGetStageNum();
 	chraiLuaInvalidateListLength();
 	luaApiResetFrame();
+}
+
+/* lua_pcall for calls into Lua from outside an entity call (event handlers,
+ * pd.* callbacks), with the instruction budget armed. Inside an armed call it
+ * shares that budget. */
+s32 luaaiPcall(struct lua_State *L, s32 nargs, s32 nresults)
+{
+	return luaai_pcall_budget(L, nargs, nresults, LUAAI_INSTRUCTION_BUDGET);
+}
+
+/* An error value as text, for callers outside this file. See
+ * luaai_errstr. */
+const char *luaaiErrStr(struct lua_State *L, s32 idx)
+{
+	return luaai_errstr(L, idx);
 }
 
 /* Whether there is a Lua script for the AI layer to run. Plan item 0.3
@@ -696,6 +759,7 @@ static int luaai_get_chunk_p(lua_State *L)
 	void *list = lua_touserdata(L, 1);
 	char *src;
 	u32 listlen;
+	int status;
 
 	/* 1) Lua override by ailist id. Consulted only when overrides are actually
 	 * registered (g_LuaOverrideCount), and never on a net client: AI is
@@ -734,20 +798,22 @@ static int luaai_get_chunk_p(lua_State *L)
 	listlen = chraiGetAilistLength((u8 *)list);
 	src = luaaiTranspile((const unsigned char *)list, listlen ? listlen : 0xffffu, luaai_cmdlen, CMD_END);
 	if (!src) {
-		luaai_set_error("transpile failure", "out of memory");
+		luaai_set_error_status("transpile failure", "out of memory", LUA_ERRMEM);
 		return 0;
 	}
 
-	if (luaL_loadstring(L, src) != LUA_OK) {
+	status = luaL_loadstring(L, src);
+	if (status != LUA_OK) {
 		free(src);
-		luaai_set_error("transpile load error", luaai_errstr(L, -1));
+		luaai_set_error_status("transpile load error", luaai_errstr(L, -1), status);
 		return 0;
 	}
 	free(src);
 
 	/* run the chunk to obtain the function it returns */
-	if (luaai_pcall_budget(L, 0, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
-		luaai_set_error("transpile run error", luaai_errstr(L, -1));
+	status = luaai_pcall_budget(L, 0, 1, LUAAI_INSTRUCTION_BUDGET);
+	if (status != LUA_OK) {
+		luaai_set_error_status("transpile run error", luaai_errstr(L, -1), status);
 		return 0;
 	}
 
@@ -769,6 +835,8 @@ static int luaai_get_chunk_p(lua_State *L)
  * returns 1, or leaves nothing and returns 0 with the reason recorded. */
 static int luaai_get_chunk(lua_State *L, void *list)
 {
+	int status;
+
 	g_LuaChunkIsOverride = 0;
 	luaai_set_error("chunk lookup error", "no chunk");
 
@@ -777,8 +845,9 @@ static int luaai_get_chunk(lua_State *L, void *list)
 	lua_pushcfunction(L, luaai_get_chunk_p);
 	lua_pushlightuserdata(L, list);
 
-	if (lua_pcall(L, 1, 2, 0) != LUA_OK) {
-		luaai_set_error("chunk lookup error", luaai_errstr(L, -1));
+	status = lua_pcall(L, 1, 2, 0);
+	if (status != LUA_OK) {
+		luaai_set_error_status("chunk lookup error", luaai_errstr(L, -1), status);
 		lua_pop(L, 1);
 		return 0;
 	}
@@ -803,8 +872,9 @@ static int luaai_run_list(lua_State *L, void *list)
 	}
 
 	/* chunk + ctx are on the stack */
-	if (luaai_pcall_budget(L, 1, 1, LUAAI_INSTRUCTION_BUDGET) != LUA_OK) {
-		luaai_set_error("run error", luaai_errstr(L, -1));
+	status = luaai_pcall_budget(L, 1, 1, LUAAI_INSTRUCTION_BUDGET);
+	if (status != LUA_OK) {
+		luaai_set_error_status("run error", luaai_errstr(L, -1), status);
 		lua_pop(L, 1);
 		return LUAAI_ERR;
 	}

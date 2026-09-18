@@ -901,7 +901,13 @@ char *filemgrMenuTextInsertOriginalPak(struct menuitem *item)
 	char namebuffer[100];
 	s32 i;
 
+#ifndef PLATFORM_N64
+	// The Lua text gags (langChaosTransform) lengthen both strings past what
+	// these buffers were sized for
+	snprintf(namebuffer, sizeof(namebuffer), "%s", filemgrMenuTextFileType(item));
+#else
 	sprintf(namebuffer, filemgrMenuTextFileType(item));
+#endif
 
 	// Replace first line break in namebuffer with a terminator
 	i = 0;
@@ -915,7 +921,11 @@ char *filemgrMenuTextInsertOriginalPak(struct menuitem *item)
 	}
 
 	// "Please insert the Controller Pak containing your %s into any controller."
+#ifndef PLATFORM_N64
+	snprintf(fullbuffer, sizeof(fullbuffer), langGet(L_OPTIONS_363), namebuffer);
+#else
 	sprintf(fullbuffer, langGet(L_OPTIONS_363), namebuffer);
+#endif
 
 	textWrap(120, fullbuffer, g_StringPointer, g_CharsHandelGothicSm, g_FontHandelGothicSm);
 

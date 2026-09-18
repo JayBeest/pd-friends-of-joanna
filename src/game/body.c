@@ -24,6 +24,10 @@
 #include "lib/collision.h"
 #include "data.h"
 #include "mod.h"
+#ifndef PLATFORM_N64
+#include "romdata.h"
+#include "game/texdecompress.h"
+#endif
 #include "types.h"
 
 s32 g_NumActiveHeadsPerGender;
@@ -203,6 +207,330 @@ bool bodyLoad(s32 bodynum)
 	return false;
 }
 
+#ifndef PLATFORM_N64
+// Character-model swap (pd.model_swap), from Kai (be46717). The overlay ROM
+// and the file redirect live in port/src/romdata.c; this side decides which
+// files are redirected, swaps the loaded modeldefs and rebuilds the live chrs.
+//
+// Only vanilla (untagged) body/head files are swapped: the overlay is a stock
+// PD ROM layout, so a mod-owned character file has nothing to swap to.
+
+// Private texture pool for swapped models: overlay textures load here (once,
+// shared across all swapped models) so they don't alias the base game's cached
+// textures in g_TexSharedPool. Referenced by modeldefLoad. Allocated from the
+// port heap on the first swap-on (Kai used MEMPOOL_PERMANENT, which is too
+// small for 6 MB here), so it survives stage changes and acts as a persistent
+// overlay-texture cache.
+struct texpool g_ModelSwapTexPool;
+static bool g_ModelSwapTexPoolReady = false;
+#define MODELSWAP_TEXPOOL_BYTES (6 * 1024 * 1024)
+
+// # of live chrs whose overlay body/head produced no modeldef this rebuild
+// (they keep the base model). Reported by the model-swap toggle log.
+static s32 g_ModelSwapNullLoads = 0;
+
+// Per-stage modeldef cache for the two model sources: [0] = base ROM,
+// [1] = overlay ROM. g_HeadsAndBodies[].modeldef holds whichever source is
+// live and the other one parks here, so a toggle SWAPS pointers instead of
+// reloading every body/head. Every modeldef load comes out of MEMPOOL_STAGE,
+// which has no free, so reloading on each toggle leaked a full set of
+// body+head modeldefs until mempAlloc failed mid-stage. Now each source loads
+// at most once per stage. Cleared by modelSwapResetDefCache() from
+// bodiesReset: MEMPOOL_STAGE is wiped at stage load, so every cached pointer
+// dangles across a stage change.
+#define MODELSWAP_MAX_HEADSBODIES 2048
+static struct modeldef *g_ModelSwapDefCache[2][MODELSWAP_MAX_HEADSBODIES];
+
+static bool modelSwapFileIsSwappable(u32 filenum)
+{
+	return filenum != 0 && MOD_FILEID_MOD((s32)filenum) < 0
+		&& filenum < ROMDATA_MODELSWAP_MAX_FILES;
+}
+
+void modelSwapResetDefCache(void)
+{
+	s32 i;
+
+	for (i = 0; i < MODELSWAP_MAX_HEADSBODIES; i++) {
+		g_ModelSwapDefCache[0][i] = NULL;
+		g_ModelSwapDefCache[1][i] = NULL;
+	}
+}
+
+// A chr's child props can have their model ATTACHED to the chr's body model:
+// attachedtomodel points at chr->model and attachedtonode at a node inside
+// that model's definition. When the body is swapped to a fresh model with a
+// DIFFERENT definition, those two pointers dangle into the old (freed) model.
+// Re-point every affected child at the new body model and re-resolve its
+// attach node against the new definition (same bodynum, so the skeleton is
+// identical). Called after the body re-link but before the old model is freed.
+//
+// Walk the chr's ACTUAL child list rather than weapons_held[]: props get
+// attached to a body model from more places than the gun/hat slots (objEmbed
+// hangs a stuck knife/dart off whichever body node was hit).
+static void modelSwapReattachHeld(struct chrdata *chr, struct model *old)
+{
+	struct model *body = chr->model;
+	struct prop *child;
+	bool skedar;
+
+	if (body == NULL || body->definition == NULL || chr->prop == NULL) {
+		return;
+	}
+
+	skedar = (body->definition->skel == &g_SkelSkedar);
+
+	for (child = chr->prop->child; child != NULL; child = child->next) {
+		struct defaultobj *obj;
+		struct modelnode *node = NULL;
+		struct model *childmodel;
+
+		// prop->obj is a union member: only read it for the types that
+		// actually have one.
+		if (child->type != PROPTYPE_OBJ && child->type != PROPTYPE_WEAPON
+				&& child->type != PROPTYPE_DOOR) {
+			continue;
+		}
+
+		obj = child->obj;
+
+		if (obj == NULL || obj->model == NULL) {
+			continue;
+		}
+
+		childmodel = obj->model;
+
+		if (childmodel->attachedtomodel != old && childmodel->attachedtomodel != NULL) {
+			continue; // hangs off something else entirely — leave it alone
+		}
+
+		if (child == chr->weapons_held[HAND_RIGHT]) {
+			node = modelGetPart(body->definition,
+					skedar ? MODELPART_SKEDAR_RIGHTHAND : MODELPART_CHR_RIGHTHAND);
+		} else if (child == chr->weapons_held[HAND_LEFT]) {
+			node = modelGetPart(body->definition,
+					skedar ? MODELPART_SKEDAR_LEFTHAND : MODELPART_CHR_LEFTHAND);
+		} else if (child == chr->weapons_held[2] && !skedar) {
+			// Hat slot — skedar has no hats.
+			node = modelGetPart(body->definition, MODELPART_CHR_0006);
+		} else if (childmodel->attachedtonode) {
+			// Anything else (embedded projectiles) hangs off an arbitrary body
+			// node: both definitions are the same bodynum and share a
+			// skeleton, so map the old attach node onto the new one by matrix
+			// index.
+			s32 mtxindex = modelFindNodeMtxIndex(childmodel->attachedtonode, 0);
+
+			if (mtxindex >= 0) {
+				node = modelFindNodeByMtxIndex(body, mtxindex);
+			}
+		}
+
+		if (node) {
+			childmodel->attachedtomodel = body;
+			childmodel->attachedtonode = node;
+		} else {
+			// No equivalent node in the new definition: detach, so the item
+			// stops being drawn on the body instead of walking the freed model.
+			childmodel->attachedtomodel = NULL;
+			childmodel->attachedtonode = NULL;
+		}
+	}
+}
+
+// Rebuild every live non-player chr's body+head model IN PLACE, so the swap
+// takes effect immediately instead of only on respawn. chr0f020b14 SKIPS
+// chrInit for an existing chr, so health/AI/inventory are preserved. Corpses
+// and players are skipped. Called from the Lua tick (after tick, before
+// render), which is a safe boundary.
+static s32 modelSwapRebuildLiveChrs(void)
+{
+	s32 i;
+	s32 rebuilt = 0;
+
+	if (g_ChrSlots == NULL) {
+		return 0;
+	}
+
+	for (i = 0; i < g_NumChrSlots; i++) {
+		struct chrdata *chr = &g_ChrSlots[i];
+		struct model *old;
+		struct model *neu;
+		struct coord pos;
+		RoomNum rooms[8];
+		f32 faceangle;
+
+		if (chr->prop == NULL || chr->model == NULL) {
+			continue; // no live model
+		}
+		if (chr->prop->type != PROPTYPE_CHR) {
+			continue; // players / non-chr props handled elsewhere
+		}
+		if (chrIsDead(chr)) {
+			continue; // leave corpses as they are
+		}
+		if (chr->bodynum < 0 || chr->bodynum >= g_NumHeadsAndBodies
+				|| !modelSwapFileIsSwappable(g_HeadsAndBodies[chr->bodynum].filenum)) {
+			continue; // mod-owned body: nothing to swap to
+		}
+
+		// chr0f020b14 re-grounds what it re-links, and cdFindGroundInfoAtCyl
+		// reports "no floor" as a huge negative sentinel, which would drop the
+		// chr far under the map. Skip anyone standing where no floor can be
+		// found (airborne, on a lift); they get swapped on their next respawn.
+		{
+			struct coord testpos;
+			f32 ground;
+
+			testpos.x = chr->prop->pos.x;
+			testpos.y = chr->prop->pos.y + 100.0f;
+			testpos.z = chr->prop->pos.z;
+
+			ground = cdFindGroundInfoAtCyl(&testpos, chr->radius, chr->prop->rooms,
+					NULL, NULL, NULL, NULL, NULL, NULL);
+
+			if (ground <= -100000.0f) {
+				continue;
+			}
+		}
+
+		old = chr->model;
+		faceangle = chrGetInverseTheta(chr);
+		pos.x = chr->prop->pos.x;
+		pos.y = chr->prop->pos.y;
+		pos.z = chr->prop->pos.z;
+		roomsCopy(chr->prop->rooms, rooms);
+
+		// bodyAllocateModel brackets the overlay-texture redirect itself (so
+		// respawns get it too).
+		neu = bodyAllocateModel(chr->bodynum, chr->headnum, 0);
+		if (neu) {
+			chr0f020b14(chr->prop, neu, &pos, rooms, faceangle, NULL);
+			// chr0f020b14 set chr->model = neu; re-hang the attached children
+			// on it before the old model is freed.
+			modelSwapReattachHeld(chr, old);
+
+			// chr0f020b14 is the spawn-time linker: it leaves the fresh model
+			// with a zeroed anim (T-pose) and a default chrinfo rwdata. Both
+			// models are the same bodynum, so the anim struct and the root
+			// chrinfo rwdata are layout-identical: copy them across.
+			modelCopyAnimData(old, neu);
+
+			if ((old->definition->rootnode->type & 0xff) == MODELNODETYPE_CHRINFO
+					&& (neu->definition->rootnode->type & 0xff) == MODELNODETYPE_CHRINFO) {
+				union modelrwdata *oldrw = modelGetNodeRwData(old, old->definition->rootnode);
+				union modelrwdata *newrw = modelGetNodeRwData(neu, neu->definition->rootnode);
+
+				if (oldrw && newrw) {
+					newrw->chrinfo = oldrw->chrinfo;
+				}
+			}
+
+			modelmgrFreeModel(old);
+			rebuilt++;
+		} else {
+			// The overlay file produced no usable modeldef; the chr keeps its
+			// old model.
+			g_ModelSwapNullLoads++;
+		}
+	}
+
+	return rebuilt;
+}
+
+// Turn the character-model swap on/off. Flags every vanilla character
+// body/head (and first-person hands) file for redirection to the overlay ROM,
+// swaps the loaded modeldefs with the parked set for the other source, drops
+// the file cache so any load that does happen re-reads, then rebuilds every
+// live chr in place so the swap is visible immediately.
+void modelSwapSetActive(bool on)
+{
+	s32 i;
+	s32 count;
+	bool changed = (on != 0) != (g_ModelSwapActive != 0);
+
+	if (!g_ModelRomActive) {
+		return; // no overlay loaded; nothing to swap
+	}
+
+	count = g_NumHeadsAndBodies;
+	if (count > MODELSWAP_MAX_HEADSBODIES) {
+		count = MODELSWAP_MAX_HEADSBODIES;
+	}
+
+	// Rebuild the redirect set from the live body/head table.
+	for (i = 0; i < ROMDATA_MODELSWAP_MAX_FILES; i++) {
+		g_ModelSwapFiles[i] = 0;
+	}
+	if (on) {
+		for (i = 0; i < count && g_HeadsAndBodies[i].filenum; i++) {
+			if (modelSwapFileIsSwappable(g_HeadsAndBodies[i].filenum)) {
+				g_ModelSwapFiles[g_HeadsAndBodies[i].filenum] = 1;
+			}
+			if (modelSwapFileIsSwappable(g_HeadsAndBodies[i].handfilenum)) {
+				g_ModelSwapFiles[g_HeadsAndBodies[i].handfilenum] = 1;
+			}
+		}
+	}
+
+	g_ModelSwapActive = on ? 1 : 0;
+
+	if (changed) {
+		s32 rebuilt;
+		s32 probefile;
+		s32 probecn;
+		s32 leaving = on ? 0 : 1;   // model source being switched away from
+		s32 entering = on ? 1 : 0;  // model source being switched to
+
+		// Ensure the private overlay-texture pool exists. If it can't be had,
+		// texturing stays base and only geometry swaps.
+		if (on && g_ModelSwapTexList != NULL && !g_ModelSwapTexPoolReady) {
+			u8 *poolmem = sysMemAlloc(ALIGN16(MODELSWAP_TEXPOOL_BYTES));
+			if (poolmem) {
+				texInitPool(&g_ModelSwapTexPool, poolmem, MODELSWAP_TEXPOOL_BYTES);
+				g_ModelSwapTexPoolReady = true;
+			}
+		}
+
+		// Park the modeldefs of the source being left and adopt the ones
+		// already loaded for the source being entered (NULL the first time,
+		// so they load on demand).
+		for (i = 0; i < count && g_HeadsAndBodies[i].filenum; i++) {
+			if (!modelSwapFileIsSwappable(g_HeadsAndBodies[i].filenum)) {
+				continue;
+			}
+			g_ModelSwapDefCache[leaving][i] = g_HeadsAndBodies[i].modeldef;
+			g_HeadsAndBodies[i].modeldef = g_ModelSwapDefCache[entering][i];
+			g_FileInfo[g_HeadsAndBodies[i].filenum & 0xffff].loadedsize = 0;
+			if (modelSwapFileIsSwappable(g_HeadsAndBodies[i].handfilenum)) {
+				g_FileInfo[g_HeadsAndBodies[i].handfilenum & 0xffff].loadedsize = 0;
+			}
+		}
+
+		// Diagnostics: zero the redirect counters so they reflect just this
+		// toggle's rebuild loads, then probe whether the first body file
+		// resolves to a same-named file in the overlay ROM.
+		g_ModelSwapRedirects = 0;
+		g_ModelSwapMisses = 0;
+		g_ModelSwapNullLoads = 0;
+		probefile = (s32)g_HeadsAndBodies[0].filenum;
+		probecn = romdataModelRomFileGetNumForName(romdataFileGetName(probefile));
+
+		rebuilt = modelSwapRebuildLiveChrs();
+
+		sysLogPrintf(LOG_NOTE,
+				"modelswap: %s chrs=%d rebuilt=%d nullloads=%d redirects=%d misses=%d probe(file=%d '%s' -> overlay=%d)",
+				on ? "ON" : "OFF", g_NumChrSlots, rebuilt,
+				g_ModelSwapNullLoads, g_ModelSwapRedirects, g_ModelSwapMisses,
+				probefile, romdataFileGetName(probefile) ? romdataFileGetName(probefile) : "?", probecn);
+	}
+}
+
+bool modelSwapRomLoaded(void)
+{
+	return g_ModelRomActive != 0;
+}
+#endif
+
 struct model *body0f02ce8c(s32 bodynum, s32 headnum, struct modeldef *bodymodeldef, struct modeldef *headmodeldef, bool sunglasses, struct model *model, bool isplayer, u8 varyheight)
 {
 	f32 scale = g_HeadsAndBodies[bodynum].scale * 0.10000001f;
@@ -347,6 +675,22 @@ struct model *bodyAllocateModel(s32 bodynum, s32 headnum, u32 spawnflags)
 	if (spawnflags & SPAWNFLAG_FIXEDHEIGHT) {
 		varyheight = false;
 	}
+
+#ifndef PLATFORM_N64
+	// Model swap: this is the single choke point every character body/head
+	// load passes through (spawn, respawn and the live rebuild), so bracket
+	// the overlay-texture redirect here. Swapped models draw the overlay's
+	// textures from the private pool. World/gun textures don't pass through
+	// here, so they're unaffected.
+	if (g_ModelSwapActive && g_ModelSwapTexPoolReady && g_ModelSwapTexList != NULL) {
+		struct model *model;
+
+		g_ModelSwapTexActive = 1;
+		model = body0f02d338(bodynum, headnum, NULL, NULL, sunglasses, varyheight);
+		g_ModelSwapTexActive = 0;
+		return model;
+	}
+#endif
 
 	return body0f02d338(bodynum, headnum, NULL, NULL, sunglasses, varyheight);
 }

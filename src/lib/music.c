@@ -1,6 +1,7 @@
 #include <ultra64.h>
 #include <n_libaudio.h>
 #include "constants.h"
+#include "game/chaosstate.h"
 #include "game/music.h"
 #include "game/zbuf.h"
 #include "game/stagemusic.h"
@@ -18,6 +19,191 @@
 const u8 var70053ca0[] = {0, 0, 0, 0, 0, 5};
 
 s32 g_MusicNextAmbientTick240 = -1;
+
+#ifndef PLATFORM_N64
+// From the Kai fork (be46717).
+//
+// Chaos "beat game" support: report the tempo + beat phase of the currently
+// playing PRIMARY sequenced music track (falls back to any playing track).
+// Returns 1 with *bpm (beats/min) and *phase ([0,1) within the current beat)
+// filled when a sequenced track is playing, else 0 (*bpm 0, *phase -1). The
+// sequence player tracks uspt (microseconds per tick, updated live by MIDI
+// tempo meta events); the sequence's qnpt is quarter-notes-per-tick (1/division)
+// and curTime is the playback position in microseconds — so µs-per-beat =
+// uspt/qnpt, BPM = 60e6/µs-per-beat, and phase = (curTime mod µs-per-beat).
+// Beat-game drum anchor: the sequence player (__n_CSPHandleMIDIMsg) records the
+// sequence time of each KICK hit — the lowest-key percussion note, learned live
+// (g_SndBeatKickKey, reset per track by musicStartPrimary) — so the phase below
+// can lock to the actual audible drum instead of the arbitrary track-start
+// reference, which could sit up to half a beat off.
+s32 g_SndBeatAnchorTime = 0;
+void *g_SndBeatAnchorSeqp = NULL;
+s32 g_SndBeatKickKey = 127;
+
+// Chaos "DJ" (pd.music_rate): scale the sequenced music's TEMPO, not its pitch.
+// Tempo lives in seqp->uspt (microseconds per sequence tick) — smaller = faster.
+//
+// THE RATE IS APPLIED IN EXACTLY ONE PLACE, and that is the whole design.
+// Kai's first attempt scaled in BOTH __n_setUsptFromTempo and here, so the two
+// multiplied: a MIDI tempo event landed already-divided, this function then
+// captured THAT as its "base" and divided again, and every further event
+// compounded it.
+//
+// So there is one canonical unscaled base per player:
+//   __n_setUsptFromTempo computes the true uspt and hands it to
+//   sndChaosMusicSetBase() — it is the only code that knows the real tempo —
+//   then calls sndChaosMusicApply() to scale it.
+//   sndChaosSetMusicRate() re-applies from that same base, so a live rate change
+//   takes effect immediately (a sequence may emit no further tempo events at all,
+//   which is why applying only at the chokepoint would mean DJ never engaging).
+// Neither path ever reads the CURRENT uspt, so nothing can compound, and there is
+// no s32 rounding drift from ratio-chaining either.
+//
+// g_ChaosMusicRate itself is defined in game/chaosstate.c.
+#define CHAOS_MUSIC_SLOTS 4
+static void *g_ChaosMusicSeqp[CHAOS_MUSIC_SLOTS];
+static s32 g_ChaosMusicBase[CHAOS_MUSIC_SLOTS];
+
+static s32 chaosMusicSlot(void *seqp)
+{
+	s32 i;
+	s32 free = -1;
+
+	for (i = 0; i < CHAOS_MUSIC_SLOTS; i++) {
+		if (g_ChaosMusicSeqp[i] == seqp) {
+			return i;
+		}
+		if (free < 0 && g_ChaosMusicSeqp[i] == NULL) {
+			free = i;
+		}
+	}
+
+	if (free < 0) {
+		free = 0; // all taken: recycle, the oldest player is long gone
+	}
+
+	g_ChaosMusicSeqp[free] = seqp;
+	g_ChaosMusicBase[free] = 0;
+	return free;
+}
+
+// Record the UNSCALED uspt for this player. Called from __n_setUsptFromTempo with
+// the value it just computed, before any rate is applied.
+void sndChaosMusicSetBase(void *seqp, s32 uspt)
+{
+	if (seqp != NULL && uspt > 0) {
+		g_ChaosMusicBase[chaosMusicSlot(seqp)] = uspt;
+	}
+}
+
+// Write base/rate into this player's uspt. No-op without a known base.
+void sndChaosMusicApply(void *seqp)
+{
+	s32 slot;
+	s32 uspt;
+
+	if (seqp == NULL || g_ChaosMusicRate <= 0.0f) {
+		return;
+	}
+
+	slot = chaosMusicSlot(seqp);
+
+	if (g_ChaosMusicBase[slot] <= 0) {
+		return;
+	}
+
+	uspt = (s32)((f32)g_ChaosMusicBase[slot] / g_ChaosMusicRate);
+
+	if (uspt < 1) {
+		uspt = 1;
+	}
+
+	((N_ALCSPlayer *)seqp)->uspt = uspt;
+}
+
+void sndChaosSetMusicRate(f32 rate)
+{
+	s32 i;
+
+	// A 2x spread either side is plenty for a turntable and keeps the sequence
+	// player in sane territory.
+	if (rate < 0.5f) rate = 0.5f;
+	if (rate > 2.0f) rate = 2.0f;
+
+	g_ChaosMusicRate = rate;
+
+	for (i = 0; i < 3; i++) {
+		if (g_SeqInstances[i].seqp != NULL) {
+			// First sighting with no recorded base: today's uspt IS the unscaled
+			// tempo, because the rate has only just moved off 1.0.
+			if (g_ChaosMusicBase[chaosMusicSlot(g_SeqInstances[i].seqp)] <= 0) {
+				sndChaosMusicSetBase(g_SeqInstances[i].seqp, g_SeqInstances[i].seqp->uspt);
+			}
+
+			sndChaosMusicApply(g_SeqInstances[i].seqp);
+		}
+	}
+}
+
+s32 sndGetMusicBeat(f32 *bpm, f32 *phase)
+{
+	s32 i;
+	s32 best = -1;
+
+	for (i = 0; i < 3; i++) {
+		if (g_SeqInstances[i].seqp == NULL
+				|| n_alCSPGetState(g_SeqInstances[i].seqp) != AL_PLAYING) {
+			continue;
+		}
+		if (best < 0) {
+			best = i;
+		}
+		if (g_SeqChannels[i].tracktype == TRACKTYPE_PRIMARY) {
+			best = i; // prefer the primary (beat-carrying) track
+			break;
+		}
+	}
+
+	if (best >= 0) {
+		struct seqinstance *seq = &g_SeqInstances[best];
+		f32 qnpt = seq->seq.qnpt;   // quarter notes per tick (1/division)
+		s32 uspt = seq->seqp->uspt; // microseconds per tick
+
+		if (qnpt > 0.0f && uspt > 0) {
+			s32 usperbeat = (s32)((f32)uspt / qnpt); // microseconds per beat
+
+			if (usperbeat > 1) {
+				// Phase-lock to the actual KICK drum: measure from the last kick
+				// hit on THIS track (recorded by the sequence player) so phase 0
+				// lands on the drum, not the track-start reference. Falls back to
+				// the reference until this track has produced a kick. Integer
+				// modulo (both µs) keeps this off the FPU / libm; curTime never
+				// resets mid-track.
+				s32 anchor = (g_SndBeatAnchorSeqp == (void *)seq->seqp) ? g_SndBeatAnchorTime : 0;
+				s32 rem = (seq->seqp->curTime - anchor) % usperbeat;
+				if (rem < 0) {
+					rem += usperbeat;
+				}
+				if (bpm) {
+					*bpm = 60000000.0f * qnpt / (f32)uspt;
+				}
+				if (phase) {
+					*phase = (f32)rem / (f32)usperbeat;
+				}
+				return 1;
+			}
+		}
+	}
+
+	if (bpm) {
+		*bpm = 0.0f;
+	}
+	if (phase) {
+		*phase = -1.0f;
+	}
+	return 0;
+}
+#endif
 
 s32 musicHandlePlayEvent(struct musicevent *event, s32 result)
 {

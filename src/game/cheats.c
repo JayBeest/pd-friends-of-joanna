@@ -234,6 +234,21 @@ void cheatDeactivate(s32 cheat_id)
 	}
 }
 
+#ifndef PLATFORM_N64
+// Flip a cheat's active bit live, the way pd.cheat wants it. From Kai
+// (be46717), where it also routed the port's "Experiments" cheats to the
+// enabled bank; this build has no Experiments cheats, so every id goes
+// through the normal active-bank path.
+void cheatSetActive(s32 cheat_id, bool on)
+{
+	if (on) {
+		cheatActivate(cheat_id);
+	} else {
+		cheatDeactivate(cheat_id);
+	}
+}
+#endif
+
 void cheatsInit(void)
 {
 	g_CheatsActiveBank0 = 0;

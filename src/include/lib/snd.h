@@ -24,6 +24,11 @@ void sndInit(void);
 bool sndIsMp3(s16 soundnum);
 bool sndStopMp3(s16 arg0);
 bool seqPlay(struct seqinstance *seq, s32 tracknum);
+#ifndef PLATFORM_N64
+void seqSetNextSeek(s32 tracknum, f32 frac); /* pd.song: start that track at frac of its length */
+void sndStopAll(void); /* pd.sfx_shuffle(false): hard-stop every sample sound */
+s32 sndGetRussMappingSound(s32 confignum); /* pd.sound: bounds-checked config lookup */
+#endif
 u16 seqGetVolume(struct seqinstance *seq);
 void seqSetVolume(struct seqinstance *seq, u16 volume);
 void sndHandleRetrace(void);

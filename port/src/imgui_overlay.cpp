@@ -44,6 +44,7 @@ static bool g_ImGuiOverlayShowProportions = false;
 static bool g_ImGuiOverlayShowStance = false;
 static bool g_ImGuiOverlayShowPauseBlur = false;
 static bool g_ImGuiOverlayShowAudio = false;
+static bool g_ImGuiOverlayShowLua = false;
 static struct chrdata *g_ImGuiPropChr = NULL;
 static s32 g_ImGuiPropChrnum = -1;
 static bool g_ImGuiPropApply = true;
@@ -242,6 +243,25 @@ extern "C" f32 g_BuildSpeedRef;
 extern "C" f32 g_BuildCrouchMix;
 extern "C" void stanceTuningReset(void);
 
+// Lua scripting. The switch is in src/game/luaai.c, the readout flags in
+// src/game/chaosstate.c, the rest in src/game/luaai_api_menus.c. Declared by
+// hand for the same reason as everything above.
+extern "C" s32 g_LuaAiEnabled;
+extern "C" s32 g_LuaShowFps;
+extern "C" s32 g_LuaShowMem;
+extern "C" struct lua_State *luaaiGetState(void);
+extern "C" s32 luaMenuCount(void);
+extern "C" void luaaiReload(void);
+extern "C" s32 luaMenusRunString(const char *src, char *out, u32 outlen);
+
+// Reload and run are asked for while the panel draws and done once the
+// overlay has rendered, between two game frames.
+static bool g_ImGuiLuaReloadPending = false;
+static bool g_ImGuiLuaRunPending = false;
+static char g_ImGuiLuaInput[256];
+static char g_ImGuiLuaResult[512];
+static bool g_ImGuiLuaResultOk = true;
+
 // Proportion editor overrides, defined in src/game/chr.c. Declared by hand
 // rather than included, for the same reason as everything above: the game
 // headers are not extern "C"-wrapped.
@@ -283,6 +303,7 @@ static void imguiOverlaySettingsReadLine(ImGuiContext *, ImGuiSettingsHandler *,
 	if (sscanf(line, "Stance=%d", &value) == 1) { g_ImGuiOverlayShowStance = value != 0; return; }
 	if (sscanf(line, "Audio=%d", &value) == 1) { g_ImGuiOverlayShowAudio = value != 0; return; }
 	if (sscanf(line, "PauseBlur=%d", &value) == 1) { g_ImGuiOverlayShowPauseBlur = value != 0; return; }
+	if (sscanf(line, "Lua=%d", &value) == 1) { g_ImGuiOverlayShowLua = value != 0; return; }
 
 	{
 		float fvalue;
@@ -308,6 +329,7 @@ static void imguiOverlaySettingsWriteAll(ImGuiContext *, ImGuiSettingsHandler *h
 	buffer->appendf("Stance=%d\n", g_ImGuiOverlayShowStance);
 	buffer->appendf("Audio=%d\n", g_ImGuiOverlayShowAudio);
 	buffer->appendf("PauseBlur=%d\n", g_ImGuiOverlayShowPauseBlur);
+	buffer->appendf("Lua=%d\n", g_ImGuiOverlayShowLua);
 	buffer->appendf("LoreScale=%.5f\n\n", g_ImGuiPropLoreScale);
 }
 
@@ -324,7 +346,8 @@ static u32 imguiOverlayGetWindowState(void)
 		| (g_ImGuiOverlayShowProportions ? 1u << 8 : 0)
 		| (g_ImGuiOverlayShowStance ? 1u << 9 : 0)
 		| (g_ImGuiOverlayShowAudio ? 1u << 10 : 0)
-		| (g_ImGuiOverlayShowPauseBlur ? 1u << 11 : 0);
+		| (g_ImGuiOverlayShowPauseBlur ? 1u << 11 : 0)
+		| (g_ImGuiOverlayShowLua ? 1u << 12 : 0);
 }
 
 static void imguiOverlaySaveWindowState(void)
@@ -4749,6 +4772,90 @@ static void imguiOverlayDrawPauseBlurPanel(void)
 	}
 }
 
+static void imguiOverlayDrawLuaPanel(void)
+{
+	if (!g_LuaAiEnabled) {
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("Lua is off: there is no scripts/init.lua, or Game.LuaAiMode is 0. "
+				"It is decided at startup.");
+		ImGui::PopTextWrapPos();
+		return;
+	}
+
+	ImGui::Text("State: %s", luaaiGetState() ? "loaded" : "not built yet");
+	ImGui::Text("Director entries: %d", luaMenuCount());
+
+	if (ImGui::Button("Reload scripts")) {
+		g_ImGuiLuaReloadPending = true;
+	}
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("Close the Lua state and run scripts/init.lua again.\n"
+				"Effects the old scripts turned on stay on until the next stage.");
+	}
+
+	ImGui::SeparatorText("Readouts");
+	{
+		bool fps = g_LuaShowFps != 0;
+		bool mem = g_LuaShowMem != 0;
+
+		if (ImGui::Checkbox("Frame rate", &fps)) {
+			g_LuaShowFps = fps;
+		}
+		if (ImGui::Checkbox("Vertex pool", &mem)) {
+			g_LuaShowMem = mem;
+		}
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("Drawn on the HUD. pd.perf() reports both switches.");
+		ImGui::PopTextWrapPos();
+	}
+
+	ImGui::SeparatorText("Run");
+	ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Run").x - ImGui::GetStyle().FramePadding.x * 2.0f
+			- ImGui::GetStyle().ItemSpacing.x);
+	if (ImGui::InputText("##LuaInput", g_ImGuiLuaInput, sizeof(g_ImGuiLuaInput),
+				ImGuiInputTextFlags_EnterReturnsTrue)) {
+		g_ImGuiLuaRunPending = true;
+		ImGui::SetKeyboardFocusHere(-1);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Run")) {
+		g_ImGuiLuaRunPending = true;
+	}
+	ImGui::PushTextWrapPos(0.0f);
+	ImGui::TextDisabled("One line, under the AI instruction budget. An expression shows its value.");
+	ImGui::PopTextWrapPos();
+
+	if (g_ImGuiLuaResult[0] != '\0') {
+		if (g_ImGuiLuaResultOk) {
+			ImGui::TextWrapped("%s", g_ImGuiLuaResult);
+		} else {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+			ImGui::TextWrapped("%s", g_ImGuiLuaResult);
+			ImGui::PopStyleColor();
+		}
+	}
+}
+
+// Runs after the overlay has rendered: the game frame is finished and the
+// next has not started, so no Lua call or AI tick is under way.
+static void imguiOverlayRunLuaRequests(void)
+{
+	if (g_ImGuiLuaReloadPending) {
+		g_ImGuiLuaReloadPending = false;
+		luaaiReload();
+		snprintf(g_ImGuiLuaResult, sizeof(g_ImGuiLuaResult), "reloaded scripts/init.lua");
+		g_ImGuiLuaResultOk = true;
+	}
+
+	if (g_ImGuiLuaRunPending) {
+		g_ImGuiLuaRunPending = false;
+		if (g_ImGuiLuaInput[0] != '\0') {
+			g_ImGuiLuaResultOk = luaMenusRunString(g_ImGuiLuaInput, g_ImGuiLuaResult,
+					sizeof(g_ImGuiLuaResult)) != 0;
+		}
+	}
+}
+
 static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 {
 	if (!ImGui::BeginPopupContextVoid("FojoWindowMenu", ImGuiPopupFlags_MouseButtonRight)) {
@@ -4768,6 +4875,7 @@ static void imguiOverlayDrawWindowMenu(bool canOpenLookingAt)
 	ImGui::MenuItem("Proportions", NULL, &g_ImGuiOverlayShowProportions);
 	ImGui::MenuItem("Stance", NULL, &g_ImGuiOverlayShowStance);
 	ImGui::MenuItem("Pause Blur", NULL, &g_ImGuiOverlayShowPauseBlur);
+	ImGui::MenuItem("Lua", NULL, &g_ImGuiOverlayShowLua);
 	ImGui::EndPopup();
 }
 
@@ -4964,6 +5072,14 @@ void imguiOverlayRender(void)
 			ImGui::End();
 		}
 
+		if (g_ImGuiOverlayShowLua) {
+			imguiOverlaySetNextWindowDefaults(ImVec2(420.0f, 300.0f), 0.0f, 0.75f);
+			if (ImGui::Begin("Fojo Lua", &g_ImGuiOverlayShowLua)) {
+				imguiOverlayDrawLuaPanel();
+			}
+			ImGui::End();
+		}
+
 		if (imguiOverlayGetWindowState() != previousWindowState) {
 			imguiOverlaySaveWindowState();
 		}
@@ -4971,6 +5087,8 @@ void imguiOverlayRender(void)
 
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+	imguiOverlayRunLuaRequests();
 }
 
 bool imguiOverlayCapturesKeyboard(void)

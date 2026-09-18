@@ -31,6 +31,7 @@
 #include "lib/collision.h"
 #include "data.h"
 #include "types.h"
+#include "game/chaosstate.h"
 #ifndef PLATFORM_N64
 extern f32 fabsf(f32);
 #endif
@@ -920,6 +921,21 @@ void bwalk0f0c4d98(void)
 
 void bwalkUpdateSpeedSideways(f32 targetspeed, f32 accelspeed, s32 mult)
 {
+#ifndef PLATFORM_N64
+	// Lua "Ice Floor" (pd.ice_floor, from Kai): scale strafe accel/decel to
+	// match the forward slide. Strafe is a SIGNED axis, so "am I slowing
+	// down?" is a magnitude question, not which side of targetspeed we are on:
+	// full-left to full-right passes through zero and is a decel then an accel.
+	{
+		f32 cur = g_Vars.currentplayer->speedstrafe;
+		f32 m = (fabsf(targetspeed) < fabsf(cur)) ? g_ChaosIceDecel : g_ChaosIceAccel;
+
+		if (m != 1.0f) {
+			accelspeed *= m;
+		}
+	}
+#endif
+
 	if (g_Vars.normmplayerisrunning) {
 		targetspeed = (g_PlayerConfigsArray[g_Vars.currentplayerstats->mpindex].base.unk1c + 25.0f) / 100 * targetspeed;
 	}
@@ -943,6 +959,23 @@ void bwalkUpdateSpeedSideways(f32 targetspeed, f32 accelspeed, s32 mult)
 
 void bwalkUpdateSpeedForwards(f32 targetspeed, f32 accelspeed)
 {
+#ifndef PLATFORM_N64
+	// Lua "Ice Floor" (pd.ice_floor, from Kai). accelspeed is the per-tick
+	// rate at which speedgo chases targetspeed in BOTH directions, so it is
+	// the one knob behind "slow to get going", "slow to stop" and "keeps
+	// sliding" (the slide IS the decay toward a targetspeed of 0 after the
+	// stick is released). Split into accel and decel scales so they can be
+	// tuned apart; pd.ice_floor mirrors accel into decel when given one value.
+	{
+		f32 cur = g_Vars.currentplayer->speedgo;
+		f32 m = (fabsf(targetspeed) < fabsf(cur)) ? g_ChaosIceDecel : g_ChaosIceAccel;
+
+		if (m != 1.0f) {
+			accelspeed *= m;
+		}
+	}
+#endif
+
 	if (g_Vars.normmplayerisrunning) {
 		targetspeed = (g_PlayerConfigsArray[g_Vars.currentplayerstats->mpindex].base.unk1c + 25.0f) / 100 * targetspeed;
 	}
@@ -1047,6 +1080,27 @@ void bwalkUpdateVertical(void)
 			&g_Vars.currentplayer->floorflags, &g_Vars.currentplayer->floorroom,
 			&newinlift, &lift);
 	ground += g_Vars.currentplayer->bondonground;
+
+#ifndef PLATFORM_N64
+	// Lua "Trapdoor" (pd.trapdoor, from Kai): for a few ticks the floor is
+	// yanked far below the player, so the fall branch runs and they plummet
+	// to the death plane (vv_manground <= -30000 -> playerDie).
+	//
+	// Decrement exactly once per frame: stamp the frame rather than keying on
+	// a player index, which is also correct in splitscreen.
+	{
+		static u32 lasttickframe = 0xffffffffu;
+
+		if (g_ChaosTrapdoorTicks > 0) {
+			ground = -35000.0f;
+
+			if ((u32)g_Vars.lvframe60 != lasttickframe) {
+				lasttickframe = (u32)g_Vars.lvframe60;
+				g_ChaosTrapdoorTicks--;
+			}
+		}
+	}
+#endif
 
 	if (ground < -30000) {
 		ground = -30000;
@@ -1922,6 +1976,16 @@ void bwalkApplyMoveData(struct movedata *data)
 
 		g_Vars.currentplayer->speedforwards *= 1.08f;
 		g_Vars.currentplayer->speedforwards *= g_Vars.currentplayer->speedboost;
+
+#ifndef PLATFORM_N64
+		// Lua "Gotta go fast" (pd.player_speed, from Kai): a straight
+		// multiplier on the real walk + strafe speed, after the vanilla
+		// multipliers. 1.0 = normal.
+		if (g_ChaosPlayerSpeed != 1.0f) {
+			g_Vars.currentplayer->speedforwards *= g_ChaosPlayerSpeed;
+			g_Vars.currentplayer->speedsideways *= g_ChaosPlayerSpeed;
+		}
+#endif
 
 		if ((data->canlookahead == false && data->digitalstepforward == false) ||
 				bmoveGetCrouchPos() != CROUCHPOS_STAND) {

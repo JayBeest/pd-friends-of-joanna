@@ -370,6 +370,21 @@ void    n_alCSPSetSeq(N_ALCSPlayer *seqp, ALCSeq *seq);
 void    n_alCSPSetTempo(N_ALCSPlayer *seqp, s32 tempo);
 void    n_alCSPSetVol(N_ALCSPlayer *seqp, s16 vol);
 void    n_alCSPStop(N_ALCSPlayer *seqp);
+#ifndef PLATFORM_N64
+/* port: pd.song mid-song start (Kai fork). snd.c's seqSeekToFrac parks the
+ * sequence on a marker and arms this record; the AL_SEQP_PLAY_EVT handler
+ * (n_csplayer.c) consumes it, replaying the skipped program/controller/tempo
+ * events through the real handlers. Must be player-side: the queued SEQ event
+ * re-inits channel state from the bank after seqPlay returns, and posting the
+ * chase as queued events overflows the event queue. */
+typedef struct {
+    N_ALCSPlayer *seqp;   /* player the seek was armed for (NULL = idle) */
+    ALCSeq *seq;          /* expected target sequence (validation) */
+    u32 ticks;            /* replay state up to this sequence tick */
+    s32 markticks;        /* seq->lastTicks stamped by the seek (validation) */
+} n_ALSeqSeekChase;
+extern n_ALSeqSeekChase n_seqSeekChase;
+#endif
 
 
 /*

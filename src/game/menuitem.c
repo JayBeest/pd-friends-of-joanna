@@ -3037,6 +3037,13 @@ char *menuitemScrollableGetText(u32 type)
 	case DESCRIPTION_HOLOTIP2:       return htGetTip2();
 	case DESCRIPTION_DEVICETIP1:     return dtGetTip1();
 	case DESCRIPTION_DEVICETIP2:     return dtGetTip2();
+#ifndef PLATFORM_N64
+	case DESCRIPTION_LUADIRECTOR: {
+		// Lua Director scroll-panel text (Kai, be46717; mainmenu.c)
+		extern char *luaDirectorGetDesc(void);
+		return luaDirectorGetDesc();
+	}
+#endif
 	}
 
 	return langGet(g_Briefing.briefingtextnum);

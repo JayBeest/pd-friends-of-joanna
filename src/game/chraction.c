@@ -59,6 +59,13 @@
 #include "lib/vi.h"
 #include "data.h"
 #include "types.h"
+#include "game/chaosstate.h"
+
+#ifndef PLATFORM_N64
+// Chaos "Evil twin" (Kai be46717): defined with the twin registry in
+// luaai_bridge_chrs.c; chrDamage keeps twins psychosis-immune.
+bool chaosIsTwin(struct chrdata *chr);
+#endif
 
 s32 g_RecentQuipsPlayed[5];
 u32 var8009cd84;
@@ -3132,6 +3139,19 @@ void chrBeginDeath(struct chrdata *chr, struct coord *dir, f32 relangle, s32 hit
 
 	chr->sleep = 0;
 
+#ifndef PLATFORM_N64
+	// Campaign chr death CHOKE POINT: every non-aibot death that plays a death
+	// animation funnels through here — gunfire (via the argh path), robots and
+	// Dr Caroll from explosions, KO'd chrs finished off. Emit the Lua "kill"
+	// event here (not on knockouts — a KO'd chr that's later killed re-enters
+	// with knockout == false). The aibot path (chrDie) and the explosion-yeet
+	// path (chrDamage) emit at their own sites.
+	if (knockout == false) {
+		extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+		luaEmitKill((s32)chr->chrnum, aplayernum);
+	}
+#endif
+
 	// Handle robots and Dr Caroll then return early
 	if (race == RACE_ROBOT || race == RACE_DRCAROLL) {
 		impactforce1 = gsetGetImpactForce(gset) * 0.5f;
@@ -3392,7 +3412,13 @@ void chrBeginDeath(struct chrdata *chr, struct coord *dir, f32 relangle, s32 hit
 	}
 
 	// Drop items
-	if (race == RACE_HUMAN || race == RACE_SKEDAR) {
+	if ((race == RACE_HUMAN || race == RACE_SKEDAR)
+#ifndef PLATFORM_N64
+			// Chaos "No drops": skip the whole drop — held weapons stay
+			// parented to the corpse and free with it.
+			&& !g_ChaosNoDrops
+#endif
+			) {
 		if (chr->weapons_held[0] && (chr->weapons_held[0]->obj->flags & OBJFLAG_AIUNDROPPABLE) == 0) {
 			objSetDropped(chr->weapons_held[0], DROPTYPE_DEFAULT);
 			chr->hidden |= CHRHFLAG_DROPPINGITEM;
@@ -4174,6 +4200,17 @@ static bool chrYeetFromPosWithAction(struct chrdata *chr, struct coord *exppos, 
 			angleindex = 0;
 		}
 
+#ifndef PLATFORM_N64
+		// Port (Kai be46717): extreme face-vs-explosion geometry can drive angletoexplosion negative
+		// (latangle - faceangle can fall below -TAU after the wrap), giving a negative
+		// angleindex. The >= 8 clamp above never covered that, so g_YeetAnimIndexesByRaceAngle
+		// gets read out of bounds, handing back a garbage `indexes` pointer that is then
+		// dereferenced -> crash (read at 0xffff...). Clamp the low end too.
+		if (angleindex < 0) {
+			angleindex = 0;
+		}
+#endif
+
 		subindex = rngRandom() % g_YeetAnimIndexesByRaceAngle[race][angleindex].count;
 
 		if (race == RACE_HUMAN) {
@@ -4874,6 +4911,11 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 	bool ismelee;
 	struct prop *vprop = chr->prop;
 	f32 headshotdamagescale = 1;
+#ifndef PLATFORM_N64
+	// Remembers a head hit so the luaEmitDamage site below (where the
+	// attacker is resolved) can emit the "headshot" event.
+	bool chaosheadshot = false;
+#endif
 	bool usedshield = false;
 	bool showshield = false;
 	bool showdamage = false;
@@ -4888,6 +4930,56 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 	bool canchoke = true;
 	s32 aplayernum = -1;
 	s32 choketype = CHOKETYPE_NONE;
+
+#ifndef PLATFORM_N64
+	// Chaos "one punch" (pd.one_punch): a player's unarmed strike is lethal
+	// through any armour and launches the victim (the explosion-knockback
+	// fling). NPC victims only — other players / co-op partners take normal
+	// fist damage.
+	if (g_ChaosOnePunch
+			&& gset && gset->weaponnum == WEAPON_UNARMED
+			&& aprop && aprop->type == PROPTYPE_PLAYER
+			&& vprop && vprop->type == PROPTYPE_CHR
+			&& !chrIsDead(chr)) {
+		damage = chrGetMaxDamage(chr) + chrGetShield(chr) + 100.0f;
+		if (chr->model) {
+			chrYeetFromPos(chr, &aprop->pos, 250.0f);
+		}
+	}
+
+	// Chaos "Space Program" (pd.space_program): the one_punch treatment for GUN
+	// shots — any player bullet is lethal through armour and launches the victim
+	// with MASSIVE knockback (the fling force is ~3.5x one_punch's). NPC victims
+	// only.
+	if (g_ChaosSpaceProgram
+			&& gset && gset->weaponnum != WEAPON_UNARMED && gset->weaponnum != WEAPON_NONE
+			&& aprop && aprop->type == PROPTYPE_PLAYER
+			&& vprop && vprop->type == PROPTYPE_CHR
+			&& !chrIsDead(chr)) {
+		damage = chrGetMaxDamage(chr) + chrGetShield(chr) + 100.0f;
+		if (chr->model) {
+			f32 horiz;
+
+			chrYeetFromPos(chr, &aprop->pos, 450.0f);
+
+			// chrYeetFromPos only sets a near-horizontal knockback (attacker and
+			// victim stand at similar heights, so dist.y ~ 0). Add an UPWARD kick
+			// sized to that horizontal launch so victims rocket skyward as well as
+			// back — a "space program" ~45deg arc (+Y is up; gravity turns it into
+			// an arc). Self-calibrating off the yeet's own magnitude, so halving
+			// the launch force above halves the up-boost proportionally too.
+			horiz = sqrtf(chr->fallspeed.x * chr->fallspeed.x
+					+ chr->fallspeed.z * chr->fallspeed.z);
+			chr->fallspeed.y += horiz * 1.25f;
+		}
+	}
+
+	// Chaos "Paintball" damage scale (pd.damage_scale): scale ALL chr/player
+	// damage.
+	if (g_ChaosDamageScale >= 0.0f && g_ChaosDamageScale != 1.0f) {
+		damage *= g_ChaosDamageScale;
+	}
+#endif
 
 	if (hitpart == HITPART_HEAD) {
 		choketype = CHOKETYPE_GURGLE;
@@ -5339,11 +5431,26 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 		// Apply damage multipliers based on which body parts were hit,
 		// and flinch head if shot in the head
 		if (hitpart == HITPART_HEAD) {
+#ifndef PLATFORM_N64
+			chaosheadshot = true;
+#endif
 			if (race == RACE_SKEDAR) {
 				damage += damage;
+#ifndef PLATFORM_N64
+				// Chaos "Birthday party": x2 vanilla -> x10 total
+				if (g_ChaosHeadshotBoost) {
+					damage *= 5.0f;
+				}
+#endif
 				chrFlinchHead(chr, angle);
 			} else {
 				damage *= 4;
+#ifndef PLATFORM_N64
+				// Chaos "Birthday party": x4 vanilla -> x10 total
+				if (g_ChaosHeadshotBoost) {
+					damage *= 2.5f;
+				}
+#endif
 
 				if (isshoot && !usedshield) {
 					chrFlinchHead(chr, angle);
@@ -5371,6 +5478,19 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 		if (vprop->type == PROPTYPE_PLAYER) {
 			s32 prevplayernum = g_Vars.currentplayernum;
 			setCurrentPlayerNum(playermgrGetPlayerNumByProp(vprop));
+
+#ifndef PLATFORM_N64
+			// Lua "No Damage Except Headshots" (pd.headshots_only, from Kai):
+			// zero every non-head hit on the player. Zeroing damage lets the
+			// damage>0 guard below fall through; makedizzy=false drops the
+			// blur/dizzy accum for the ignored hit. Kill-plane/forced kills
+			// bypass chrDamage entirely, so this doesn't make the player
+			// unkillable.
+			if (g_ChaosHeadshotsOnly && hitpart != HITPART_HEAD) {
+				damage = 0;
+				makedizzy = false;
+			}
+#endif
 
 			if (g_Vars.normmplayerisrunning || g_MissionConfig.isteam) {
 				damage /= mpHandicapToDamageScale(*g_PlayerConfigsArray[g_Vars.currentplayerstats->mpindex].handicap);
@@ -5578,6 +5698,13 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 			// Handle chr dizziness and psychosis
 			if (makedizzy && race != RACE_DRCAROLL && race != RACE_ROBOT) {
 				if (gsetHasFunctionFlags(gset, FUNCFLAG_PSYCHOSIS)) {
+#ifndef PLATFORM_N64
+					// Chaos "Evil twin"/"Clone army" are immune to psychosis: it
+					// routes them into GAILIST_INIT_PSYCHOSIS, which rewrites their
+					// team to TEAM_NONCOMBAT then TEAM_ALLY and turns them friendly
+					// — exactly the "she goes friendly" bug. Keep them hostile.
+					if (!chaosIsTwin(chr))
+#endif
 					chr->hidden |= CHRHFLAG_PSYCHOSISED;
 				} else {
 					chr->blurdrugamount += gsetGetBlurAmount(gset);
@@ -5644,6 +5771,35 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 				chr->damage += damage;
 				chr->lastattacker = (aprop ? aprop->chr : NULL);
 				chr->chrflags |= CHRCFLAG_JUST_INJURED;
+#ifndef PLATFORM_N64
+				{
+					extern void luaEmitDamage(s32 chrnum, s32 attackerplayernum, s32 amount);
+					extern void luaEmitHeadshot(s32 chrnum, s32 attackerplayernum);
+					luaEmitDamage((s32)chr->chrnum, aplayernum, (s32)damage);
+					if (chaosheadshot) {
+						luaEmitHeadshot((s32)chr->chrnum, aplayernum);
+					}
+				}
+#endif
+
+#ifndef PLATFORM_N64
+				// Lua "Headshots Only" (pd.headshots_only, from Kai): the same
+				// rule the player gets further up, applied to NPCs too.
+				//
+				// This CLAMPS the accumulated damage rather than zeroing the
+				// incoming damage: only a head hit can KILL, but body shots
+				// still read as hits (flinch, blood, AI reaction). Parking the
+				// chr at maxdamage - 0.1 (the engine's own "survive at the
+				// brink" idiom, see the tranquiliser clamp below) leaves it
+				// alive, so the next head hit finishes it.
+				//
+				// Explosions are exempt: they force damage to maxdamage and are
+				// not body shots in any meaningful sense.
+				if (g_ChaosHeadshotsOnly && !explosion && hitpart != HITPART_HEAD
+						&& chr->damage >= chr->maxdamage) {
+					chr->damage = chr->maxdamage - 0.1f;
+				}
+#endif
 
 				if (chr->aibot) {
 					if (g_Vars.normmplayerisrunning && (g_MpSetup.options & MPOPTION_ONEHITKILLS)) {
@@ -5698,6 +5854,17 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 							chrBeginDeath(chr, vector, angle, hitpart, gset, false, aplayernum);
 						} else {
 							chrYeetFromPos(chr, explosionpos, explosionforce);
+#ifndef PLATFORM_N64
+							{
+								// Explosion deaths of humans are yeeted straight to
+								// dead and never reach chrBeginDeath (the kill-event
+								// choke point) — emit here for this path only.
+								extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+								luaEmitKill((s32)chr->chrnum,
+										(aprop && aprop->type == PROPTYPE_PLAYER)
+											? (s32)playermgrGetPlayerNumByProp(aprop) : -1);
+							}
+#endif
 						}
 
 						if (canchoke) {
@@ -5750,7 +5917,15 @@ void chrDamage(struct chrdata *chr, f32 damage, struct coord *vector, struct gse
 
 					// If chr has armour or the weapon doesn't stun
 					if (chr->damage < 0 ||
-							(gsetHasFunctionFlags(gset, FUNCFLAG_NOSTUN) && chr->damage < chr->maxdamage)) {
+							(gsetHasFunctionFlags(gset, FUNCFLAG_NOSTUN) && chr->damage < chr->maxdamage)
+#ifndef PLATFORM_N64
+							// Lua "Headshots Only" (see the damage clamp above):
+							// a non-head hit must not stagger the guard either,
+							// so route it down this light-flinch branch, as
+							// negative-damage armour already is.
+							|| (g_ChaosHeadshotsOnly && hitpart != HITPART_HEAD)
+#endif
+							) {
 						f32 endframe = -1;
 
 						if (!chrIsAnimPreventingArgh(chr, &endframe)) {
@@ -5808,6 +5983,12 @@ void chrDie(struct chrdata *chr, s32 aplayernum)
 	if (chr->actiontype != ACT_DIE) {
 		chrStopFiring(chr);
 		chrUncloak(chr, true);
+#ifndef PLATFORM_N64
+		{
+			extern void luaEmitKill(s32 chrnum, s32 killerplayernum);
+			luaEmitKill((s32)chr->chrnum, aplayernum);
+		}
+#endif
 
 		chr->actiontype = ACT_DIE;
 		chr->act_die.notifychrindex = 0;
@@ -8296,11 +8477,27 @@ bool chrTryStartAlarm(struct chrdata *chr, s32 pad_id)
 bool chrConsiderGrenadeThrow(struct chrdata *chr, u32 attackflags, u32 entityid)
 {
 	bool done = false;
+	bool wantthrow;
 
-	if (CHRRACE(chr) == RACE_HUMAN &&
+#ifndef PLATFORM_N64
+	// Chaos "Frag Out" (pd.frag_out): any human that could open fire lobs a
+	// grenade instead — skip the grenadeprob roll and drop the min engagement
+	// range (still keep a small standoff so they don't nuke themselves at
+	// point-blank). The block below hands them a grenade if they lack one.
+	if (g_ChaosFragOut) {
+		wantthrow = CHRRACE(chr) == RACE_HUMAN
+				&& chrGetDistanceToTarget(chr) > 100
+				&& chrIsReadyForOrders(chr);
+	} else
+#endif
+	{
+		wantthrow = CHRRACE(chr) == RACE_HUMAN &&
 			chr->grenadeprob > (rngRandom() % 255) &&
 			chrGetDistanceToTarget(chr) > 200 &&
-			chrIsReadyForOrders(chr)) {
+			chrIsReadyForOrders(chr);
+	}
+
+	if (wantthrow) {
 		struct prop *target = chrGetTargetProp(chr);
 		struct coord pos;
 
@@ -8555,6 +8752,15 @@ bool chrTryPunch(struct chrdata *chr, u8 reverse)
 
 	if (ok) {
 		struct prop *targetprop = chrGetTargetProp(chr);
+
+#ifndef PLATFORM_N64
+		{
+			// An NPC punch/kick counts like a gun discharge (weaponnum
+			// UNARMED marks it as melee).
+			extern void luaEmitChrFire(s32 chrnum, s32 weaponnum);
+			luaEmitChrFire(chr->chrnum, WEAPON_UNARMED);
+		}
+#endif
 
 		if (targetprop->type == PROPTYPE_EYESPY || targetprop->type == PROPTYPE_PLAYER) {
 			chr->act_anim.hitradius = playerhitradius;
@@ -10954,6 +11160,28 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 	u8 isaibot = false;
 	u8 normalshoot = true;
 
+#ifndef PLATFORM_N64
+	// Chaos "Freeze!" (pd.chr_freeze): frozen chrs don't shoot. Pairs with the
+	// anim-advance gate in chr0f0220ec (chr.c) — statues don't pull triggers.
+	// The Weeping Skedar single-chr freeze rides the same gate.
+	if (g_ChaosChrFreeze && chrprop && chrprop->type != PROPTYPE_PLAYER) {
+		return;
+	}
+	if (g_ChaosFreezeChrnum >= 0 && chr != NULL
+			&& chr->chrnum == g_ChaosFreezeChrnum
+			&& chrprop && chrprop->type != PROPTYPE_PLAYER) {
+		return;
+	}
+
+	// Chaos "Body Snatch": while the player is disguised as a snatched guard, no
+	// NPC returns fire. Hard guarantee on top of the disguise/calm — an already
+	// alerted guard (e.g. after the player kills one) keeps its target through
+	// the target-search skip and would otherwise shoot, so gate firing here.
+	if (g_ChaosSnatchActive && chrprop && chrprop->type != PROPTYPE_PLAYER) {
+		return;
+	}
+#endif
+
 	if (chr->aibot) {
 		isaibot = true;
 	}
@@ -11032,6 +11260,28 @@ void chrTickShoot(struct chrdata *chr, s32 handnum)
 			f32 roty = chrGetAimAngle(chr);
 			f32 rotx = chrGetPitchAngle(chr);
 			bool extracdtypes = isaibot ? CDTYPE_PLAYERS : 0;
+
+#ifndef PLATFORM_N64
+			// Chaos "Frag Out": at the moment a human enemy would fire, lob a
+			// grenade instead. Hooked HERE — the real fire chokepoint that runs for
+			// both aibot simulants and campaign guards — rather than the AI-list
+			// grenade command (0x1b), which most enemies (and all bots) never run.
+			// chrConsiderGrenadeThrow does the LOS check, equips a grenade if
+			// needed, and throws; on success the chr switches to the throw action,
+			// so the firing-anim flags stop and throws pace themselves by the
+			// throw animation. Skip the bullet.
+			if (g_ChaosFragOut && chrConsiderGrenadeThrow(chr, attackflags, 0)) {
+				return;
+			}
+
+			// Report the discharge to Lua (pd.on "chrfire"): campaign guards
+			// and simulants alike. Player shots report via luaEmitWeaponFire
+			// (bondgun.c); the PROPTYPE_PLAYER gate avoids double counting.
+			if (chrprop->type != PROPTYPE_PLAYER) {
+				extern void luaEmitChrFire(s32 chrnum, s32 weaponnum);
+				luaEmitChrFire(chr->chrnum, gset.weaponnum);
+			}
+#endif
 
 			firingthisframe = true;
 

@@ -361,6 +361,7 @@ set(SRC_LIB
   src/lib/rng_c.c
   src/lib/rzip_c.c
   src/lib/snd.c
+  src/lib/sndcue.c
   src/lib/speaker.c
   src/lib/varsinit.c
   src/lib/vi.c

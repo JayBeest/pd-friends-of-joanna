@@ -202,6 +202,31 @@ struct snddebugpools {
 	s32 acmdlen;
 };
 extern "C" void snddebugGetPools(struct snddebugpools *out);
+
+// The cue scheduler. Same hand-declared shape as everything else this file
+// reaches for -- the game headers carry no __cplusplus guard.
+struct sndcuestate {
+	s32 nowtick;
+	s32 tickspq;
+	s32 pending;
+	s32 attick;
+	s32 action;
+	s32 arg;
+	s32 ducked;
+	s32 holdleft;
+	s32 lastsfx;
+	s32 mask;
+};
+extern "C" void sndcueGetState(struct sndcuestate *out);
+extern "C" void sndcueTrigger(void);
+extern "C" s32 g_SndCueEnabled;
+extern "C" s32 g_SndCueQuantise;
+extern "C" s32 g_SndCueBeatsPerBar;
+extern "C" s32 g_SndCueSlot;
+extern "C" s32 g_SndCueTriggerSfx;
+extern "C" s32 g_SndCueMaskFull;
+extern "C" s32 g_SndCueMaskDucked;
+extern "C" s32 g_SndCueHoldTicks;
 extern "C" u16 snddebugGetSfxVolume(void);
 extern "C" void sndSetSfxVolume(u16 volume);
 extern "C" void musicSetVolume(u16 volume);
@@ -4546,6 +4571,104 @@ static void imguiOverlayDrawAudioPanel(void)
 		ImGui::Text("seq buffer: %d bytes each, x%d slots",
 				(int)pools.seqbuffer, (int)snddebugNumSlots());
 		ImGui::Text("acmd list: %d commands", (int)pools.acmdlen);
+	}
+
+	// Open by default: this is the thing that is meant to be played with, and a
+	// collapsed header between two expanded ones is easy to scroll straight past.
+	if (ImGui::CollapsingHeader("Cue", ImGuiTreeNodeFlags_DefaultOpen)) {
+		struct sndcuestate cue;
+		sndcueGetState(&cue);
+
+		ImGui::TextWrapped("A sound comes in, a channel-mask change goes out -- "
+				"but not until the music reaches a position where the change "
+				"will not sound like a mistake. Everything here is a guess "
+				"until you have heard it in a firefight.");
+
+		bool enabled = g_SndCueEnabled != 0;
+		if (ImGui::Checkbox("enabled", &enabled)) {
+			g_SndCueEnabled = enabled ? 1 : 0;
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("checked first in sndStart");
+
+		const char *quant[] = { "now", "next beat", "next bar" };
+		int q = (int)g_SndCueQuantise;
+		if (ImGui::Combo("quantise", &q, quant, 3)) {
+			g_SndCueQuantise = q;
+		}
+
+		if (g_SndCueQuantise == 0) {
+			ImGui::TextDisabled("the control condition -- without hearing this "
+					"you cannot tell the waiting is doing anything");
+		} else if (g_SndCueQuantise == 2) {
+			int bpb = (int)g_SndCueBeatsPerBar;
+			if (ImGui::SliderInt("beats/bar", &bpb, 1, 16)) {
+				g_SndCueBeatsPerBar = bpb;
+			}
+			ImGui::TextDisabled("a guess. if it is wrong the jumps land off the "
+					"beat, which sounds like a broken mechanism rather than a "
+					"wrong number -- next beat needs no meter at all");
+		}
+
+		int slot = (int)g_SndCueSlot;
+		if (ImGui::SliderInt("slot", &slot, 0, 2)) {
+			g_SndCueSlot = slot;
+		}
+
+		int trig = (int)g_SndCueTriggerSfx;
+		if (ImGui::InputInt("trigger sfx", &trig)) {
+			g_SndCueTriggerSfx = trig < -1 ? -1 : trig;
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("-1 = any");
+		ImGui::Text("last sound seen: %d", (int)cue.lastsfx);
+
+		int full = (int)g_SndCueMaskFull;
+		int duck = (int)g_SndCueMaskDucked;
+		if (ImGui::InputInt("mask full", &full, 1, 16,
+				ImGuiInputTextFlags_CharsHexadecimal)) {
+			g_SndCueMaskFull = full & 0xffff;
+		}
+		if (ImGui::InputInt("mask ducked", &duck, 1, 16,
+				ImGuiInputTextFlags_CharsHexadecimal)) {
+			g_SndCueMaskDucked = duck & 0xffff;
+		}
+
+		int hold = (int)g_SndCueHoldTicks;
+		if (ImGui::InputInt("hold ticks", &hold)) {
+			g_SndCueHoldTicks = hold < 0 ? 0 : hold;
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("0 = stay ducked");
+
+		if (ImGui::Button("Fire now")) {
+			sndcueTrigger();
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("test it without a gun");
+
+		ImGui::Separator();
+		ImGui::Text("tick %d  ppq %d  mask %04x",
+				(int)cue.nowtick, (int)cue.tickspq, (unsigned)cue.mask);
+
+		if (cue.tickspq <= 0) {
+			ImGui::TextDisabled("no sequence on this slot, so no grid to land on "
+					"-- cues fire immediately");
+		}
+
+		if (cue.pending) {
+			ImGui::Text("pending: mask %04x at tick %d (in %d)",
+					(unsigned)cue.arg, (int)cue.attick,
+					(int)(cue.attick - cue.nowtick));
+		} else {
+			ImGui::TextDisabled("nothing pending");
+		}
+
+		ImGui::Text("state: %s", cue.ducked ? "ducked" : "full");
+		if (cue.ducked && g_SndCueHoldTicks > 0) {
+			ImGui::SameLine();
+			ImGui::TextDisabled("(%d ticks left)", (int)cue.holdleft);
+		}
 	}
 
 	if (ImGui::CollapsingHeader("Music tracks", ImGuiTreeNodeFlags_DefaultOpen)) {

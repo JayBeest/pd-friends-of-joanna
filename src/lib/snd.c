@@ -8,6 +8,7 @@
 #include "bss.h"
 #include "naudio/n_sndp.h"
 #include "lib/rzip.h"
+#include "lib/sndcue.h"
 #include "lib/args.h"
 #include "lib/audiomgr.h"
 #include "lib/crash.h"
@@ -1943,6 +1944,10 @@ void sndTick(void)
 	s32 index;
 	s32 stack;
 
+#ifndef PLATFORM_N64
+	sndcueTick();
+#endif
+
 #if VERSION >= VERSION_NTSC_1_0
 	static s32 g_SndMostEverPlaying2 = -1;
 
@@ -2306,6 +2311,10 @@ struct sndstate *sndStart(s32 arg0, s16 sound, struct sndstate **handle, s32 vol
 	u8 pan;
 	u16 volume;
 	f32 pitch;
+
+#ifndef PLATFORM_N64
+	sndcueOnSfx((s32)sound);
+#endif
 
 	fxmix = fxmixarg != -1 ? fxmixarg : 0;
 	fxbus = fxbusarg != -1 ? fxbusarg : 1;
@@ -2802,6 +2811,44 @@ s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced)
 }
 
 #ifndef PLATFORM_N64
+/**
+ * Tick position of the sequence a slot is playing.
+ *
+ * Deliberately not seqp->curTime, which is ALMicroTime: n_csplayer.c rewrites
+ * uspt on every tempo event, so microseconds only convert to ticks until the
+ * music changes speed. lastTicks on the sequence is the counter that survives
+ * that, and alCSeqGetTicks already returns it.
+ */
+s32 snddebugGetTicks(s32 slot)
+{
+	if (!snddebugSlotIsLive(slot) || g_SeqInstances[slot].seqp->target == NULL) {
+		return 0;
+	}
+
+	return alCSeqGetTicks(g_SeqInstances[slot].seqp->target);
+}
+
+/**
+ * Ticks per quarter note for that sequence -- its grid resolution, chosen by
+ * whoever authored it. Stored as its reciprocal, so this inverts it back.
+ */
+s32 snddebugGetTicksPerQuarter(s32 slot)
+{
+	f32 qnpt;
+
+	if (!snddebugSlotIsLive(slot) || g_SeqInstances[slot].seqp->target == NULL) {
+		return 0;
+	}
+
+	qnpt = g_SeqInstances[slot].seqp->target->qnpt;
+
+	if (qnpt <= 0.0f) {
+		return 0;
+	}
+
+	return (s32)((1.0f / qnpt) + 0.5f);
+}
+
 // Length of the per-frame Acmd list. Lives in audiomgr.c and, like several
 // naudio globals, is declared in no header.
 extern s32 var800918ec;

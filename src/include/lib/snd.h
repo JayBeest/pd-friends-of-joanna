@@ -69,6 +69,30 @@ struct snddebugpools {
 	s32 acmdlen;
 };
 
+// The audio debug surface. It had no header at all until now -- imgui_overlay
+// hand-declared every one of these in its own extern "C" block, which was fine
+// while the overlay was the only caller. The second caller (sndcue.c) compiled
+// against implicit declarations instead and the build said so, which is the
+// argument for putting them somewhere. The overlay keeps its own block, because
+// this header carries no __cplusplus guard.
+s32 snddebugNumSlots(void);
+bool snddebugGetSlot(s32 slot, s32 *tracktype, s32 *tracknum, s32 *volume, s32 *state);
+s32 snddebugGetUspt(s32 slot);
+void snddebugSetUspt(s32 slot, s32 uspt);
+u16 snddebugGetChanMask(s32 slot);
+void snddebugSetChanMask(s32 slot, u16 mask);
+void snddebugSetChanVolume(s32 slot, s32 chan, s32 volume, s32 rate);
+s32 snddebugGetChanVolume(s32 slot, s32 chan);
+f32 snddebugGetWetBias(s32 slot);
+void snddebugSetWetBias(s32 slot, f32 bias);
+f32 snddebugGetWetScale(s32 slot);
+void snddebugSetWetScale(s32 slot, f32 scale);
+bool snddebugSetFxParam(s32 bus, s32 section, s32 param, s32 value);
+void snddebugSetVoiceCap(s32 slot, s32 cap);
+u16 snddebugGetSfxVolume(void);
+s32 snddebugCountSfxVoices(s32 *numfree, s32 *numalloced);
+s32 snddebugGetTicks(s32 slot);
+s32 snddebugGetTicksPerQuarter(s32 slot);
 void snddebugGetPools(struct snddebugpools *out);
 #endif
 

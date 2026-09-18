@@ -21,6 +21,7 @@
 #include "mod.h"
 #include "game/stancetuning.h"
 #include "lib/snd.h"
+#include "lib/sndcue.h"
 #include "system.h"
 #include "utils.h"
 #include "game/mplayer/setup.h"
@@ -248,6 +249,24 @@ PD_CONSTRUCTOR static void gameConfigInit(void)
 	configRegisterInt("Audio.SeqpMaxEvents", &g_SndSeqpMaxEvents, 1, 1024);
 	configRegisterInt("Audio.SeqBufferSize", &g_SndSeqBufferKb, 0, 4096);
 	configRegisterInt("Audio.AcmdListLen", &g_SndAcmdListLen, 0, 65536);
+
+	// The cue scheduler. Off by default -- Cue.Enabled is the first thing
+	// sndcueOnSfx checks, and the reason it is affordable on sndStart, which
+	// the game hits for every footstep and casing.
+	//
+	// Quantise: 0 now, 1 next beat, 2 next bar. There is no loop-point mode; a
+	// compact sequence loops by rewinding its read pointer per track while the
+	// tick count keeps climbing, so a loop boundary is not observable from out
+	// here and is not shared between tracks anyway. Beat mode is the one that
+	// needs no meter and so cannot be wrong.
+	configRegisterInt("Cue.Enabled", &g_SndCueEnabled, 0, 1);
+	configRegisterInt("Cue.Quantise", &g_SndCueQuantise, 0, 2);
+	configRegisterInt("Cue.BeatsPerBar", &g_SndCueBeatsPerBar, 1, 32);
+	configRegisterInt("Cue.Slot", &g_SndCueSlot, 0, 2);
+	configRegisterInt("Cue.TriggerSfx", &g_SndCueTriggerSfx, -1, 65535);
+	configRegisterInt("Cue.MaskFull", &g_SndCueMaskFull, 0, 0xffff);
+	configRegisterInt("Cue.MaskDucked", &g_SndCueMaskDucked, 0, 0xffff);
+	configRegisterInt("Cue.HoldTicks", &g_SndCueHoldTicks, 0, 1000000);
 
 	// The stance knobs. Every one of these was a guess that only play could
 	// settle, so they are settable: here for where they start, and the Fojo
